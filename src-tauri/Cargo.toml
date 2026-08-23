@@ -1,0 +1,74 @@
+[package]
+name = "chenocr"
+version = "0.1.0"
+description = "CHENOCR - 截图 · 识字 · 剪贴板"
+authors = ["CHENOCR"]
+edition = "2021"
+rust-version = "1.82"
+
+[lib]
+name = "chenocr_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["tray-icon", "image-png", "protocol-asset"] }
+tauri-plugin-global-shortcut = "2"
+tauri-plugin-clipboard-manager = "2"
+tauri-plugin-os = "2"
+tauri-plugin-opener = "2"
+
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+thiserror = "2"
+
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tracing-appender = "0.2"
+
+# 抓屏（Apache-2.0）
+#
+# 必须开 `wgc`（Windows.Graphics.Capture + D3D11）。默认的 GDI 路径在 4K 屏上
+# 实测 260–370ms，光抓屏就把 150ms 的预算吃穿了（见 platform/windows/capture.rs
+# 里的烟雾测试）。WGC 走 GPU 拷贝，还顺带关掉了黄色采集边框和鼠标指针。
+xcap = { version = "0.9", features = ["wgc"] }
+image = "0.25"
+
+parking_lot = "0.12"
+chrono = { version = "0.4", features = ["serde"] }
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.62", features = [
+  "Win32_Foundation",
+  "Win32_UI_WindowsAndMessaging",
+  "Win32_Graphics_Dwm",
+  "Win32_Graphics_Gdi",
+  "Win32_UI_HiDpi",
+  "Win32_System_Threading",
+  "Win32_System_ProcessStatus",
+  "Win32_UI_Shell",
+  "Win32_UI_Input_KeyboardAndMouse",
+  "Win32_System_Registry",
+  "Win32_System_LibraryLoader",
+] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+# 第一版留空，移植时填 objc2 / core-graphics
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
+
+# 量性能用的档位。和 release 一样开优化，但关掉全量 LTO —— 否则每改一行
+# 都要等好几分钟重链，根本没法迭代。只用来跑基准，不用来发版。
+[profile.perf]
+inherits = "release"
+lto = false
+codegen-units = 16
+strip = false

@@ -1,0 +1,21 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "主窗口与截图遮罩窗口所需的最小权限集",
+  "windows": ["main", "capture-*"],
+  "permissions": [
+    "core:default",
+    "core:event:default",
+    "core:window:allow-show",
+    "core:window:allow-hide",
+    "core:window:allow-close",
+    "core:window:allow-set-focus",
+    "core:window:allow-start-dragging",
+    "core:window:allow-scale-factor",
+    "core:window:allow-inner-size",
+    "core:window:allow-outer-position",
+    "core:window:allow-current-monitor",
+    "os:default",
+    "opener:default"
+  ]
+}

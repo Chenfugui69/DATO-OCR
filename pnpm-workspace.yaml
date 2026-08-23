@@ -1,0 +1,4 @@
+# esbuild 的安装脚本只是校验/链接对应平台的原生二进制（@esbuild/win32-x64），
+# Vite 依赖它。显式放行，避免每次 pnpm 命令都因为"有被忽略的构建脚本"而退出非零。
+allowBuilds:
+  esbuild: true

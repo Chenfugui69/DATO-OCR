@@ -1,0 +1,63 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "CHENOCR",
+  "version": "0.1.0",
+  "identifier": "com.chenocr.app",
+  "build": {
+    "frontendDist": "../dist",
+    "devUrl": "http://localhost:1420",
+    "beforeDevCommand": "corepack pnpm dev",
+    "beforeBuildCommand": "corepack pnpm build"
+  },
+  "app": {
+    "withGlobalTauri": false,
+    "windows": [
+      {
+        "label": "main",
+        "title": "CHENOCR",
+        "width": 1120,
+        "height": 720,
+        "minWidth": 880,
+        "minHeight": 560,
+        "center": true,
+        "visible": false,
+        "decorations": false,
+        "transparent": false,
+        "backgroundColor": "#00000000",
+        "resizable": true,
+        "shadow": true
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; img-src 'self' asset: http://asset.localhost shot: http://shot.localhost data: blob:; style-src 'self' 'unsafe-inline'; font-src 'self' data:; connect-src 'self' ipc: http://ipc.localhost shot: http://shot.localhost https:",
+      "assetProtocol": {
+        "enable": true,
+        "scope": ["$CONFIG/CHENOCR/**"]
+      }
+    },
+    "trayIcon": {
+      "id": "main-tray",
+      "iconPath": "icons/tray.png",
+      "iconAsTemplate": true,
+      "menuOnLeftClick": false
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["nsis"],
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "windows": {
+      "nsis": {
+        "installMode": "perMachine",
+        "languages": ["SimpChinese", "English"],
+        "compression": "lzma"
+      }
+    }
+  }
+}

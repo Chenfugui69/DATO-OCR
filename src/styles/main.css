@@ -1,0 +1,166 @@
+/*
+ * 主窗口样式。
+ *
+ * M0 阶段刻意保持朴素 —— 真正的设计系统（令牌、玻璃材质、自绘标题栏）在 M6
+ * 按 06-UI设计规范.md 落地，现在写的这套会被整体替换掉。
+ */
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  background: #1c1c1e;
+  color: #f2f2f7;
+  font-family: 'Segoe UI', system-ui, sans-serif;
+  font-size: 14px;
+}
+
+#root {
+  height: 100%;
+}
+
+.shell {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+/* decorations: false，所以标题栏要自绘。M6 会做成规范里的样子。 */
+.titlebar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 40px;
+  padding: 0 8px 0 16px;
+  border-bottom: 1px solid rgb(255 255 255 / 8%);
+  font-weight: 600;
+  user-select: none;
+}
+
+.titlebar-close {
+  width: 32px;
+  height: 28px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.titlebar-close:hover {
+  background: rgb(255 60 60 / 80%);
+}
+
+.titlebar-close:focus-visible {
+  outline: 2px solid #0a84ff;
+  outline-offset: 1px;
+}
+
+.content {
+  flex: 1;
+  overflow: auto;
+  padding: 20px 24px 32px;
+}
+
+h1 {
+  margin: 0 0 4px;
+  font-size: 20px;
+}
+
+.subtitle {
+  margin: 0 0 20px;
+  color: #98989d;
+}
+
+.actions {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 24px;
+}
+
+button.primary,
+button.secondary {
+  padding: 8px 16px;
+  border: 0;
+  border-radius: 8px;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+button.primary {
+  background: #0a84ff;
+  color: #fff;
+}
+
+button.secondary {
+  background: rgb(255 255 255 / 10%);
+  color: #f2f2f7;
+}
+
+button.primary:focus-visible,
+button.secondary:focus-visible {
+  outline: 2px solid #0a84ff;
+  outline-offset: 2px;
+}
+
+section {
+  margin-bottom: 24px;
+}
+
+h2 {
+  margin: 0 0 10px;
+  font-size: 14px;
+  color: #98989d;
+  font-weight: 600;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-variant-numeric: tabular-nums;
+}
+
+th,
+td {
+  padding: 8px 10px;
+  text-align: left;
+  border-bottom: 1px solid rgb(255 255 255 / 8%);
+}
+
+th {
+  color: #98989d;
+  font-weight: 500;
+}
+
+dl.facts {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 8px 20px;
+  margin: 0;
+}
+
+dl.facts dt {
+  color: #98989d;
+}
+
+dl.facts dd {
+  margin: 0;
+  word-break: break-all;
+}
+
+.error {
+  padding: 12px 14px;
+  border-radius: 8px;
+  background: rgb(255 60 60 / 16%);
+  color: #ffb3b3;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation-duration: 0s !important;
+    transition-duration: 0s !important;
+  }
+}

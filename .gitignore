@@ -1,0 +1,18 @@
+node_modules/
+dist/
+src-tauri/target/
+src-tauri/gen/
+
+# 图标由 scripts/generate-icons.mjs 生成，不入库
+scripts/app-icon.png
+
+# 验收脚本的产物
+scripts/clipboard-check.png
+
+# 更新签名私钥，绝不入库（规格 01 §5.3）
+*.key
+*.pem
+
+.DS_Store
+Thumbs.db
+*.log
