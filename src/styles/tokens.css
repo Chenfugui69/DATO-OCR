@@ -1,0 +1,179 @@
+/*
+ * 设计令牌（规格 06 §2）。组件里禁止出现裸的十六进制颜色和裸的像素间距。
+ * 浅色写在 :root，深色写在 [data-theme='dark']。
+ */
+:root {
+  color-scheme: light;
+
+  /* ── 语义色 ── */
+  --cn-accent: #007aff;
+  --cn-accent-hover: #0066d6;
+  --cn-accent-active: #0055b3;
+  --cn-accent-subtle: rgba(0, 122, 255, 0.12);
+  --cn-accent-ring: rgba(0, 122, 255, 0.28);
+
+  --cn-red: #ff3b30;
+  --cn-orange: #ff9500;
+  --cn-yellow: #ffcc00;
+  --cn-green: #34c759;
+  --cn-mint: #00c7be;
+  --cn-teal: #30b0c7;
+  --cn-indigo: #5856d6;
+  --cn-purple: #af52de;
+  --cn-pink: #ff2d55;
+
+  --cn-success: var(--cn-green);
+  --cn-warning: var(--cn-orange);
+  --cn-danger: var(--cn-red);
+
+  /* ── 文字（label 层级） ── */
+  --cn-label: rgba(0, 0, 0, 0.85);
+  --cn-label-secondary: rgba(60, 60, 67, 0.6);
+  --cn-label-tertiary: rgba(60, 60, 67, 0.3);
+  --cn-label-quaternary: rgba(60, 60, 67, 0.18);
+  --cn-label-on-accent: #ffffff;
+
+  /* ── 背景 ── */
+  --cn-bg-base: #ffffff;
+  --cn-bg-grouped: #f2f2f7;
+  --cn-bg-elevated: #ffffff;
+  --cn-bg-window: #f6f6f8;
+  --cn-bg-hover: rgba(0, 0, 0, 0.04);
+  --cn-bg-active: rgba(0, 0, 0, 0.08);
+  --cn-bg-selected: rgba(0, 122, 255, 0.12);
+
+  /* ── 填充（控件底色） ── */
+  --cn-fill: rgba(120, 120, 128, 0.2);
+  --cn-fill-secondary: rgba(120, 120, 128, 0.16);
+  --cn-fill-tertiary: rgba(118, 118, 128, 0.12);
+  --cn-fill-quaternary: rgba(116, 116, 128, 0.08);
+
+  /* ── 分隔线（0.5px，见 base.css） ── */
+  --cn-separator: rgba(60, 60, 67, 0.29);
+  --cn-separator-opaque: #c6c6c8;
+
+  /* ── 玻璃材质 ── */
+  --cn-glass-bg: rgba(255, 255, 255, 0.62);
+  --cn-glass-bg-thin: rgba(255, 255, 255, 0.45);
+  --cn-glass-bg-thick: rgba(255, 255, 255, 0.78);
+  --cn-glass-bg-chrome: rgba(255, 255, 255, 0.85);
+  --cn-glass-blur: 20px;
+  --cn-glass-saturate: 180%;
+  --cn-glass-border: rgba(255, 255, 255, 0.5);
+  --cn-glass-highlight: rgba(255, 255, 255, 0.85);
+  --cn-glass-shade: rgba(0, 0, 0, 0.06);
+  /* 窗口有 Mica 时，侧边栏/内容区用的半透明底 */
+  --cn-mica-sidebar: rgba(255, 255, 255, 0.18);
+  --cn-mica-content: rgba(255, 255, 255, 0.72);
+
+  /* ── 阴影 ── */
+  --cn-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.05), 0 1px 1px rgba(0, 0, 0, 0.04);
+  --cn-shadow-md: 0 2px 8px rgba(0, 0, 0, 0.08), 0 1px 2px rgba(0, 0, 0, 0.06);
+  --cn-shadow-lg: 0 8px 32px rgba(0, 0, 0, 0.14), 0 2px 8px rgba(0, 0, 0, 0.08);
+  --cn-shadow-xl: 0 16px 48px rgba(0, 0, 0, 0.2), 0 4px 12px rgba(0, 0, 0, 0.1);
+
+  /* ── 间距（4 的倍数） ── */
+  --cn-space-1: 4px;
+  --cn-space-2: 8px;
+  --cn-space-3: 12px;
+  --cn-space-4: 16px;
+  --cn-space-5: 20px;
+  --cn-space-6: 24px;
+  --cn-space-8: 32px;
+  --cn-space-10: 40px;
+  --cn-space-12: 48px;
+
+  /* ── 圆角 ── */
+  --cn-radius-xs: 4px;
+  --cn-radius-sm: 6px;
+  --cn-radius-md: 8px;
+  --cn-radius-lg: 10px;
+  --cn-radius-xl: 12px;
+  --cn-radius-2xl: 16px;
+  --cn-radius-full: 9999px;
+
+  /* ── 字体 ──
+   * MiSans 授权未核实（规格 06 §2.4 / 会话交接 §6.2），第一版不内嵌，走系统字体。
+   * Windows 上 Segoe UI Variable + 微软雅黑 UI 是最接近的组合。 */
+  --cn-font-sans: -apple-system, 'SF Pro Text', 'MiSans VF', 'MiSans', 'HarmonyOS Sans SC', 'PingFang SC',
+    'Segoe UI Variable Text', 'Segoe UI', 'Microsoft YaHei UI', 'Microsoft YaHei', system-ui, sans-serif;
+  --cn-font-mono: 'SF Mono', 'JetBrains Mono', 'Cascadia Code', 'Cascadia Mono', Consolas, monospace;
+
+  /* ── 字号（Text Style 映射到桌面尺寸） ── */
+  --cn-text-large-title: 600 26px/32px var(--cn-font-sans);
+  --cn-text-title-1: 600 22px/28px var(--cn-font-sans);
+  --cn-text-title-2: 600 17px/22px var(--cn-font-sans);
+  --cn-text-title-3: 600 15px/20px var(--cn-font-sans);
+  --cn-text-body: 400 13px/18px var(--cn-font-sans);
+  --cn-text-callout: 400 12px/16px var(--cn-font-sans);
+  --cn-text-footnote: 400 11px/14px var(--cn-font-sans);
+  --cn-text-caption: 500 10px/13px var(--cn-font-sans);
+
+  /* ── 动效 ── */
+  --cn-ease-out: cubic-bezier(0, 0, 0.2, 1);
+  --cn-ease-in: cubic-bezier(0.4, 0, 1, 1);
+  --cn-ease-in-out: cubic-bezier(0.4, 0, 0.2, 1);
+  --cn-ease-sheet: cubic-bezier(0.32, 0.72, 0, 1);
+  --cn-ease-spring: linear(0, 0.006, 0.025, 0.101, 0.539, 0.826, 0.962, 1.007, 1.012, 1);
+  --cn-duration-instant: 0ms;
+  --cn-duration-fast: 150ms;
+  --cn-duration-normal: 240ms;
+  --cn-duration-slow: 320ms;
+}
+
+[data-theme='dark'] {
+  color-scheme: dark;
+
+  --cn-accent: #0a84ff;
+  --cn-accent-hover: #3b9bff;
+  --cn-accent-active: #0070e0;
+  --cn-accent-subtle: rgba(10, 132, 255, 0.18);
+  --cn-accent-ring: rgba(10, 132, 255, 0.4);
+
+  --cn-red: #ff453a;
+  --cn-orange: #ff9f0a;
+  --cn-yellow: #ffd60a;
+  --cn-green: #30d158;
+  --cn-mint: #66d4cf;
+  --cn-teal: #40c8e0;
+  --cn-indigo: #5e5ce6;
+  --cn-purple: #bf5af2;
+  --cn-pink: #ff375f;
+
+  --cn-label: rgba(255, 255, 255, 0.92);
+  --cn-label-secondary: rgba(235, 235, 245, 0.6);
+  --cn-label-tertiary: rgba(235, 235, 245, 0.3);
+  --cn-label-quaternary: rgba(235, 235, 245, 0.16);
+
+  /* 深色主背景不用纯黑：OLED 上滚动会拖影 */
+  --cn-bg-base: #1c1c1e;
+  --cn-bg-grouped: #000000;
+  --cn-bg-elevated: #2c2c2e;
+  --cn-bg-window: #1c1c1e;
+  --cn-bg-hover: rgba(255, 255, 255, 0.06);
+  --cn-bg-active: rgba(255, 255, 255, 0.1);
+  --cn-bg-selected: rgba(10, 132, 255, 0.2);
+
+  --cn-fill: rgba(120, 120, 128, 0.36);
+  --cn-fill-secondary: rgba(120, 120, 128, 0.32);
+  --cn-fill-tertiary: rgba(118, 118, 128, 0.24);
+  --cn-fill-quaternary: rgba(118, 118, 128, 0.18);
+
+  --cn-separator: rgba(84, 84, 88, 0.65);
+  --cn-separator-opaque: #38383a;
+
+  --cn-glass-bg: rgba(30, 30, 32, 0.68);
+  --cn-glass-bg-thin: rgba(30, 30, 32, 0.5);
+  --cn-glass-bg-thick: rgba(30, 30, 32, 0.8);
+  --cn-glass-bg-chrome: rgba(30, 30, 32, 0.88);
+  --cn-glass-border: rgba(255, 255, 255, 0.12);
+  --cn-glass-highlight: rgba(255, 255, 255, 0.18);
+  --cn-glass-shade: rgba(0, 0, 0, 0.3);
+  --cn-mica-sidebar: rgba(0, 0, 0, 0.12);
+  --cn-mica-content: rgba(28, 28, 30, 0.72);
+
+  --cn-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3), 0 1px 1px rgba(0, 0, 0, 0.2);
+  --cn-shadow-md: 0 2px 8px rgba(0, 0, 0, 0.36), 0 1px 2px rgba(0, 0, 0, 0.24);
+  --cn-shadow-lg: 0 8px 32px rgba(0, 0, 0, 0.44), 0 2px 8px rgba(0, 0, 0, 0.28);
+  --cn-shadow-xl: 0 16px 48px rgba(0, 0, 0, 0.5), 0 4px 12px rgba(0, 0, 0, 0.3);
+}

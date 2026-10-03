@@ -3,11 +3,15 @@ dist/
 src-tauri/target/
 src-tauri/gen/
 
-# 图标由 scripts/generate-icons.mjs 生成，不入库
-scripts/app-icon.png
+# pnpm 本地缓存
+.pnpm-store/
 
-# 验收脚本的产物
-scripts/clipboard-check.png
+# 识字引擎（约 32MB 二进制），由 `corepack pnpm fetch-ocr` 下载，不入库
+src-tauri/resources/ocr/
+
+# 真机测试脚本的输出（截图、粘贴结果）
+scripts/test/*.png
+scripts/test/*.txt
 
 # 更新签名私钥，绝不入库（规格 01 §5.3）
 *.key

@@ -1,0 +1,82 @@
+.ed-root {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+.ed-scroll {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  background: repeating-conic-gradient(var(--cn-fill-quaternary) 0% 25%, transparent 0% 50%) 50% / 16px 16px;
+  box-shadow: inset 0 0.5px 0 var(--cn-separator), inset 0 -0.5px 0 var(--cn-separator);
+}
+.ed-stage-wrap {
+  display: flex;
+  justify-content: center;
+  padding: 24px;
+}
+.ed-stage {
+  position: relative;
+  flex: none;
+  box-shadow: 0 2px 16px rgba(0, 0, 0, 0.2), 0 0 0 0.5px var(--cn-separator);
+  background: #fff;
+}
+.ed-stage img {
+  display: block;
+  user-select: none;
+}
+.ed-canvas {
+  position: absolute;
+  pointer-events: none;
+}
+.ed-text-layer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+.ed-text-layer > * {
+  pointer-events: auto;
+}
+.ed-dock {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 12px 12px;
+  flex: none;
+}
+.ed-dock .an-toolbar,
+.ed-dock .an-subtoolbar {
+  position: static;
+}
+[data-glass='on'] .ed-dock .an-toolbar,
+[data-glass='on'] .ed-dock .an-subtoolbar {
+  background: var(--cn-glass-bg-chrome);
+}
+.ed-main {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.ed-loading {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  display: grid;
+  place-items: center;
+  pointer-events: none;
+}
+.ed-stage[data-loading] {
+  background: transparent;
+  box-shadow: none;
+}
+.ed-stage[data-loading] img {
+  opacity: 0;
+}
+.ed-stage img {
+  transition: opacity 160ms var(--cn-ease-out, ease-out);
+}

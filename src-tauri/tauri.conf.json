@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "CHENOCR",
-  "version": "0.1.0",
-  "identifier": "com.chenocr.app",
+  "productName": "DATO COR",
+  "version": "0.2.0",
+  "identifier": "com.datocor.app",
   "build": {
     "frontendDist": "../dist",
     "devUrl": "http://localhost:1420",
@@ -14,7 +14,8 @@
     "windows": [
       {
         "label": "main",
-        "title": "CHENOCR",
+        "title": "DATO COR",
+        "url": "index.html",
         "width": 1120,
         "height": 720,
         "minWidth": 880,
@@ -22,24 +23,17 @@
         "center": true,
         "visible": false,
         "decorations": false,
-        "transparent": false,
-        "backgroundColor": "#00000000",
+        "transparent": true,
         "resizable": true,
         "shadow": true
       }
     ],
     "security": {
-      "csp": "default-src 'self'; img-src 'self' asset: http://asset.localhost shot: http://shot.localhost data: blob:; style-src 'self' 'unsafe-inline'; font-src 'self' data:; connect-src 'self' ipc: http://ipc.localhost shot: http://shot.localhost https:",
+      "csp": "default-src 'self'; img-src 'self' asset: http://asset.localhost shot: http://shot.localhost data: blob:; style-src 'self' 'unsafe-inline'; font-src 'self' data:; connect-src 'self' ipc: http://ipc.localhost shot: http://shot.localhost asset: http://asset.localhost",
       "assetProtocol": {
         "enable": true,
-        "scope": ["$CONFIG/CHENOCR/**"]
+        "scope": ["$DATA/DATO COR/**", "$DATA/CHENOCR/**", "$TEMP/**"]
       }
-    },
-    "trayIcon": {
-      "id": "main-tray",
-      "iconPath": "icons/tray.png",
-      "iconAsTemplate": true,
-      "menuOnLeftClick": false
     }
   },
   "bundle": {
@@ -52,9 +46,12 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
+    "resources": {
+      "resources/ocr/": "ocr/"
+    },
     "windows": {
       "nsis": {
-        "installMode": "perMachine",
+        "installMode": "currentUser",
         "languages": ["SimpChinese", "English"],
         "compression": "lzma"
       }

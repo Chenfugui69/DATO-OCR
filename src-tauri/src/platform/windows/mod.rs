@@ -1,42 +1,30 @@
 //! Windows 平台实现。
-//!
-//! 这是**唯一**允许 `use windows::...` 的目录（规格 07 §1）。
 
-mod backdrop;
-mod capture;
-mod dpi;
-mod self_capture;
-mod system_events;
-mod system_info;
-mod window_effects;
+pub mod app_icon;
+pub mod backdrop;
+pub mod capture;
+pub mod clipboard;
+pub mod cursor;
+pub mod effects;
+pub mod hook;
+pub mod input;
+pub mod ocr;
+pub mod process;
+pub mod secret;
+pub mod selection_hook;
+pub mod system_events;
+pub mod system_info;
+pub mod window_enum;
 
-use super::{BackdropLayer, ScreenCapture, SystemInfo, WindowEffects};
+mod util;
 
-static SCREEN_CAPTURE: capture::WindowsScreenCapture = capture::WindowsScreenCapture;
-static WINDOW_EFFECTS: window_effects::WindowsWindowEffects = window_effects::WindowsWindowEffects;
-static SYSTEM_INFO: system_info::WindowsSystemInfo = system_info::WindowsSystemInfo;
-static BACKDROP_LAYER: backdrop::WindowsBackdropLayer = backdrop::WindowsBackdropLayer;
+use windows::Win32::UI::HiDpi::{
+    SetProcessDpiAwarenessContext, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2,
+};
 
 pub fn init_process() {
-    dpi::declare_per_monitor_v2();
-}
-
-pub fn screen_capture() -> &'static dyn ScreenCapture {
-    &SCREEN_CAPTURE
-}
-
-pub fn window_effects() -> &'static dyn WindowEffects {
-    &WINDOW_EFFECTS
-}
-
-pub fn system_info() -> &'static dyn SystemInfo {
-    &SYSTEM_INFO
-}
-
-pub fn backdrop_layer() -> &'static dyn BackdropLayer {
-    &BACKDROP_LAYER
-}
-
-pub fn on_capture_state_lost(handler: fn()) {
-    system_events::on_capture_state_lost(handler);
+    // 必须在任何窗口、任何抓屏 API 之前声明。Tauri 的清单通常已经声明过，
+    // 那时这里会返回"已设置"错误，忽略即可。没有它，混合 DPI 下所有坐标都是错的。
+    // SAFETY: 无参数副作用，只影响本进程。
+    let _ = unsafe { SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2) };
 }

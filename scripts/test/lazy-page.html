@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>DATO COR 长截图测试页</title>
+<!--
+  模拟视频站首页，用来测长截图：固定顶栏、懒加载封面（灰色占位 → 延迟后出图）、
+  滚到底自动加载下一批、右下角固定的"回到顶部"按钮。卡片标题带编号，拼接结果可以逐张核对。
+-->
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 15px/1.5 "Microsoft YaHei", sans-serif; background: #f6f7f8; color: #18191c; }
+  header { position: sticky; top: 0; z-index: 2; height: 64px; display: flex; align-items: center; gap: 24px;
+           padding: 0 32px; background: #fff; box-shadow: 0 1px 0 #e3e5e7; }
+  header b { font-size: 22px; color: #fb7299; }
+  header span { color: #61666d; }
+  main { display: grid; grid-template-columns: repeat(4, 1fr); gap: 20px 16px; padding: 20px 32px; }
+  .card .cover { aspect-ratio: 16 / 9; border-radius: 8px; background: #e3e5e7; position: relative; overflow: hidden; }
+  .card .cover.loaded { background: var(--g); }
+  .card .cover.loaded::after { content: attr(data-n); position: absolute; right: 8px; bottom: 6px; color: #fff;
+                               font: 600 13px/1 monospace; text-shadow: 0 1px 2px #0008; }
+  .card h3 { margin: 8px 0 2px; font-size: 15px; font-weight: 500; }
+  .card p { margin: 0; color: #9499a0; font-size: 13px; }
+  #top { position: fixed; right: 24px; bottom: 24px; width: 48px; height: 48px; border-radius: 12px; background: #fff;
+         box-shadow: 0 2px 8px #0002; display: grid; place-items: center; color: #61666d; font-size: 12px; }
+  #more { grid-column: 1 / -1; text-align: center; color: #9499a0; padding: 12px; }
+</style>
+</head>
+<body>
+<header><b>测试站</b><span>首页</span><span>动画</span><span>音乐</span><span>游戏</span><span>知识</span></header>
+<main id="grid"><div id="more">加载中…</div></main>
+<div id="top">顶部</div>
+<script>
+  const words = '截图 识字 翻译 剪贴板 长截图 贴图 标注 马赛克 箭头 画笔 拼接 算法 模板 匹配 头部 尾部 懒加载 封面 视频 弹幕'.split(' ');
+  const grid = document.getElementById('grid');
+  const more = document.getElementById('more');
+  let n = 0;
+  const io = new IntersectionObserver((entries) => {
+    for (const e of entries) {
+      if (!e.isIntersecting) continue;
+      const el = e.target;
+      io.unobserve(el);
+      // 进入视口后过一会儿才"加载好"，模拟网络图片
+      setTimeout(() => el.classList.add('loaded'), 250 + (Number(el.dataset.n) * 37) % 350);
+    }
+  });
+  function addBatch(count) {
+    for (let i = 0; i < count; i++) {
+      n++;
+      const card = document.createElement('div');
+      card.className = 'card';
+      const h1 = (n * 47) % 360, h2 = (n * 89 + 120) % 360;
+      const title = Array.from({ length: 3 + (n % 4) }, (_, k) => words[(n * 7 + k * 3) % words.length]).join(' ');
+      card.innerHTML = `<div class="cover" data-n="#${n}" style="--g: linear-gradient(135deg, hsl(${h1} 70% 55%), hsl(${h2} 65% 40%))"></div>
+        <h3>第 ${n} 个视频 · ${title}</h3><p>UP 主 ${n % 13} · ${(n * 131) % 9000 + 100} 播放</p>`;
+      grid.insertBefore(card, more);
+      io.observe(card.querySelector('.cover'));
+    }
+  }
+  addBatch(16);
+  let loading = false;
+  window.addEventListener('scroll', () => {
+    if (loading || n >= 96) return;
+    if (window.innerHeight + window.scrollY > document.body.scrollHeight - 300) {
+      loading = true;
+      setTimeout(() => { addBatch(12); loading = false; if (n >= 96) more.textContent = '没有更多了'; }, 700);
+    }
+  });
+</script>
+</body>
+</html>

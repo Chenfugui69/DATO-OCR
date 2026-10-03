@@ -1,41 +1,33 @@
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { defineConfig } from 'vite';
+import { defineConfig } from 'vitest/config';
 import react from '@vitejs/plugin-react';
-import tailwindcss from '@tailwindcss/vite';
 
-// ??? ESM?package.json ? "type": "module"???? __dirname ???
-const projectRoot = dirname(fileURLToPath(import.meta.url));
+const root = dirname(fileURLToPath(import.meta.url));
 
+// 所有窗口共用一个 index.html，按窗口标签选视图（src/main.tsx），每个视图按需懒加载。
 export default defineConfig({
-  plugins: [react(), tailwindcss()],
+  plugins: [react()],
   resolve: {
-    alias: {
-      '@': resolve(projectRoot, 'src'),
-    },
+    alias: { '@': resolve(root, 'src') },
   },
-  // ??? Tauri ? devUrl ?????????????
-  // ????????????? Tauri ???????
   clearScreen: false,
   server: {
     port: 1420,
     strictPort: true,
     host: false,
-    watch: {
-      ignored: ['**/src-tauri/**'],
-    },
+    watch: { ignored: ['**/src-tauri/**'] },
   },
   envPrefix: ['VITE_', 'TAURI_ENV_'],
   build: {
-    // WebView2 ?? Edge ????????????????
-    target: 'chrome105',
+    // WebView2 跟随 Edge 自动更新，目标可以很新
+    target: 'chrome110',
     minify: 'esbuild',
     sourcemap: false,
-    rollupOptions: {
-      input: {
-        main: resolve(projectRoot, 'index.html'),
-        capture: resolve(projectRoot, 'capture.html'),
-      },
-    },
+    chunkSizeWarningLimit: 800,
+  },
+  test: {
+    environment: 'node',
+    include: ['src/**/*.test.ts'],
   },
 });

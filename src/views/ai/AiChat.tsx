@@ -1,0 +1,310 @@
+// AI 对话组件：划词面板、识字窗口、独立 AI 窗口共用。
+//
+// 上下文（选中的文字 / 识字结果 / 截图）附在第一条提问上一起发出去；快捷提问里的 {text}
+// 直接换成上下文文字。回答是流式的，随时可以停。对话只留在这个窗口的内存里。
+
+import './ai.css';
+
+import { ArrowUp, Copy, FileText, ImageIcon, RotateCw, Settings2, Square, SquarePen, X } from 'lucide-react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useTranslation } from 'react-i18next';
+
+import { ai, capture, system } from '@/lib/ipc';
+import { renderMarkdown } from '@/lib/markdown';
+import { assetUrl, shotUrl } from '@/lib/platform';
+import { useSettings } from '@/lib/settings';
+import type { ChatImage, ChatMessage, ChatTurn } from '@/lib/types';
+import { Button, EmptyState, IconButton, Select } from '@/ui/controls';
+import { notify } from '@/ui/overlays';
+
+export interface ChatContext {
+  text?: string | null;
+  images: ChatImage[];
+  /** 上下文从哪来，决定标签怎么写：选中的文字 / 识字结果 */
+  source?: 'selection' | 'ocr' | 'capture' | 'free';
+}
+
+type Turn = ChatTurn;
+
+const newId = () => Math.random().toString(36).slice(2, 10);
+
+export function imageUrl(img: ChatImage): string | undefined {
+  return img.kind === 'store' ? shotUrl(img.id) : assetUrl(img.path);
+}
+
+/** 把上下文和提问拼成发给模型的一条消息。 */
+function compose(question: string, context: ChatContext | null, template?: string): string {
+  const text = context?.text?.trim();
+  // 只带了截图没有文字时，快捷提问照样能用：{text} 指向图片
+  if (template) return template.split('{text}').join(text ?? (context?.images.length ? '（见附图）' : ''));
+  if (!text) return question;
+  return `以下是参考内容：\n\n<context>\n${text}\n</context>\n\n${question}`;
+}
+
+export function AiChat({
+  context: initial,
+  resetKey,
+  compact = false,
+  toolbar,
+  initialTurns,
+  onTurnsChange,
+}: {
+  context: ChatContext | null;
+  /** 变了就开新对话（换了上下文） */
+  resetKey: string | number;
+  compact?: boolean;
+  /** 顶栏右侧附加按钮（比如划词面板里的"返回翻译"） */
+  toolbar?: ReactNode;
+  /** 接着已有的对话聊（从划词面板挪到独立窗口时） */
+  initialTurns?: ChatTurn[];
+  onTurnsChange?: (turns: ChatTurn[]) => void;
+}) {
+  const { t } = useTranslation();
+  const settings = useSettings();
+  const cfg = settings?.ai;
+  const [context, setContext] = useState<ChatContext | null>(initial);
+  const [turns, setTurns] = useState<Turn[]>([]);
+  const [input, setInput] = useState('');
+  const [model, setModel] = useState('');
+  const running = useRef<string | null>(null);
+  const listRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
+  const stick = useRef(true);
+
+  useEffect(() => {
+    setContext(initial);
+    setTurns((initialTurns ?? []).map((m) => ({ ...m, streaming: false })));
+    setInput('');
+    if (running.current) void ai.cancel(running.current);
+    running.current = null;
+    window.setTimeout(() => inputRef.current?.focus(), 50);
+    // initial 跟着 resetKey 一起变，只认 resetKey
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [resetKey]);
+
+  const models = useMemo(
+    () =>
+      (cfg?.providers ?? [])
+        .filter((p) => p.enabled)
+        .flatMap((p) => p.models.map((m) => ({ value: `${p.id}/${m}`, label: `${p.name} · ${m}` }))),
+    [cfg?.providers],
+  );
+  const activeModel = models.some((m) => m.value === model) ? model : models.some((m) => m.value === cfg?.defaultModel) ? cfg!.defaultModel : (models[0]?.value ?? '');
+
+  useEffect(() => onTurnsChange?.(turns), [turns, onTurnsChange]);
+
+  // 新内容到了就滚到底，除非用户自己往上翻了
+  useLayoutEffect(() => {
+    const el = listRef.current;
+    if (el && stick.current) el.scrollTop = el.scrollHeight;
+  }, [turns]);
+
+  const ask = useCallback(
+    async (question: string, template?: string, history: Turn[] = turns) => {
+      if (!question.trim() && !template) return;
+      if (running.current) return;
+      const first = history.length === 0;
+      const user: Turn = {
+        id: newId(),
+        role: 'user',
+        content: template ? question : question.trim(),
+        sent: first ? compose(question.trim(), context, template) : template ? compose('', context, template) : question.trim(),
+        images: first ? context?.images : undefined,
+        template,
+      };
+      const reply: Turn = { id: newId(), role: 'assistant', content: '', streaming: true };
+      const next = [...history, user];
+      setTurns([...next, reply]);
+      setInput('');
+      stick.current = true;
+      const requestId = newId();
+      running.current = requestId;
+      const messages: ChatMessage[] = next
+        .filter((m) => !m.error)
+        .map((m) => ({ role: m.role, content: m.sent ?? m.content, images: m.images ?? [] }));
+      const patch = (fn: (r: Turn) => Turn) => setTurns((all) => all.map((m) => (m.id === reply.id ? fn(m) : m)));
+      try {
+        await ai.chat({ id: requestId, model: activeModel || null, messages }, (e) => {
+          if (e.type === 'start') patch((r) => ({ ...r, model: e.model }));
+          else if (e.type === 'delta') patch((r) => ({ ...r, content: r.content + e.text }));
+          else {
+            if (e.type === 'error') patch((r) => ({ ...r, error: e.message, streaming: false }));
+            else patch((r) => ({ ...r, streaming: false }));
+            if (running.current === requestId) running.current = null;
+          }
+        });
+      } catch (err) {
+        patch((r) => ({ ...r, error: err instanceof Error ? err.message : String(err), streaming: false }));
+        running.current = null;
+      }
+    },
+    [turns, context, activeModel],
+  );
+
+  const stop = () => {
+    if (!running.current) return;
+    void ai.cancel(running.current);
+    running.current = null;
+    setTurns((all) => all.map((m) => (m.streaming ? { ...m, streaming: false } : m)));
+  };
+
+  const regenerate = () => {
+    const lastUser = [...turns].reverse().find((m) => m.role === 'user');
+    if (!lastUser || running.current) return;
+    void ask(lastUser.content, lastUser.template, turns.slice(0, turns.indexOf(lastUser)));
+  };
+
+  const busy = turns.some((m) => m.streaming);
+  const style = { '--ai-font': `${cfg?.panel.fontSize ?? 14}px` } as React.CSSProperties;
+
+  if (cfg && models.length === 0) {
+    return (
+      <div className="ai ai--empty" style={style}>
+        {toolbar && <div className="ai__bar">{toolbar}</div>}
+        <EmptyState
+          icon={Settings2}
+          title={t('ai.noModel')}
+          description={t('ai.noModelDesc')}
+          action={<Button onClick={() => void system.showMain('settings:ai')}>{t('ai.openSettings')}</Button>}
+        />
+      </div>
+    );
+  }
+
+  const hasContext = !!context?.text?.trim() || (context?.images.length ?? 0) > 0;
+  return (
+    <div className={compact ? 'ai ai--compact' : 'ai'} data-layout={cfg?.panel.layout ?? 'bubble'} style={style}>
+      <div className="ai__bar">
+        <Select value={activeModel} width={compact ? 180 : 220} options={models} onChange={setModel} />
+        <span style={{ flex: 1 }} />
+        <IconButton icon={SquarePen} size="sm" label={t('ai.newChat')} disabled={busy || turns.length === 0} onClick={() => setTurns([])} />
+        {toolbar}
+      </div>
+
+      {hasContext && (
+        <div className="ai__context">
+          {context?.text?.trim() && (
+            <span className="ai-chip" title={context.text}>
+              <FileText size={13} strokeWidth={1.75} />
+              <span className="ai-chip__text">
+                {t(context.source === 'ocr' ? 'ai.contextOcr' : 'ai.contextText', { count: context.text.trim().length })}
+              </span>
+              {turns.length === 0 && (
+                <button type="button" aria-label={t('common.remove')} onClick={() => setContext({ images: context.images, source: context.source })}>
+                  <X size={12} />
+                </button>
+              )}
+            </span>
+          )}
+          {context?.images.map((img, i) => (
+            <span key={i} className="ai-chip ai-chip--image">
+              {imageUrl(img) ? <img src={imageUrl(img)} alt="" /> : <ImageIcon size={13} />}
+              {turns.length === 0 && (
+                <button
+                  type="button"
+                  aria-label={t('common.remove')}
+                  onClick={() => setContext({ text: context.text, images: context.images.filter((_, k) => k !== i) })}
+                >
+                  <X size={12} />
+                </button>
+              )}
+            </span>
+          ))}
+        </div>
+      )}
+
+      <div
+        ref={listRef}
+        className="ai__list"
+        onScroll={(e) => {
+          const el = e.currentTarget;
+          stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
+        }}
+        onClick={(e) => {
+          // 回答里的链接用系统浏览器打开，不在窗口里跳走
+          const a = (e.target as HTMLElement).closest('a');
+          if (a?.href) {
+            e.preventDefault();
+            void system.openUrl(a.href);
+          }
+        }}
+      >
+        {turns.length === 0 ? (
+          <div className="ai__hello">{hasContext ? t('ai.helloContext') : t('ai.hello')}</div>
+        ) : (
+          turns.map((m, i) => (
+            <div key={m.id} className={`ai-msg ai-msg--${m.role}`}>
+              {m.role === 'user' ? (
+                <div className="ai-msg__body cn-selectable">{m.content}</div>
+              ) : (
+                <>
+                  {m.content ? (
+                    <div className="ai-msg__body ai-md cn-selectable" dangerouslySetInnerHTML={{ __html: renderMarkdown(m.content) }} />
+                  ) : (
+                    m.streaming && <div className="ai-msg__body ai-typing"><span /><span /><span /></div>
+                  )}
+                  {m.error && <div className="ai-msg__error">{m.error}</div>}
+                  {!m.streaming && (
+                    <div className="ai-msg__foot">
+                      <span className="ai-msg__model">{m.model}</span>
+                      {m.content && (
+                        <IconButton
+                          icon={Copy}
+                          size="sm"
+                          label={t('ai.copy')}
+                          onClick={() =>
+                            void capture
+                              .writeText(m.content)
+                              .then(() => notify.success(t('ai.copied')))
+                              .catch(notify.error)
+                          }
+                        />
+                      )}
+                      {i === turns.length - 1 && <IconButton icon={RotateCw} size="sm" label={t('ai.regenerate')} onClick={regenerate} />}
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+          ))
+        )}
+      </div>
+
+      {hasContext && turns.length === 0 && (cfg?.quickPrompts.length ?? 0) > 0 && (
+        <div className="ai__quick">
+          {cfg!.quickPrompts.map((q) => (
+            <button key={q.id} type="button" className="ai-quick__chip" onClick={() => void ask(q.label, q.prompt)}>
+              {q.label}
+            </button>
+          ))}
+        </div>
+      )}
+
+      <div className="ai__input">
+        <textarea
+          ref={inputRef}
+          value={input}
+          rows={1}
+          placeholder={t('ai.placeholder')}
+          onChange={(e) => {
+            setInput(e.target.value);
+            const el = e.target;
+            el.style.height = 'auto';
+            el.style.height = `${Math.min(el.scrollHeight, 140)}px`;
+          }}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
+              e.preventDefault();
+              void ask(input);
+            }
+          }}
+        />
+        {busy ? (
+          <IconButton icon={Square} label={t('ai.stop')} className="ai__send" onClick={stop} />
+        ) : (
+          <IconButton icon={ArrowUp} label={t('ai.send')} className="ai__send" disabled={!input.trim()} onClick={() => void ask(input)} />
+        )}
+      </div>
+    </div>
+  );
+}

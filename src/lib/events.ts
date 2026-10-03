@@ -1,40 +1,69 @@
-/**
- * 所有 Tauri 事件的名字与载荷类型（规格 01 §3.2）。
- *
- * 事件名格式：`域-动作`，kebab-case。
- * 这里只列**已经实现**的事件，其余随各自里程碑补上。
- */
+// Rust → 前端事件（名称与 src-tauri/src/events.rs 一致）。
 
-import { listen, type UnlistenFn } from '@tauri-apps/api/event';
+import { emit, listen, type UnlistenFn } from '@tauri-apps/api/event';
+import { useEffect, useRef } from 'react';
 
-export type CaptureMode = 'normal' | 'longshot' | 'ocr';
+import type {
+  AiContext,
+  ClipChanged,
+  EditorDoc,
+  LongshotProgress,
+  LongshotStateEvent,
+  OcrJob,
+  Settings,
+  ToastPayload,
+  VisualCapabilities,
+} from './types';
 
-export interface CaptureHotkeyPayload {
-  mode: CaptureMode;
-}
-
-/**
- * 发给单个遮罩窗口，告诉它新会话开始了、去拉自己那块屏的底图。
- *
- * 遮罩窗口是常驻复用的（见 `src-tauri/src/capture/overlay.rs` 的文件头），
- * 所以"该干活了"这件事只能靠事件通知 —— 组件的 mount 只在启动预建时发生一次。
- */
-export interface CaptureSessionStartPayload {
-  /** 会话时间戳，用于丢弃迟到的上一轮响应。 */
-  sessionId: number;
-  monitor: number;
-}
-
-interface EventMap {
-  'capture-hotkey': CaptureHotkeyPayload;
-  'capture-session-start': CaptureSessionStartPayload;
-  /** 会话结束，遮罩该把底图放掉。窗口不销毁，所以得显式回收。 */
+export interface EventMap {
+  'settings-changed': Settings;
+  'visuals-changed': VisualCapabilities;
+  'capture-session-start': { sessionId: number };
   'capture-session-end': null;
+  'capture-hotkey': 'normal' | 'ocr' | 'longshot' | 'translate';
+  /** 遮罩之间互相通知：哪块屏上已经有选区了（null = 没有） */
+  'capture-active-monitor': { sessionId: number; monitorId: number | null };
+  'longshot-state': LongshotStateEvent;
+  'longshot-progress': LongshotProgress;
+  'clipboard-changed': ClipChanged;
+  'clipboard-panel-show': { style: 'bottom' | 'vertical' };
+  'library-changed': null;
+  'ocr-job': OcrJob;
+  'ocr-history-changed': null;
+  toast: ToastPayload;
+  navigate: string;
+  'translate-request': { text: string };
+  'selection-button-show': number;
+  'ai-context': AiContext;
+  'editor-open': EditorDoc;
 }
 
-export function on<K extends keyof EventMap>(
-  event: K,
-  handler: (payload: EventMap[K]) => void,
-): Promise<UnlistenFn> {
-  return listen<EventMap[K]>(event, ({ payload }) => handler(payload));
+export type EventName = keyof EventMap;
+
+export function on<K extends EventName>(name: K, handler: (payload: EventMap[K]) => void): Promise<UnlistenFn> {
+  return listen<EventMap[K]>(name, (e) => handler(e.payload));
+}
+
+export function broadcast<K extends EventName>(name: K, payload: EventMap[K]): Promise<void> {
+  return emit(name, payload);
+}
+
+/** 订阅一个事件，组件卸载时自动退订。handler 可以随渲染变化，不会重复订阅。 */
+export function useEvent<K extends EventName>(name: K, handler: (payload: EventMap[K]) => void): void {
+  const ref = useRef(handler);
+  ref.current = handler;
+  useEffect(() => {
+    let disposed = false;
+    let unlisten: UnlistenFn | undefined;
+    on(name, (p) => ref.current(p))
+      .then((fn) => {
+        if (disposed) fn();
+        else unlisten = fn;
+      })
+      .catch(() => undefined);
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, [name]);
 }

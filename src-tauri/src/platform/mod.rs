@@ -1,190 +1,295 @@
-//! 跨平台抽象层。
+//! 跨平台抽象层（规格 07）。
 //!
-//! # 铁律（`docs/spec/07-跨平台抽象层与数据存储.md` 第 1 节）
+//! **铁律**：`platform/` 之外禁止出现 `#[cfg(windows)]` / `use windows::`，
+//! 签名里禁止出现 HWND 之类的平台类型（一律包成 u64）。
 //!
-//! 1. `platform/` 之外的任何 Rust 代码，禁止出现 `#[cfg(windows)]`
-//! 2. `platform/` 之外，禁止 `use windows::...`
-//! 3. 前端代码里禁止出现平台判断
-//! 4. trait 方法签名必须平台中立 —— 不出现 `HWND` / `HMONITOR`，句柄用 `u64` 包装
+//! 规格草案里是 8 个 trait；这里落地成一组模块级函数，由编译期选择 `sys` 实现。
+//! 效果相同 —— macOS 移植时只需在 `macos/` 里补齐同名函数，上层零改动 ——
+//! 但省掉了 trait object 和一堆只有一个实现的样板。
 //!
-//! # 完整契约与实现进度
-//!
-//! 规格 07 第 2 节定义了七个 trait。这里只声明**当前里程碑已经落地**的部分，
-//! 其余在进入对应里程碑、读过对应规格文档之后按原文补齐 —— 不预先编造
-//! `ClipboardPayload` / `ScrollEvent` 这类还没定义清楚的类型。
-//!
-//! | trait | 状态 | 落地里程碑 | 规格 |
-//! |---|---|---|---|
-//! | [`ScreenCapture`]     | 部分（`list_monitors` / `capture_all`） | M0；`capture_monitor` / `capture_region` 待 M5，`capture_window` 待 M1 | 07 §2 |
-//! | [`WindowEffects`]     | 部分（`exclude_from_capture`） | M0；`probe_capabilities` / `apply_backdrop` / `set_click_through` 待 M6 | 07 §2、01 §2.3 |
-//! | [`SystemInfo`]        | 部分（`is_transparency_enabled` / `is_dark_mode`） | M0；其余待 M6 | 07 §2 |
-//! | [`BackdropLayer`]     | 完整 | M0 | **规格外新增**，见下 |
-//! | `WindowEnumerator`    | 未实现 | M1 | 02-截图模块.md |
-//! | `ClipboardMonitor`    | 未实现 | M4 | 05-剪贴板模块.md |
-//! | `InputSimulator`      | 未实现 | M4 | 05-剪贴板模块.md |
-//! | `SecretStore`         | 未实现 | M3 | 07 §4.7 |
-//! | `ScrollListener`      | 未实现 | M5 | 03-长截图与拼接.md |
-//!
-//! [`BackdropLayer`] 是规格 07 那七个 trait 之外新加的第八个，因为截图底图不再
-//! 进 WebView（原因见该 trait 的文档）。它同样遵守上面那四条铁律。
+//! | 能力 | Windows | macOS（移植时） |
+//! |---|---|---|
+//! | 抓屏 | xcap + WGC | ScreenCaptureKit，需「屏幕录制」权限 |
+//! | 窗口枚举 | EnumWindows + DWM 扩展边框 | CGWindowListCopyWindowInfo |
+//! | 冻结底图层 | 分层窗口 + UpdateLayeredWindow | NSWindow + CALayer |
+//! | 剪贴板 | AddClipboardFormatListener | NSPasteboard changeCount 轮询 |
+//! | 输入模拟 | SendInput | CGEvent，需「辅助功能」权限 |
+//! | 全局钩子 | WH_MOUSE_LL / WH_KEYBOARD_LL | CGEventTap |
+//! | 密钥 | DPAPI | Keychain |
+//! | 系统 OCR | Windows.Media.Ocr | Vision.framework |
 
 pub mod types;
 
-#[cfg(target_os = "macos")]
-mod macos;
+pub use types::*;
+
 #[cfg(windows)]
 mod windows;
-
-#[cfg(target_os = "macos")]
-use self::macos as sys;
 #[cfg(windows)]
 use self::windows as sys;
 
-pub use types::{MonitorId, MonitorInfo, PhysicalRect};
+#[cfg(target_os = "macos")]
+mod macos;
+#[cfg(target_os = "macos")]
+use self::macos as sys;
 
-use crate::error::AppResult;
+use std::path::Path;
+use std::sync::mpsc::Sender;
+
 use image::RgbaImage;
 use tauri::WebviewWindow;
 
-/// 抓屏。所有返回的图像都是**物理像素**，不做任何缩放。
-pub trait ScreenCapture: Send + Sync {
-    /// 列出所有显示器，按主屏优先、其余按 x 坐标排序。
-    fn list_monitors(&self) -> AppResult<Vec<MonitorInfo>>;
+use crate::error::AppResult;
 
-    /// 抓取所有显示器。返回顺序与 [`Self::list_monitors`] 一致。
-    ///
-    /// 多屏时逐块抓取无法做到严格同一时刻，但相邻几毫秒的差异肉眼不可见。
-    ///
-    /// 规格 07 §2 的原始签名返回 `(MonitorId, RgbaImage)`。这里改成带回完整的
-    /// [`MonitorInfo`]：底层（xcap）的每个属性访问器都要重新查一次显示配置，
-    /// 调用方拿到 id 后还得再枚举一遍才能知道几何信息，在 150ms 的预算里这笔
-    /// 开销毫无必要。返回类型依旧是平台中立的。
-    fn capture_all(&self) -> AppResult<Vec<(MonitorInfo, RgbaImage)>>;
-
-    /// 先付一次抓屏的初始化开销，把结果丢掉。
-    ///
-    /// 首次抓屏要建 D3D 设备、开 WGC 会话，实测比后续的热抓屏贵 90ms
-    /// （137ms vs 48ms），刚好让第一次 F1 冲破 150ms 预算（规格 00 §6.4）。
-    /// 启动时空跑一次，用户按下的第一次 F1 就已经是热的。
-    ///
-    /// 失败只记日志不上报：这是纯优化，此时也还没有窗口可以弹提示。
-    fn warm_up(&self);
-}
-
-/// 订阅"抓屏热身状态可能已经失效"的时机。
-///
-/// [`ScreenCapture::warm_up`] 省下来的是进程级的 GPU 侧初始化（Windows 上是 D3D
-/// 设备 + WGC 会话）。这份状态**不是永久的**，下面这些事件之后它可能已经没了，
-/// 而症状是沉默的：用户某次按 F1 又慢回 137ms，日志里除了 `capture_ms` 变大之外
-/// 什么都看不出来。所以要在这些时机重新热身一次 —— 它们都发生在空闲时刻，
-/// 这笔开销正好可以在用户按键之前付掉。
-///
-/// `handler` 会在**平台的 UI 线程**上被调用，所以它必须立刻返回：热身要上百毫秒，
-/// 实现里请自己丢给后台线程。
-pub fn on_capture_state_lost(handler: fn()) {
-    sys::on_capture_state_lost(handler);
-}
-
-/// 窗口特效与抓屏可见性。
-pub trait WindowEffects: Send + Sync {
-    /// 把窗口从"被别人抓屏"的结果里排除掉。
-    ///
-    /// 用途见规格 07 §4.4：长截图采集时不能把自己的提示条拍进去。
-    /// Windows 10 2004 以下不支持，此时返回 `Ok(())` 静默降级。
-    fn exclude_from_capture(&self, window: &WebviewWindow, enabled: bool) -> AppResult<()>;
-
-    /// 取 Tauri 窗口的原生句柄（Windows 上是 HWND）。
-    ///
-    /// 包成 `u64` 是为了守住规格 07 §1 第 4 条铁律：平台句柄不能出现在
-    /// `platform/` 之外的签名里。目前唯一的用途是把遮罩窗口交给
-    /// [`BackdropLayer::show_above`] 去排 z 序。
-    fn native_handle(&self, window: &WebviewWindow) -> AppResult<u64>;
-}
-
-/// 冻结底图的原生显示层。
-///
-/// # 为什么底图不进 WebView
-///
-/// M0 实测（3840×2160 @150% 单屏）：把底图当图片喂给 WebView，传输那一段是
-/// 「约 74ms 固定开销 + 2.4ms/MB」（24.9MB 共 134ms，明细见 `capture/protocol.rs`）。
-/// 加上解码和抓屏就顶到 244ms，而预算是 150ms（规格 00 §6.4）。改走原生层后
-/// 同一台机器降到 70ms。三条理由：
-///
-/// 1. **代价随像素数线性涨**。单块 4K 就要 134ms，双 4K 直接翻倍。压缩省不下来
-///    ——「像素级一致」是硬要求（规格 08 M0 验收项），只能无损，而桌面上摊着照片
-///    壁纸时 PNG 基本压不动（实测比 BMP 还大）。
-/// 2. **Chromium 会做色彩管理转换**。广色域屏上底图经过 WebView 的色彩管线就不再
-///    和真实桌面逐字节相同，同样违反「像素级一致」。原生位图拷贝没有这一层。
-/// 3. 顺带省掉 WebView 里那份 33MB 的解码结果。
-///
-/// # 底图窗口和遮罩窗口的关系
-///
-/// 每块屏两个顶层窗口：底图窗口在下，只负责把冻结画面画出来，永不接收输入；
-/// 透明的遮罩 WebView 在上，负责压暗、选区、工具条。两者由 DWM 合成，是成熟场景
-/// ——注意这**不是**"在 WebView2 同一个窗口内叠原生内容"那种难题。
-///
-/// 显示必须原子：见 [`Self::show_above`]。
-///
-/// # 像素照样要送进 WebView，只是不在关键路径上
-///
-/// 放大镜（6 倍实时取色）、取色快捷键、马赛克都需要背景原始像素，按需 IPC 在
-/// 74ms 往返下撑不住 60fps。所以底图像素仍然通过 `shot:` 协议异步流进 WebView，
-/// 只是遮罩不再等它才显示：画面 ~70ms 出来，像素 230–330ms 到位，在此之前放大镜
-/// 不渲染。用户从看到画面到手开始动至少 200–400ms，感知不到这个差。
-pub trait BackdropLayer: Send + Sync {
-    /// 为某块屏准备底图窗口。幂等，重复调用只是确认窗口还在。
-    ///
-    /// 必须在 UI 线程调用（Windows 上窗口归创建它的线程所有）。
-    fn ensure(&self, monitor: MonitorId) -> AppResult<()>;
-
-    /// 把这块屏的冻结画面装进底图窗口并摆到 `at`，但**保持隐藏**。
-    ///
-    /// 装载和显示分开，是为了让显示那一步能和遮罩窗口凑成一次原子操作。
-    fn load(&self, monitor: MonitorId, image: &RgbaImage, at: PhysicalRect) -> AppResult<()>;
-
-    /// 把底图窗口显示在 `overlay` 正下方，且两者在同一帧里出现。
-    ///
-    /// `overlay` 是遮罩窗口的原生句柄（Windows 上是 HWND）。用 `u64` 而不是
-    /// 平台句柄类型，是为了守住规格 07 §1 第 4 条铁律。
-    ///
-    /// 分两次 show 是不行的：中间那一帧会露出没有压暗的原始画面，表现为一道闪光。
-    fn show_above(&self, monitor: MonitorId, overlay: u64) -> AppResult<()>;
-
-    /// 藏起所有底图窗口。窗口和像素缓冲都留着复用。
-    fn hide_all(&self);
-
-    /// 销毁不在 `keep` 里的底图窗口（显示器被拔掉了）。
-    fn retain(&self, keep: &[MonitorId]);
-}
-
-/// 系统外观与能力探测。
-pub trait SystemInfo: Send + Sync {
-    fn is_dark_mode(&self) -> bool;
-
-    /// 系统"透明效果"开关。关闭时必须放弃玻璃材质（规格 00 §6.5）。
-    fn is_transparency_enabled(&self) -> bool;
-}
-
-/// 进程级初始化。必须在创建任何窗口、调用任何抓屏 API **之前**执行。
-///
-/// Windows 上这里声明 Per-Monitor-DPI-Aware-V2；少了这一句，混合 DPI 环境下
-/// 所有坐标都是错的（规格 07 §4.1）。
+/// 进程启动最早期调用：声明 Per-Monitor V2 DPI 感知等。
 pub fn init_process() {
-    sys::init_process();
+    sys::init_process()
 }
 
-pub fn screen_capture() -> &'static dyn ScreenCapture {
-    sys::screen_capture()
+// ───────────────────────── 抓屏 ─────────────────────────
+
+pub fn list_monitors() -> AppResult<Vec<MonitorInfo>> {
+    sys::capture::list_monitors()
 }
 
-pub fn window_effects() -> &'static dyn WindowEffects {
-    sys::window_effects()
+/// 抓取全部显示器。顺序：主屏在前，其余按 x、y 排。
+pub fn capture_all() -> AppResult<Vec<(MonitorInfo, RgbaImage)>> {
+    sys::capture::capture_all()
 }
 
-pub fn backdrop_layer() -> &'static dyn BackdropLayer {
-    sys::backdrop_layer()
+pub fn capture_monitor(id: MonitorId) -> AppResult<RgbaImage> {
+    sys::capture::capture_monitor(id)
 }
 
-pub fn system_info() -> &'static dyn SystemInfo {
-    sys::system_info()
+/// 预先支付首次抓屏的设备初始化开销（冷 137ms vs 热 49ms），结果丢弃。
+pub fn warm_up_capture() {
+    sys::capture::warm_up()
+}
+
+/// 显示器配置变化 / 睡眠唤醒 / 系统主题变化时回调（回调必须立刻返回）。
+pub fn watch_system_events(handler: fn(SystemEvent)) {
+    sys::system_events::install(handler)
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SystemEvent {
+    DisplayChanged,
+    Resumed,
+    ThemeChanged,
+}
+
+// ───────────────────────── 窗口 ─────────────────────────
+
+/// 按 Z 序从上到下枚举可见顶层窗口（已过滤最小化、隐藏、工具窗、本进程窗口）。
+pub fn enumerate_windows() -> AppResult<Vec<WindowInfo>> {
+    sys::window_enum::enumerate_top_level()
+}
+
+/// 指定窗口内的可见子控件矩形（截图时的区域细分检测）。
+pub fn enumerate_children(window: WindowHandle) -> AppResult<Vec<PhysicalRect>> {
+    sys::window_enum::enumerate_children(window)
+}
+
+pub fn foreground_window() -> Option<WindowHandle> {
+    sys::window_enum::foreground_window()
+}
+
+/// 这个窗口是不是 DATO COR 自己的。
+pub fn is_own_window(window: WindowHandle) -> bool {
+    sys::window_enum::is_own_window(window)
+}
+
+/// 某个屏幕点上实际可见的顶层窗口（跳过鼠标穿透的窗口）。
+pub fn window_at(x: i32, y: i32) -> Option<WindowHandle> {
+    sys::window_enum::window_at(x, y)
+}
+
+pub fn app_info_of(window: WindowHandle) -> Option<AppInfo> {
+    sys::window_enum::app_info_of(window)
+}
+
+/// 把焦点还给指定窗口（绕过前台锁）。
+pub fn focus_window(window: WindowHandle) -> AppResult<()> {
+    sys::input::focus_window(window)
+}
+
+pub fn cursor_position() -> Option<(i32, i32)> {
+    sys::input::cursor_position()
+}
+
+/// Tauri 窗口的原生句柄（不透明 u64）。
+pub fn native_handle(window: &WebviewWindow) -> AppResult<u64> {
+    sys::effects::native_handle(window)
+}
+
+/// 窗口是否从抓屏结果里排除（Win10 2004+）。
+pub fn set_exclude_from_capture(window: &WebviewWindow, exclude: bool) {
+    sys::effects::set_exclude_from_capture(window, exclude)
+}
+
+/// 诊断模式（`CHENOCR_ALLOW_SELF_CAPTURE=1`）下显示时放开抓屏、隐藏时恢复排除。
+pub fn reveal_for_tests(window: &WebviewWindow, visible: bool) {
+    sys::effects::reveal_for_tests(window, visible)
+}
+
+/// 窗口不抢焦点地置顶显示（toast 之类）。
+/// 让窗口永远不被激活（点它、显示它都不抢焦点）。悬浮按钮这类"浮在别人上面"的窗口用。
+pub fn set_no_activate(window: &WebviewWindow) {
+    sys::effects::set_no_activate(window);
+}
+
+pub fn show_without_activate(window: &WebviewWindow) -> AppResult<()> {
+    sys::effects::show_without_activate(window)
+}
+
+/// 把当前鼠标指针画进截图（`origin` = 图左上角的虚拟桌面物理坐标）。瞬间截屏用。
+pub fn draw_cursor(image: &mut image::RgbaImage, origin: (i32, i32)) {
+    sys::cursor::draw_cursor(image, origin);
+}
+
+/// 原生隐藏（配合 `show_without_activate` 用）。
+pub fn hide_window(window: &WebviewWindow) {
+    sys::effects::hide_window(window);
+}
+
+// ───────────────────────── 冻结底图层 ─────────────────────────
+//
+// 截图时冻结的屏幕画面不进 WebView：4K 传输解码要 170ms 且 Chromium 色彩管理会改
+// 像素值。每块屏一个原生分层窗口，画面在隐藏状态就交给 DWM，和透明遮罩原子上屏。
+// **以下函数只能在 UI 线程调用**（窗口归创建线程所有）。
+
+pub mod backdrop {
+    use super::*;
+
+    pub fn ensure(monitor: MonitorId) -> AppResult<()> {
+        sys::backdrop::ensure(monitor)
+    }
+
+    pub fn load(monitor: MonitorId, image: &RgbaImage, at: PhysicalRect) -> AppResult<()> {
+        sys::backdrop::load(monitor, image, at)
+    }
+
+    /// 底图摆到遮罩正下方，两者同一批次显示，杜绝先亮一帧未压暗的画面。
+    pub fn show_below(monitor: MonitorId, overlay: u64) -> AppResult<()> {
+        sys::backdrop::show_below(monitor, overlay)
+    }
+
+    pub fn hide_all() {
+        sys::backdrop::hide_all()
+    }
+
+    pub fn release_all() {
+        sys::backdrop::release_all()
+    }
+
+    pub fn retain(keep: &[MonitorId]) {
+        sys::backdrop::retain(keep)
+    }
+}
+
+// ───────────────────────── 剪贴板 ─────────────────────────
+
+/// 启动剪贴板监听线程，每次变化推送一份快照。
+pub fn start_clipboard_listener(tx: Sender<ClipboardSnapshot>) -> AppResult<()> {
+    sys::clipboard::start_listener(tx)
+}
+
+pub fn clipboard_write(payload: &ClipboardPayload) -> AppResult<()> {
+    sys::clipboard::write(payload)
+}
+
+pub fn clipboard_read_text() -> Option<String> {
+    sys::clipboard::read_text()
+}
+
+/// 整份备份当前剪贴板（划词翻译模拟复制前用，事后原样恢复）。
+pub fn clipboard_backup() -> Option<ClipboardBackup> {
+    sys::clipboard::backup().map(ClipboardBackup)
+}
+
+pub fn clipboard_restore(backup: ClipboardBackup) {
+    sys::clipboard::restore(backup.0)
+}
+
+pub fn clipboard_sequence() -> u32 {
+    sys::clipboard::sequence_number()
+}
+
+#[derive(Clone)]
+pub struct ClipboardBackup(sys::clipboard::Backup);
+
+// ───────────────────────── 输入模拟 / 钩子 ─────────────────────────
+
+/// 先释放所有修饰键（用户可能还按着 Alt+V 的 Alt），再发 Ctrl+V。
+pub fn send_paste() -> AppResult<()> {
+    sys::input::send_paste()
+}
+
+pub fn send_copy() -> AppResult<()> {
+    sys::input::send_copy()
+}
+
+/// 安装全局鼠标/键盘钩子（长截图用）。Enter/Esc/Backspace 会被吞掉，其余放行。
+/// 返回的守卫 drop 时卸载钩子。
+pub fn install_input_hook(tx: Sender<HookEvent>) -> AppResult<InputHookGuard> {
+    sys::hook::install(tx).map(InputHookGuard)
+}
+
+pub struct InputHookGuard(#[allow(dead_code)] sys::hook::Guard);
+
+/// 安装常驻的划词监听钩子（只看鼠标，只吞悬浮按钮上的点击）。守卫 drop 时卸载。
+pub fn start_selection_watch(tx: Sender<SelectionEvent>) -> AppResult<SelectionWatchGuard> {
+    sys::selection_hook::install(tx).map(SelectionWatchGuard)
+}
+
+pub struct SelectionWatchGuard(#[allow(dead_code)] sys::selection_hook::Guard);
+
+/// 告诉划词钩子悬浮按钮的位置（屏幕物理坐标）；None = 按钮已隐藏。
+pub fn set_selection_button_rect(rect: Option<PhysicalRect>) {
+    sys::selection_hook::set_button_rect(rect);
+}
+
+// ───────────────────────── 密钥 ─────────────────────────
+
+pub fn protect(plain: &[u8]) -> AppResult<Vec<u8>> {
+    sys::secret::protect(plain)
+}
+
+pub fn unprotect(cipher: &[u8]) -> AppResult<Vec<u8>> {
+    sys::secret::unprotect(cipher)
+}
+
+// ───────────────────────── 系统信息 ─────────────────────────
+
+pub fn system_visuals() -> SystemVisuals {
+    sys::system_info::visuals()
+}
+
+/// 可执行文件图标（32×32 RGBA）。
+pub fn extract_app_icon(exe: &Path) -> Option<RgbaImage> {
+    sys::app_icon::extract(exe)
+}
+
+/// 默认的"图片"文件夹。
+pub fn pictures_dir() -> Option<std::path::PathBuf> {
+    sys::system_info::pictures_dir()
+}
+
+/// 启动子进程时不弹控制台窗口（Windows 的 CREATE_NO_WINDOW）。
+pub fn hidden_command(program: &Path) -> std::process::Command {
+    sys::process::hidden_command(program)
+}
+
+/// 让子进程随本进程退出（包括崩溃、被强制结束）而结束，不留孤儿进程。
+pub fn tie_to_current_process(child: &std::process::Child) {
+    sys::process::tie_to_current_process(child);
+}
+
+// ───────────────────────── 系统 OCR ─────────────────────────
+
+pub fn system_ocr_available() -> bool {
+    sys::ocr::available()
+}
+
+pub fn system_ocr(image: &RgbaImage) -> AppResult<Vec<SysOcrLine>> {
+    sys::ocr::recognize(image)
 }

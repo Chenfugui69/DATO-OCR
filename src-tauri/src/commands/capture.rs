@@ -1,73 +1,192 @@
-//! 截图相关 command。
+//! 截图 / 长截图 / 贴图 / 编辑器命令。
 
-use tauri::AppHandle;
+use tauri::ipc::Request;
+use tauri::{AppHandle, Manager};
 
-use crate::capture::{
-    self, Bounds, CaptureAction, CaptureFinishResult, CapturePrepareResult, CaptureMode,
-};
-use crate::error::AppResult;
-use crate::platform::MonitorId;
+use super::{blocking, raw_request};
+use crate::capture::{self, CaptureIntent, FinishMeta, SessionInfo};
+use crate::editor::{self, EditorDoc, EditorFinish};
+use crate::error::{AppError, AppResult};
+use crate::pin::{self, PinInfo};
+use crate::platform::{self, ClipboardPayload, MonitorId, PhysicalRect, WindowHandle};
+use crate::state::state;
+use crate::{library, longshot, ocr, wm};
 
-/// 返回当前会话的显示器元信息。
-///
-/// 抓屏本身由热键回调在 Rust 侧完成（见 `capture` 模块的模块级说明），这里是
-/// 幂等的读操作。没有进行中的会话时返回 `no_capture_session`。
 #[tauri::command]
-pub fn capture_prepare(app: AppHandle) -> AppResult<CapturePrepareResult> {
-    capture::prepare_result(&app)
+pub async fn capture_start(app: AppHandle, intent: CaptureIntent) -> AppResult<()> {
+    // 从主窗口按钮触发时先把主窗口藏起来，别拍进去
+    if let Some(main) = app.get_webview_window(wm::MAIN) {
+        if main.is_visible().unwrap_or(false) {
+            let _ = main.hide();
+            std::thread::sleep(std::time::Duration::from_millis(220));
+        }
+    }
+    capture::trigger(&app, intent);
+    Ok(())
 }
 
-/// 遮罩前端已挂载、事件监听已注册，可以接会话通知了。
-///
-/// 遮罩窗口是启动时预建并隐藏的，Rust 侧无从知道里面的 WebView 加载到哪一步。
-/// 没有这个信号的话，热键来得比前端就绪早会导致整次截图静默卡死。
+/// 遮罩页面加载完成时调一次：如果热键早于页面加载到达，补上会话。
 #[tauri::command]
-pub fn capture_overlay_boot(app: AppHandle, monitor_id: u64) {
-    capture::overlay_boot(&app, MonitorId(monitor_id));
-}
-
-/// 遮罩前端已经把压暗层放进 DOM，请求让画面出来。
-///
-/// 底图在原生层，所以这里**不等**任何像素传输。`prepare_ms` 是前端自量的
-/// "收到会话通知 → `capture_prepare` 返回"，只用来写日志：热键到上屏的总时间
-/// 必须由 Rust 侧计（前端拿不到按键那一刻的时间戳）。
-#[tauri::command]
-pub fn capture_overlay_ready(
+pub async fn capture_session_info(
     app: AppHandle,
     monitor_id: u64,
-    prepare_ms: Option<f64>,
+) -> AppResult<Option<SessionInfo>> {
+    capture::session_info(&app, MonitorId(monitor_id))
+}
+
+#[tauri::command]
+pub async fn capture_overlay_ready(
+    app: AppHandle,
+    session_id: u64,
+    monitor_id: u64,
 ) -> AppResult<()> {
-    capture::overlay_ready(&app, MonitorId(monitor_id), prepare_ms)
-}
-
-/// 底图像素已经送到 WebView 并解码完毕。
-///
-/// 纯埋点。这条路不在关键路径上，但它决定放大镜/取色/马赛克何时可用。
-#[tauri::command]
-pub fn capture_overlay_pixels_ready(
-    app: AppHandle,
-    monitor_id: u64,
-    timings: capture::PixelTimings,
-) {
-    capture::overlay_pixels_ready(&app, MonitorId(monitor_id), timings);
+    capture::overlay_ready(&app, session_id, MonitorId(monitor_id))
 }
 
 #[tauri::command]
-pub fn capture_finish(
-    app: AppHandle,
-    bounds: Bounds,
-    action: CaptureAction,
-) -> AppResult<CaptureFinishResult> {
-    capture::finish(&app, bounds, action)
+pub async fn capture_window_children(handle: u64) -> AppResult<Vec<PhysicalRect>> {
+    platform::enumerate_children(WindowHandle(handle))
 }
 
 #[tauri::command]
-pub fn capture_cancel(app: AppHandle) {
-    capture::cancel(&app);
+pub async fn capture_finish(app: AppHandle, request: Request<'_>) -> AppResult<()> {
+    let (meta, body): (FinishMeta, Vec<u8>) = raw_request(&request)?;
+    blocking(move || capture::finish(&app, meta, body)).await
 }
 
-/// 手动触发一次截图，等价于按热键。M0 用它在主窗口上做不依赖热键的验证。
 #[tauri::command]
-pub fn capture_trigger(app: AppHandle, mode: Option<CaptureMode>) -> AppResult<()> {
-    capture::start(&app, mode.unwrap_or(CaptureMode::Normal))
+pub async fn capture_cancel(app: AppHandle, session_id: u64) -> AppResult<()> {
+    capture::end_session(&app, session_id, true);
+    Ok(())
+}
+
+/// 取色器复制颜色值、识字结果复制等：写一段纯文本到剪贴板（会进历史）。
+#[tauri::command]
+pub async fn clipboard_write_text(text: String) -> AppResult<()> {
+    platform::clipboard_write(&ClipboardPayload::Text {
+        text,
+        html: None,
+        rtf: None,
+    })
+}
+
+// ───────────────────────── 长截图 ─────────────────────────
+
+#[tauri::command]
+pub async fn longshot_set_regions(app: AppHandle, regions: Vec<PhysicalRect>) -> AppResult<()> {
+    longshot::set_regions(&app, regions);
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn longshot_finish(app: AppHandle) -> AppResult<()> {
+    blocking(move || {
+        longshot::finish(&app);
+        Ok(())
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn longshot_abort(app: AppHandle) -> AppResult<()> {
+    longshot::abort(&app);
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn longshot_undo(app: AppHandle) -> AppResult<()> {
+    longshot::undo(&app);
+    Ok(())
+}
+
+// ───────────────────────── 贴图 ─────────────────────────
+
+#[tauri::command]
+pub async fn pin_info(app: AppHandle, label: String) -> AppResult<PinInfo> {
+    pin::info(&app, &label)
+}
+
+#[tauri::command]
+pub async fn pin_close(app: AppHandle, label: String) -> AppResult<()> {
+    let ui = app.clone();
+    app.run_on_main_thread(move || pin::close(&ui, &label))?;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn pin_close_all(app: AppHandle) -> AppResult<()> {
+    let ui = app.clone();
+    app.run_on_main_thread(move || pin::close_all(&ui))?;
+    Ok(())
+}
+
+fn pin_image(app: &AppHandle, label: &str) -> AppResult<image::RgbaImage> {
+    state(app)
+        .pins
+        .image(label)
+        .map(|img| (*img).clone())
+        .ok_or_else(|| AppError::NotFound("贴图".into()))
+}
+
+#[tauri::command]
+pub async fn pin_copy(app: AppHandle, label: String) -> AppResult<()> {
+    blocking(move || {
+        let image = pin_image(&app, &label)?;
+        platform::clipboard_write(&ClipboardPayload::Image { image, png: None })?;
+        wm::toast(&app, "success", "已复制到剪贴板");
+        Ok(())
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn pin_save(app: AppHandle, label: String) -> AppResult<()> {
+    blocking(move || {
+        let image = pin_image(&app, &label)?;
+        let settings = state(&app).settings.read().capture.clone();
+        if let Some(path) = capture::ask_save_path(&app, &settings)? {
+            capture::write_image_file(&image, &path, &settings)?;
+            wm::toast(&app, "success", "已保存");
+        }
+        Ok(())
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn pin_ocr(app: AppHandle, label: String, translate: bool) -> AppResult<()> {
+    blocking(move || {
+        let image = pin_image(&app, &label)?;
+        ocr::open_job(&app, image, None, translate)
+    })
+    .await
+}
+
+// ───────────────────────── 编辑器 ─────────────────────────
+
+#[tauri::command]
+pub async fn editor_current() -> AppResult<Option<EditorDoc>> {
+    Ok(editor::current())
+}
+
+#[tauri::command]
+pub async fn editor_finish(app: AppHandle, request: Request<'_>) -> AppResult<()> {
+    let (meta, body): (EditorFinish, Vec<u8>) = raw_request(&request)?;
+    blocking(move || editor::finish(&app, meta, body)).await
+}
+
+#[tauri::command]
+pub async fn editor_close(app: AppHandle) -> AppResult<()> {
+    let ui = app.clone();
+    app.run_on_main_thread(move || editor::close(&ui))?;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn editor_open_shot(app: AppHandle, id: i64) -> AppResult<()> {
+    blocking(move || {
+        let image = library::load_image(&app, id)?;
+        editor::open(&app, image, Some(id)).map(drop)
+    })
+    .await
 }

@@ -1,0 +1,283 @@
+/*
+ * 截图遮罩（规格 06 §6.3）：这个窗口不用玻璃材质、不用任何背景色 ——
+ * 整体必须没有不透明背景，压暗只由 .cap-mask 的半透明色提供，任何一层留了底色，
+ * 下面的原生底图就被盖住了。只有工具条和尺寸提示用玻璃。
+ */
+html[data-view='capture'],
+html[data-view='capture'] body,
+html[data-view='capture'] #root {
+  background: transparent !important;
+}
+
+.cap-root {
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
+  touch-action: none;
+}
+
+/* 用 clip-path 挖洞而不是四个 div 拼四周（规格 02 §4）。没有过渡动画：截图要瞬间响应 */
+.cap-mask {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  will-change: clip-path;
+}
+
+.cap-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+
+/* 自动检测高亮：2px 实线 */
+/* 选区框样式由 .cap-root 上的 --cap-frame-* 变量决定（设置里可改：颜色、粗细、线型、圆角） */
+.cap-hover {
+  position: absolute;
+  box-sizing: border-box;
+  border: calc(var(--cap-frame-width) + 0.5px) var(--cap-frame-style) var(--cap-frame-color);
+  border-radius: var(--cap-frame-radius);
+  /* 一圈很淡的阴影：白框压在白色内容上也看得清 */
+  filter: drop-shadow(0 0 1px rgba(0, 0, 0, 0.45));
+  pointer-events: none;
+}
+
+/* 选区边框画在选区外侧，不遮住边缘的真实像素 */
+.cap-frame {
+  position: absolute;
+  outline: var(--cap-frame-width) var(--cap-frame-style) var(--cap-frame-color);
+  border-radius: var(--cap-frame-radius);
+  filter: drop-shadow(0 0 1px rgba(0, 0, 0, 0.45));
+  pointer-events: none;
+}
+
+/* 8 个控制点：白色圆 + 框色描边 + 一圈阴影（框是白色时也看得见）；实际命中范围更大 */
+.cap-handle {
+  position: absolute;
+  width: 7px;
+  height: 7px;
+  margin: -3.5px 0 0 -3.5px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 0 0 1px var(--cap-frame-color), 0 1px 3px rgba(0, 0, 0, 0.45);
+  pointer-events: none;
+}
+
+.cap-size {
+  position: absolute;
+  left: 0;
+  top: 0;
+  padding: 3px 7px;
+  border-radius: var(--cn-radius-sm);
+  font: 500 11px/14px var(--cn-font-sans);
+  color: var(--cn-label);
+  pointer-events: none;
+  white-space: nowrap;
+  box-shadow: var(--cn-shadow-md);
+}
+
+.cap-text-layer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+.cap-text-layer > * {
+  pointer-events: auto;
+}
+
+.an-toolbar,
+.an-subtoolbar,
+.cap-intent {
+  position: absolute;
+  left: 0;
+  top: 0;
+}
+
+/* 上下都放不下时工具条进到选区里面：加一层更不透明的底，免得和截图内容糊在一起 */
+.cap-toolbar--inside {
+  background: var(--cn-glass-bg-chrome);
+}
+
+.cap-intent {
+  padding: 4px 10px;
+  border-radius: var(--cn-radius-sm);
+  font: var(--cn-text-callout);
+  color: var(--cn-label);
+  pointer-events: none;
+  white-space: nowrap;
+}
+
+/* ── 放大镜 ── */
+.cap-magnifier {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 120px;
+  pointer-events: none;
+  border-radius: var(--cn-radius-md);
+  overflow: hidden;
+  background: rgba(28, 28, 30, 0.92);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35), 0 0 0 0.5px rgba(255, 255, 255, 0.18);
+}
+.cap-magnifier__view {
+  position: relative;
+  width: 120px;
+  height: 120px;
+  overflow: hidden;
+}
+.cap-magnifier__view canvas {
+  width: 120px;
+  height: 120px;
+  image-rendering: pixelated;
+  display: block;
+}
+.cap-magnifier__h,
+.cap-magnifier__v {
+  position: absolute;
+  background: rgba(0, 122, 255, 0.28);
+}
+.cap-magnifier__h {
+  left: 0;
+  right: 0;
+}
+.cap-magnifier__v {
+  top: 0;
+  bottom: 0;
+}
+.cap-magnifier__px {
+  position: absolute;
+  box-shadow: 0 0 0 1px #007aff;
+}
+.cap-magnifier__info {
+  padding: 5px 8px 6px;
+  font: 500 11px/16px var(--cn-font-sans);
+  color: rgba(255, 255, 255, 0.92);
+}
+.cap-magnifier__color {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.cap-magnifier__color span {
+  width: 12px;
+  height: 12px;
+  border-radius: 3px;
+  box-shadow: inset 0 0 0 0.5px rgba(255, 255, 255, 0.5);
+}
+
+/* ── 长截图 ── */
+.ls-ants {
+  position: absolute;
+  overflow: visible;
+  pointer-events: none;
+}
+.ls-ants rect {
+  fill: none;
+  stroke: var(--cn-accent);
+  stroke-width: 2;
+  stroke-dasharray: 6 4;
+  animation: ls-march 0.8s linear infinite;
+}
+@keyframes ls-march {
+  to {
+    stroke-dashoffset: -10;
+  }
+}
+.ls-bar {
+  position: absolute;
+  left: 0;
+  top: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--cn-space-2);
+  height: 44px;
+  padding: 0 6px 0 14px;
+  border-radius: var(--cn-radius-xl);
+  font: var(--cn-text-body);
+  color: var(--cn-label);
+  white-space: nowrap;
+  transition: background-color var(--cn-duration-normal);
+}
+.ls-bar--warn {
+  background: color-mix(in srgb, var(--cn-warning) 88%, transparent);
+  color: #fff;
+}
+.ls-bar--ok svg:first-child {
+  color: var(--cn-accent);
+}
+.ls-bar__msg {
+  margin-right: var(--cn-space-2);
+}
+.ls-bar__actions {
+  display: flex;
+  gap: 4px;
+}
+.ls-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 30px;
+  padding: 0 10px;
+  border-radius: var(--cn-radius-md);
+  font: 500 12px/1 var(--cn-font-sans);
+  color: inherit;
+  background: var(--cn-fill-quaternary);
+  transition: background-color var(--cn-duration-fast);
+}
+.ls-btn:hover:not(:disabled) {
+  background: var(--cn-fill-tertiary);
+}
+.ls-btn:disabled {
+  opacity: 0.4;
+}
+.ls-btn kbd {
+  font: 500 10px/1 var(--cn-font-sans);
+  opacity: 0.6;
+}
+.ls-btn--primary,
+.ls-btn--primary:hover:not(:disabled) {
+  background: var(--cn-accent);
+  color: #fff;
+}
+.ls-preview {
+  position: absolute;
+  top: 50%;
+  width: 120px;
+  max-height: 62vh;
+  display: flex;
+  flex-direction: column;
+  transform: translateY(-50%);
+  border-radius: var(--cn-radius-xl);
+  overflow: hidden;
+}
+.ls-preview__scroll {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-width: none;
+}
+.ls-preview__img {
+  position: relative;
+}
+.ls-preview__img img {
+  display: block;
+  width: 120px;
+  animation: cn-fade-in 200ms var(--cn-ease-out);
+}
+.ls-preview__seam {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background: var(--cn-accent);
+  box-shadow: 0 0 4px var(--cn-accent);
+}
+.ls-preview__meta {
+  padding: 6px 8px;
+  font: var(--cn-text-footnote);
+  color: var(--cn-label-secondary);
+  text-align: center;
+  box-shadow: inset 0 0.5px 0 var(--cn-separator);
+}

@@ -1,207 +1,330 @@
-// 总纲 §6.2 禁止 unwrap/expect。靠人工 review 守不住，交给 clippy 拦。
-//
-// 测试代码整体放行：断言失败就该 panic，那正是测试要的行为，改成 `?` 只会让失败
-// 信息变差。注意 `cfg_attr(test, allow(..))` 是**整个 crate** 放行，所以生产代码的
-// 拦截实际发生在非 test 那次编译上 —— `cargo clippy --all-targets` 两次都编，
-// 覆盖是完整的。
+//! DATO COR —— 截图 · 识字 · 翻译 · 剪贴板 · AI。（内部代号 chenocr）
+//!
+//! 启动顺序：
+//! 1. `platform::init_process()`：声明 PMv2 DPI 感知（必须在任何窗口之前）
+//! 2. `setup`：数据目录 → 日志 → 配置 → 数据库 → 全局状态 → 托盘 → 主窗口
+//! 3. `RunEvent::Ready`：注册热键、预建遮罩/面板/toast 窗口、抓屏热身、剪贴板监听
+//!    （窗口必须等 Ready 之后再建：`setup()` 里建的窗口拿不到 IPC 初始化脚本）
+
+// 总纲 §6.2 禁止运行时路径上的 unwrap/expect，交给 clippy 拦。测试代码放行。
 #![deny(clippy::unwrap_used, clippy::expect_used)]
 #![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used))]
 
+mod ai;
 mod capture;
+mod clipboard;
 mod commands;
+mod editor;
 mod error;
+mod events;
+mod hotkeys;
+mod image_store;
+mod imaging;
+mod library;
 mod logging;
+mod longshot;
+mod maintenance;
+mod net;
+mod ocr;
 mod paths;
+mod pin;
 mod platform;
+mod settings;
 mod state;
+mod storage;
+mod translate;
+mod tray;
+mod wm;
 
-use tauri::menu::{Menu, MenuItem};
-use tauri::tray::TrayIconEvent;
-use tauri::{AppHandle, Manager, WindowEvent};
-use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Shortcut, ShortcutState};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::OnceLock;
 
-use crate::capture::CaptureMode;
-use crate::error::AppResult;
+use tauri::{AppHandle, Manager, RunEvent, WindowEvent};
+use tauri_plugin_autostart::MacosLauncher;
+
 use crate::paths::AppPaths;
-use crate::state::AppState;
+use crate::platform::SystemEvent;
+use crate::settings::Settings;
+use crate::state::{state, AppState};
+use crate::storage::Db;
 
-/// M0 只挂截图热键。完整的热键表（F2 长截图 / F3 识字 / Alt+V 剪贴板 …）
-/// 见规格 07 §8，等设置模块（M6）能读写配置之后再接。
-fn capture_hotkey() -> Shortcut {
-    Shortcut::new(None, Code::F1)
-}
+static APP: OnceLock<AppHandle> = OnceLock::new();
 
 pub fn run() {
-    // DPI 必须在任何窗口、任何抓屏 API 之前声明（规格 07 §4.1）。
     platform::init_process();
 
-    let app = tauri::Builder::default()
-        .plugin(tauri_plugin_os::init())
-        .plugin(tauri_plugin_opener::init())
-        .plugin(tauri_plugin_clipboard_manager::init())
+    let builder = tauri::Builder::default()
+        // 单实例必须第一个注册：第二次启动只是把已有实例的主窗口叫出来。
+        // `--page=settings:translate` 这样的参数可以直接跳到某一页（快捷方式、测试用）
+        .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
+            let page = args.iter().find_map(|a| a.strip_prefix("--page="));
+            wm::show_main(app, page);
+        }))
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
-                .with_handler(on_shortcut)
+                .with_handler(hotkeys::on_shortcut)
                 .build(),
         )
-        // 底图走自定义协议而不是 IPC。原因见 capture::protocol 的文件头
-        // —— 33MB 过 IPC 要 900ms，直接把整个延迟预算吃光。
-        .register_asynchronous_uri_scheme_protocol(
-            capture::protocol::SCHEME,
-            capture::protocol::handle,
-        )
+        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_autostart::init(
+            MacosLauncher::LaunchAgent,
+            Some(vec!["--autostart"]),
+        ))
+        .register_asynchronous_uri_scheme_protocol(image_store::SCHEME, image_store::handle)
         .setup(setup)
         .on_window_event(on_window_event)
         .invoke_handler(tauri::generate_handler![
-            commands::capture::capture_prepare,
-            commands::capture::capture_overlay_boot,
+            commands::capture::capture_start,
+            commands::capture::capture_session_info,
             commands::capture::capture_overlay_ready,
-            commands::capture::capture_overlay_pixels_ready,
+            commands::capture::capture_window_children,
             commands::capture::capture_finish,
             commands::capture::capture_cancel,
-            commands::capture::capture_trigger,
-            commands::system::get_system_diagnostics,
+            commands::capture::clipboard_write_text,
+            commands::capture::longshot_set_regions,
+            commands::capture::longshot_finish,
+            commands::capture::longshot_abort,
+            commands::capture::longshot_undo,
+            commands::capture::pin_info,
+            commands::capture::pin_close,
+            commands::capture::pin_close_all,
+            commands::capture::pin_copy,
+            commands::capture::pin_save,
+            commands::capture::pin_ocr,
+            commands::capture::editor_current,
+            commands::capture::editor_finish,
+            commands::capture::editor_close,
+            commands::capture::editor_open_shot,
+            commands::clipboard::clipboard_query,
+            commands::clipboard::clipboard_get,
+            commands::clipboard::clipboard_stats,
+            commands::clipboard::clipboard_paste,
+            commands::clipboard::clipboard_copy,
+            commands::clipboard::clipboard_delete,
+            commands::clipboard::clipboard_set_pinned,
+            commands::clipboard::clipboard_set_favorite,
+            commands::clipboard::clipboard_set_note,
+            commands::clipboard::clipboard_set_group,
+            commands::clipboard::clipboard_groups,
+            commands::clipboard::clipboard_create_group,
+            commands::clipboard::clipboard_rename_group,
+            commands::clipboard::clipboard_delete_group,
+            commands::clipboard::clipboard_clear,
+            commands::clipboard::clipboard_panel_hide,
+            commands::clipboard::clipboard_open,
+            commands::library::library_query,
+            commands::library::library_delete,
+            commands::library::library_set_favorite,
+            commands::library::library_set_note,
+            commands::library::library_copy,
+            commands::library::library_pin,
+            commands::library::library_save_as,
+            commands::library::library_reveal,
+            commands::library::library_ocr,
+            commands::library::ocr_current_job,
+            commands::library::ocr_rerun,
+            commands::library::ocr_save_text,
+            commands::library::ocr_status,
+            commands::library::ocr_history,
+            commands::library::ocr_open_record,
+            commands::library::ocr_delete_record,
+            commands::library::ocr_from_clip,
+            commands::tools::translate_text,
+            commands::tools::translate_providers,
+            commands::tools::translate_detect,
+            commands::tools::translate_popup_text,
+            commands::ai::ai_models,
+            commands::ai::ai_chat,
+            commands::ai::ai_cancel,
+            commands::ai::ai_keys,
+            commands::ai::ai_set_key,
+            commands::ai::ai_open,
+            commands::ai::ai_context,
+            commands::system::settings_get,
+            commands::system::settings_set,
+            commands::system::settings_reset,
+            commands::system::visuals_get,
+            commands::system::hotkeys_status,
+            commands::system::hotkeys_suspend,
+            commands::system::hotkeys_resume,
+            commands::system::hotkey_validate,
+            commands::system::secrets_status,
+            commands::system::secret_set,
+            commands::system::data_dir,
+            commands::system::app_info,
             commands::system::open_data_folder,
+            commands::system::open_url,
+            commands::system::pick_directory,
+            commands::system::show_main,
+            commands::system::toast_hide,
+            commands::system::quit_app,
             commands::system::report_error,
-        ])
-        .build(tauri::generate_context!());
+        ]);
 
-    // 到这一步失败说明应用根本起不来，没有可恢复路径。但也不能 expect 掉：
-    // 这是 `windows_subsystem = "windows"` 的 GUI 进程，没有控制台，panic 信息
-    // 直接进虚空 —— 用户看到的是"双击了没反应"，我们手里一条线索都没有。
-    // 所以先尽量往日志里写一笔（`setup` 已经跑过的话 tracing 就是活的），
-    // 再以非零码退出。
-    let app = match app {
+    // 这是 windows_subsystem = "windows" 的 GUI 进程，没有控制台，panic 信息进虚空。
+    // 初始化失败时至少往日志里留一笔，再以非零码退出。
+    let app = match builder.build(tauri::generate_context!()) {
         Ok(app) => app,
         Err(err) => {
-            tracing::error!("Tauri 应用初始化失败: {err}");
-            eprintln!("CHENOCR 初始化失败: {err}");
+            tracing::error!("应用初始化失败：{err}");
+            eprintln!("DATO COR 初始化失败：{err}");
             std::process::exit(1);
         }
     };
 
-    app.run(|app, event| {
-            // 遮罩窗口必须等到 `Ready` 之后再建。在 `setup()` 里建出来的窗口，
-            // WebView 拿不到 Tauri 注入的 IPC 初始化脚本，页面里的 JS 根本不会跑
-            // —— 表现是按 F1 之后遮罩永远不出现，且没有任何报错。
-            if matches!(event, tauri::RunEvent::Ready) {
-                capture::overlay::prewarm(app);
-
-                // 启动热一次，并订阅"热身状态失效"的时机（插拔屏、睡眠唤醒等）。
-                // 热身本身在后台线程跑，不占 UI 线程。策略见 capture::warmup。
-                capture::warmup::install();
-            }
-        });
+    app.run(|app, event| match event {
+        RunEvent::Ready => on_ready(app),
+        // 所有窗口都关了也不退出：常驻托盘
+        RunEvent::ExitRequested { api, code, .. } if code.is_none() => api.prevent_exit(),
+        RunEvent::Exit => shutdown(app),
+        _ => {}
+    });
 }
 
 fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     let handle = app.handle().clone();
+    let _ = APP.set(handle.clone());
 
     let paths = AppPaths::resolve(&handle)?;
-    let log_guard = logging::init(&paths.logs());
-
-    tracing::info!(
-        version = %app.package_info().version,
-        data_dir = %paths.root().display(),
-        "CHENOCR 启动"
-    );
-
+    let settings = Settings::load(&paths.settings_file());
+    let log_guard = logging::init(&paths.logs(), false);
+    tracing::info!(version = %app.package_info().version, data = %paths.root().display(), "DATO COR 启动");
+    if let Some(old) = &paths.migrated_from {
+        tracing::info!(from = %old.display(), "已把旧数据目录搬到新位置");
+    }
     if let Err(err) = paths.reset_temp() {
-        tracing::warn!("重置 temp 目录失败: {err}");
+        tracing::warn!("清空 temp 目录失败：{err}");
     }
 
-    app.manage(AppState::new(paths, log_guard));
-
-    register_hotkeys(&handle);
-    build_tray(&handle)?;
-
-    // 主窗口按规格 01 §2 建好但隐藏，由托盘唤起。开发时直接显示出来，
-    // 否则每次调试都得先去点托盘。
-    if cfg!(debug_assertions) {
-        if let Some(window) = app.get_webview_window("main") {
-            let _ = window.show();
-            let _ = window.set_focus();
+    let db = match Db::open(&paths.db_file()) {
+        Ok(db) => db,
+        Err(err) => {
+            // 库坏了不能让应用起不来：挪到一边，建个新的
+            tracing::error!("打开数据库失败，改名保留后重建：{err}");
+            let broken = paths.db_file().with_extension(format!(
+                "db.broken.{}",
+                chrono::Local::now().format("%Y%m%d%H%M%S")
+            ));
+            let _ = std::fs::rename(paths.db_file(), broken);
+            Db::open(&paths.db_file())?
         }
-    }
-
-    Ok(())
-}
-
-fn register_hotkeys(app: &AppHandle) {
-    match app.global_shortcut().register(capture_hotkey()) {
-        Ok(()) => tracing::info!("已注册截图热键 F1"),
-        // 热键被别的程序占了不该让应用起不来，托盘菜单里仍然能触发截图。
-        Err(err) => tracing::error!("注册截图热键 F1 失败（可能被其他程序占用）: {err}"),
-    }
-}
-
-fn on_shortcut(app: &AppHandle, shortcut: &Shortcut, event: tauri_plugin_global_shortcut::ShortcutEvent) {
-    // 只认按下，不认松开，否则一次按键会触发两遍。
-    if event.state() != ShortcutState::Pressed || *shortcut != capture_hotkey() {
-        return;
-    }
-
-    trigger_capture(app.clone(), CaptureMode::Normal);
-}
-
-/// 抓屏是 CPU/GDI 密集的活，放到工作线程上做，别卡住事件循环。
-///
-/// 遮罩窗口的创建必须回到主线程 —— 这一点由 `capture::start` 内部通过
-/// Tauri 的 API 保证调用位置，这里只负责别在主线程上做像素搬运。
-fn trigger_capture(app: AppHandle, mode: CaptureMode) {
-    std::thread::spawn(move || {
-        if let Err(err) = capture::start(&app, mode) {
-            tracing::error!("启动截图失败: {err}");
-        }
-    });
-}
-
-fn build_tray(app: &AppHandle) -> AppResult<()> {
-    let capture_item = MenuItem::with_id(app, "capture", "截图  F1", true, None::<&str>)?;
-    let show_item = MenuItem::with_id(app, "show", "打开主窗口", true, None::<&str>)?;
-    let quit_item = MenuItem::with_id(app, "quit", "退出 CHENOCR", true, None::<&str>)?;
-    let menu = Menu::with_items(app, &[&capture_item, &show_item, &quit_item])?;
-
-    let tray = app
-        .tray_by_id("main-tray")
-        .ok_or_else(|| error::AppError::Internal("找不到 tauri.conf.json 里声明的托盘图标".into()))?;
-
-    tray.set_menu(Some(menu))?;
-    tray.on_menu_event(|app, event| match event.id.as_ref() {
-        "capture" => trigger_capture(app.clone(), CaptureMode::Normal),
-        "show" => show_main_window(app),
-        "quit" => app.exit(0),
-        other => tracing::debug!(id = other, "未处理的托盘菜单项"),
-    });
-
-    tray.on_tray_icon_event(|tray, event| {
-        if let TrayIconEvent::DoubleClick { .. } = event {
-            show_main_window(tray.app_handle());
-        }
-    });
-
-    Ok(())
-}
-
-fn show_main_window(app: &AppHandle) {
-    let Some(window) = app.get_webview_window("main") else {
-        tracing::error!("主窗口不存在");
-        return;
     };
 
-    let _ = window.show();
-    let _ = window.unminimize();
-    let _ = window.set_focus();
+    app.manage(AppState::new(paths, settings, db, log_guard));
+    tray::build(&handle)?;
+    Ok(())
 }
 
-/// 遮罩窗口这里刻意什么都不做 —— 尤其是不响应失焦：多屏时用户在屏幕之间移动鼠标
-/// 会不断切换焦点，靠失焦来退出会导致截图刚开始就被自己关掉。
-fn on_window_event(window: &tauri::Window, event: &WindowEvent) {
-    // 主窗口的关闭按钮只是收进托盘，不退进程（规格 07 §8 的 closeToTray）。
-    if window.label() == "main" {
-        if let WindowEvent::CloseRequested { api, .. } = event {
-            api.prevent_close();
-            let _ = window.hide();
+fn on_ready(app: &AppHandle) {
+    let statuses = hotkeys::register_all(app);
+    if statuses.iter().any(|s| !s.ok) {
+        // 刚退出的旧实例可能还没释放热键（开发时重启、自动更新后重启都会遇到），过一会儿再试一次
+        let retry = app.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_secs(3));
+            let ui = retry.clone();
+            let _ = retry.run_on_main_thread(move || {
+                hotkeys::register_all(&ui);
+            });
+        });
+    }
+    capture::overlay::prewarm(app);
+    wm::prewarm_toast(app);
+    clipboard::panel::prewarm(app);
+    translate::selection::prewarm(app);
+    translate::selection::reconfigure(app);
+    clipboard::start(app);
+    platform::watch_system_events(on_system_event);
+    std::thread::spawn(platform::warm_up_capture);
+    maintenance::spawn(app);
+
+    if let Some(main) = app.get_webview_window(wm::MAIN) {
+        wm::apply_window_effects(app, &main);
+        // 开机自启时安静地待在托盘里；手动启动时显示主窗口
+        let silent = std::env::args().any(|a| a == "--autostart" || a == "--hidden");
+        if !silent {
+            let _ = main.show();
+            let _ = main.set_focus();
         }
     }
+}
+
+/// 系统事件回调（在系统事件线程上，必须立刻返回）。
+fn on_system_event(event: SystemEvent) {
+    static WARMING: AtomicBool = AtomicBool::new(false);
+    let Some(app) = APP.get() else { return };
+    match event {
+        SystemEvent::DisplayChanged | SystemEvent::Resumed => {
+            // 插拔屏 / 改分辨率 / 睡眠唤醒后 GPU 侧的抓屏热身状态可能已经没了，
+            // 首次 F1 会悄悄慢回 137ms。重新热一次；多个连续事件只热一次。
+            if WARMING
+                .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+                .is_ok()
+            {
+                std::thread::spawn(|| {
+                    std::thread::sleep(std::time::Duration::from_millis(800));
+                    platform::warm_up_capture();
+                    WARMING.store(false, Ordering::SeqCst);
+                });
+            }
+            if event == SystemEvent::DisplayChanged {
+                let ui = app.clone();
+                let _ = app.run_on_main_thread(move || capture::overlay::prewarm(&ui));
+            }
+        }
+        SystemEvent::ThemeChanged => {
+            let ui = app.clone();
+            let _ = app.run_on_main_thread(move || wm::refresh_visuals(&ui));
+        }
+    }
+}
+
+fn on_window_event(window: &tauri::Window, event: &WindowEvent) {
+    let label = window.label();
+    if let WindowEvent::CloseRequested { api, .. } = event {
+        match label {
+            wm::MAIN => {
+                let app = window.app_handle();
+                if state(app).settings.read().general.close_to_tray {
+                    api.prevent_close();
+                    let _ = window.hide();
+                } else {
+                    quit(app);
+                }
+            }
+            // 识字窗口、AI 窗口复用，关闭 = 隐藏（AI 窗口里的对话还留着）
+            ocr::WINDOW | ai::WINDOW => {
+                api.prevent_close();
+                let _ = window.hide();
+            }
+            editor::WINDOW => {
+                api.prevent_close();
+                editor::close(window.app_handle());
+            }
+            _ => {}
+        }
+    }
+    if let WindowEvent::Destroyed = event {
+        if label.starts_with(pin::LABEL_PREFIX) {
+            pin::close(window.app_handle(), label);
+        }
+    }
+}
+
+pub(crate) fn quit(app: &AppHandle) {
+    shutdown(app);
+    app.exit(0);
+}
+
+fn shutdown(app: &AppHandle) {
+    static DONE: AtomicBool = AtomicBool::new(false);
+    if DONE.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    if let Some(st) = app.try_state::<AppState>() {
+        // 退出时必须杀掉识字子进程，防止残留
+        st.ocr.shutdown();
+    }
+    tracing::info!("DATO COR 退出");
 }

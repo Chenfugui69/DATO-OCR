@@ -1,0 +1,222 @@
+@import './tokens.css';
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+/* 两个都要透明：只设一个的话 Mica 透不出来（规格 06 §3.1） */
+html,
+body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  background: transparent;
+  overflow: hidden;
+}
+
+body {
+  font: var(--cn-text-body);
+  color: var(--cn-label);
+  -webkit-font-smoothing: antialiased;
+  user-select: none;
+  cursor: default;
+}
+
+#root {
+  height: 100%;
+}
+
+button,
+input,
+textarea,
+select {
+  font: inherit;
+  color: inherit;
+}
+
+button {
+  cursor: pointer;
+  border: none;
+  background: none;
+  padding: 0;
+}
+
+input,
+textarea {
+  user-select: text;
+}
+
+a {
+  color: var(--cn-accent);
+  text-decoration: none;
+  cursor: pointer;
+}
+
+img {
+  -webkit-user-drag: none;
+}
+
+:focus {
+  outline: none;
+}
+
+:focus-visible {
+  outline: 1.5px solid var(--cn-accent);
+  outline-offset: 1px;
+}
+
+/* ── 滚动条：细、圆、悬停才明显 ── */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--cn-fill-secondary);
+  border: 3px solid transparent;
+  background-clip: content-box;
+  border-radius: 10px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background-color: var(--cn-fill);
+}
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+/* ── 玻璃材质（规格 06 §3.2）：同屏最多 3 个，禁止对 blur 做动画 ── */
+.cn-glass,
+.cn-glass-thin,
+.cn-glass-thick,
+.cn-glass-chrome {
+  position: relative;
+  isolation: isolate;
+  background: var(--cn-glass-bg);
+  backdrop-filter: blur(var(--cn-glass-blur)) saturate(var(--cn-glass-saturate));
+  border-radius: var(--cn-radius-lg);
+  box-shadow: var(--cn-shadow-lg);
+}
+.cn-glass-thin {
+  background: var(--cn-glass-bg-thin);
+  backdrop-filter: blur(12px) saturate(var(--cn-glass-saturate));
+}
+.cn-glass-thick {
+  background: var(--cn-glass-bg-thick);
+  backdrop-filter: blur(32px) saturate(var(--cn-glass-saturate));
+}
+.cn-glass-chrome {
+  background: var(--cn-glass-bg-chrome);
+  backdrop-filter: blur(40px) saturate(var(--cn-glass-saturate));
+}
+
+/* 液态玻璃的关键：一圈渐变描边，顶部亮、底部暗，模拟玻璃厚度的高光 */
+.cn-glass::before,
+.cn-glass-thin::before,
+.cn-glass-thick::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  padding: 1px;
+  background: linear-gradient(180deg, var(--cn-glass-highlight) 0%, var(--cn-glass-border) 40%, var(--cn-glass-shade) 100%);
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  pointer-events: none;
+  z-index: 1;
+}
+
+/* 降级：系统透明效果关闭 / 省电模式 / 用户关闭 */
+[data-glass='off'] .cn-glass,
+[data-glass='off'] .cn-glass-thin,
+[data-glass='off'] .cn-glass-thick,
+[data-glass='off'] .cn-glass-chrome {
+  background: var(--cn-bg-elevated);
+  backdrop-filter: none;
+  border: 0.5px solid var(--cn-separator);
+}
+[data-glass='off'] .cn-glass::before,
+[data-glass='off'] .cn-glass-thin::before,
+[data-glass='off'] .cn-glass-thick::before {
+  display: none;
+}
+
+.cn-hairline-top {
+  box-shadow: inset 0 0.5px 0 var(--cn-separator);
+}
+
+.cn-mono {
+  font-family: var(--cn-font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.cn-numeric {
+  font-variant-numeric: tabular-nums;
+}
+
+.cn-selectable {
+  user-select: text;
+  cursor: text;
+}
+
+.cn-truncate {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@keyframes cn-fade-in {
+  from {
+    opacity: 0;
+  }
+}
+
+@keyframes cn-rise-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+}
+
+@keyframes cn-pop-in {
+  from {
+    opacity: 0;
+    transform: scale(0.96);
+  }
+}
+
+@keyframes cn-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes cn-skeleton {
+  0%,
+  100% {
+    opacity: 0.55;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+/* 尊重"减少动画"（规格 06 §2.6 第 7 条）。系统设置和用户设置都会落到 data-reduced-motion */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+[data-reduced-motion='true'] *,
+[data-reduced-motion='true'] *::before,
+[data-reduced-motion='true'] *::after {
+  animation-duration: 0.01ms !important;
+  transition-duration: 0.01ms !important;
+}

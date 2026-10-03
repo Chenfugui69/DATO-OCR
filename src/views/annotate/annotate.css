@@ -1,0 +1,149 @@
+/* 工具条（规格 02 §3.6.6–3.6.8）：高 40、圆角 10、玻璃材质；按钮 32×32、图标 18、间距 2、内边距 4 */
+.an-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  height: 40px;
+  padding: 4px;
+  border-radius: var(--cn-radius-lg);
+  white-space: nowrap;
+  user-select: none;
+}
+.an-btn {
+  width: 32px;
+  height: 32px;
+  display: grid;
+  place-items: center;
+  border-radius: 7px;
+  color: var(--cn-label);
+  transition:
+    background-color var(--cn-duration-fast) var(--cn-ease-out),
+    transform 60ms var(--cn-ease-out);
+}
+.an-btn:hover:not(:disabled) {
+  background: var(--cn-bg-hover);
+}
+.an-btn:active:not(:disabled) {
+  transform: scale(0.94);
+  background: var(--cn-bg-active);
+}
+.an-btn:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+/* 当前激活的绘制工具：背景主色、图标反白（规格 02 §3.6.10） */
+.an-btn--active,
+.an-btn--active:hover:not(:disabled) {
+  background: var(--cn-accent);
+  color: var(--cn-label-on-accent);
+}
+/* 完成按钮：主色实心 */
+.an-btn--primary,
+.an-btn--primary:hover:not(:disabled) {
+  background: var(--cn-accent);
+  color: var(--cn-label-on-accent);
+}
+.an-btn--primary:hover:not(:disabled) {
+  background: var(--cn-accent-hover);
+}
+.an-sep {
+  width: 0.5px;
+  height: 20px;
+  margin: 0 6px;
+  background: var(--cn-separator);
+  flex: none;
+}
+
+.an-subtoolbar {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  height: 36px;
+  padding: 4px 6px;
+  border-radius: var(--cn-radius-lg);
+  user-select: none;
+}
+.an-group {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+.an-size,
+.an-choice {
+  min-width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  border-radius: 6px;
+  color: var(--cn-label);
+  transition: background-color var(--cn-duration-fast);
+}
+.an-size:hover,
+.an-choice:hover {
+  background: var(--cn-bg-hover);
+}
+.an-size span {
+  display: block;
+  border-radius: 50%;
+  background: var(--cn-label-secondary);
+}
+.an-size--active span {
+  background: var(--cn-accent);
+}
+.an-choice--active,
+.an-choice--active:hover {
+  background: var(--cn-accent-subtle);
+  color: var(--cn-accent);
+}
+.an-choice__text {
+  padding: 0 6px;
+  font: 500 12px/1 var(--cn-font-sans);
+}
+/* 色块：16×16 圆形（规格 02 §3.7.3） */
+.an-color {
+  position: relative;
+  width: 16px;
+  height: 16px;
+  margin: 0 3px;
+  border-radius: 50%;
+  box-shadow: inset 0 0 0 0.5px rgba(0, 0, 0, 0.25);
+  cursor: pointer;
+  transition: transform var(--cn-duration-fast) var(--cn-ease-out);
+}
+.an-color:hover {
+  transform: scale(1.15);
+}
+.an-color--active {
+  box-shadow:
+    0 0 0 2px var(--cn-glass-bg-thick),
+    0 0 0 3.5px var(--cn-accent);
+}
+.an-color--custom {
+  background: conic-gradient(#ff3b30, #ffcc00, #34c759, #30b0c7, #007aff, #af52de, #ff3b30);
+}
+.an-color--custom input {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  cursor: pointer;
+  width: 100%;
+  height: 100%;
+}
+
+/* 文字工具的输入框：字体、字号、颜色和最终绘制完全一致（所见即所得） */
+.an-text-input {
+  position: absolute;
+  min-width: 24px;
+  margin: 0;
+  padding: 0;
+  border: none;
+  outline: 1px dashed var(--cn-accent);
+  outline-offset: 3px;
+  background: transparent;
+  resize: none;
+  overflow: hidden;
+  white-space: pre;
+  caret-color: var(--cn-accent);
+  -webkit-text-stroke: 0;
+  z-index: 20;
+}

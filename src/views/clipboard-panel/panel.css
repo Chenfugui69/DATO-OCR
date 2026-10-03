@@ -1,0 +1,366 @@
+/* 剪贴板面板（规格 05 §3.1）。窗口本身透明，面板从下方滑入（iOS sheet 曲线）。 */
+html[data-view='clipboard'],
+html[data-view='clipboard'] body {
+  background: transparent !important;
+}
+
+.panel-root {
+  position: fixed;
+  inset: 0;
+  padding: 8px 8px 8px;
+  display: flex;
+}
+.panel-root--vertical {
+  padding: 6px;
+}
+
+.panel {
+  position: relative;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  border-radius: var(--cn-radius-2xl);
+  overflow: hidden;
+  /* 透明窗口里 backdrop-filter 透不到桌面，底色要足够实 */
+  background: var(--cn-glass-bg-chrome);
+  box-shadow: var(--cn-shadow-xl), 0 0 0 0.5px var(--cn-separator);
+  transition:
+    transform 280ms var(--cn-ease-sheet),
+    opacity 200ms var(--cn-ease-out);
+}
+[data-theme='light'] .panel {
+  background: rgba(246, 246, 248, 0.94);
+}
+[data-theme='dark'] .panel {
+  background: rgba(36, 36, 38, 0.94);
+}
+.panel-root--bottom[data-visible='false'] .panel {
+  transform: translateY(105%);
+  transition-duration: 200ms;
+  transition-timing-function: var(--cn-ease-in);
+}
+.panel-root--vertical .panel {
+  transform-origin: top left;
+}
+.panel-root--vertical[data-visible='false'] .panel {
+  transform: scale(0.96);
+  opacity: 0;
+  transition-duration: 130ms;
+}
+
+.panel__bar {
+  display: flex;
+  align-items: center;
+  gap: var(--cn-space-3);
+  height: 48px;
+  padding: 0 var(--cn-space-3) 0 var(--cn-space-4);
+  flex: none;
+}
+.panel__search {
+  width: 240px;
+  flex: none;
+}
+.panel-root--vertical .panel__bar {
+  flex-wrap: wrap;
+  height: auto;
+  padding: var(--cn-space-3);
+  gap: var(--cn-space-2);
+}
+.panel-root--vertical .panel__search {
+  width: calc(100% - 64px);
+}
+.panel-root--vertical .panel__filters {
+  order: 3;
+  width: 100%;
+  overflow-x: auto;
+}
+.panel__filters {
+  display: flex;
+  gap: 2px;
+}
+.panel__filter {
+  height: 26px;
+  padding: 0 10px;
+  border-radius: var(--cn-radius-full);
+  font: 500 12px/1 var(--cn-font-sans);
+  color: var(--cn-label-secondary);
+  white-space: nowrap;
+  transition:
+    background-color var(--cn-duration-fast),
+    color var(--cn-duration-fast);
+}
+.panel__filter:hover {
+  background: var(--cn-bg-hover);
+  color: var(--cn-label);
+}
+.panel__filter--active,
+.panel__filter--active:hover {
+  background: var(--cn-fill-tertiary);
+  color: var(--cn-label);
+}
+.panel__spacer {
+  flex: 1;
+}
+
+.panel__list {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: thin;
+  contain: paint;
+}
+.panel-root--vertical .panel__list {
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+.panel__loading {
+  padding: var(--cn-space-6);
+  width: 320px;
+}
+.panel__cell {
+  position: absolute;
+  top: 0;
+  left: 0;
+  height: 216px;
+  padding: 0;
+}
+.panel-root--bottom .panel__cell {
+  top: 4px;
+}
+
+/* ── 卡片：168×216，圆角 12 ── */
+.clip-card {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  border-radius: var(--cn-radius-xl);
+  background: var(--cn-bg-elevated);
+  box-shadow: var(--cn-shadow-sm), 0 0 0 0.5px var(--cn-separator);
+  overflow: hidden;
+  cursor: pointer;
+  transition:
+    transform var(--cn-duration-fast) var(--cn-ease-out),
+    box-shadow var(--cn-duration-fast);
+}
+.clip-card:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--cn-shadow-md), 0 0 0 0.5px var(--cn-separator);
+}
+.clip-card--selected,
+.clip-card--selected:hover {
+  box-shadow:
+    0 0 0 2.5px var(--cn-accent),
+    var(--cn-shadow-md);
+}
+.clip-card__body {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  position: relative;
+}
+.clip-card__text {
+  padding: var(--cn-space-3);
+  font: var(--cn-text-callout);
+  line-height: 17px;
+  color: var(--cn-label);
+  white-space: pre-wrap;
+  word-break: break-word;
+  display: -webkit-box;
+  -webkit-line-clamp: 9;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  /* 超出部分渐隐 */
+  -webkit-mask-image: linear-gradient(180deg, #000 70%, transparent);
+}
+.clip-card--row .clip-card__text {
+  -webkit-line-clamp: 2;
+  padding: 8px 12px 0;
+  -webkit-mask-image: none;
+}
+.clip-card__image {
+  position: absolute;
+  inset: 0;
+  background: var(--cn-fill-quaternary);
+}
+.clip-card__image img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.clip-card__dim {
+  position: absolute;
+  right: 6px;
+  top: 6px;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.55);
+  color: #fff;
+  font: var(--cn-text-caption);
+}
+.clip-card__color {
+  height: 100%;
+  display: grid;
+  place-items: center;
+  font: 600 15px/1 var(--cn-font-mono);
+}
+.clip-card--color .clip-card__meta {
+  background: rgba(0, 0, 0, 0.12);
+  color: inherit;
+}
+.clip-card--color .clip-card__appname,
+.clip-card--color .clip-card__time {
+  color: inherit;
+  opacity: 0.85;
+}
+.clip-card__link,
+.clip-card__files {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 6px;
+  padding: var(--cn-space-3);
+  color: var(--cn-label-secondary);
+}
+.clip-card--row .clip-card__link,
+.clip-card--row .clip-card__files {
+  flex-direction: row;
+  align-items: center;
+  justify-content: flex-start;
+}
+.clip-card__domain,
+.clip-card__fname {
+  font: var(--cn-text-title-3);
+  color: var(--cn-label);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.clip-card__url {
+  font: var(--cn-text-footnote);
+  word-break: break-all;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.clip-card--row .clip-card__url {
+  display: none;
+}
+.clip-card__more {
+  font: var(--cn-text-footnote);
+}
+
+.clip-card__meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 10px;
+  flex: none;
+  box-shadow: inset 0 0.5px 0 var(--cn-separator);
+  background: var(--cn-bg-elevated);
+}
+.clip-card__app {
+  width: 16px;
+  height: 16px;
+  flex: none;
+  border-radius: 3px;
+}
+.clip-card__app--blank {
+  background: var(--cn-fill-tertiary);
+}
+.clip-card__appname {
+  flex: 1;
+  font: var(--cn-text-footnote);
+  color: var(--cn-label-secondary);
+}
+.clip-card__time {
+  font: var(--cn-text-footnote);
+  color: var(--cn-label-tertiary);
+  white-space: nowrap;
+}
+.clip-card__badges {
+  position: absolute;
+  top: 6px;
+  right: 8px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--cn-orange);
+}
+.clip-card--image .clip-card__badges {
+  top: auto;
+  bottom: 34px;
+  color: #fff;
+  filter: drop-shadow(0 1px 1px rgba(0, 0, 0, 0.5));
+}
+.clip-card__count {
+  font: var(--cn-text-caption);
+  color: var(--cn-label-tertiary);
+}
+.clip-card__index {
+  position: absolute;
+  left: 8px;
+  bottom: 34px;
+  width: 16px;
+  height: 16px;
+  display: grid;
+  place-items: center;
+  border-radius: 4px;
+  background: var(--cn-fill-tertiary);
+  font: 600 10px/1 var(--cn-font-sans);
+  color: var(--cn-label-secondary);
+  opacity: 0;
+  transition: opacity var(--cn-duration-fast);
+}
+.panel:not(:focus-within) .clip-card__index,
+.clip-card--selected .clip-card__index {
+  opacity: 1;
+}
+
+/* ── 空格快速预览 ── */
+.panel__preview {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: rgba(0, 0, 0, 0.2);
+  animation: cn-fade-in 150ms var(--cn-ease-out);
+  z-index: 10;
+}
+.panel__preview-box {
+  display: flex;
+  gap: var(--cn-space-4);
+  max-width: min(960px, 92%);
+  max-height: 90%;
+  padding: var(--cn-space-4);
+  border-radius: var(--cn-radius-xl);
+  background: var(--cn-bg-elevated);
+  animation: cn-pop-in 180ms var(--cn-ease-sheet);
+}
+.panel__preview-box img {
+  max-width: 100%;
+  max-height: 240px;
+  object-fit: contain;
+}
+.panel__preview-text,
+.panel__preview-trans {
+  min-width: 260px;
+  max-height: 230px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font: var(--cn-text-body);
+}
+.panel__preview-trans {
+  padding-left: var(--cn-space-4);
+  box-shadow: inset 0.5px 0 0 var(--cn-separator);
+  color: var(--cn-label);
+}
