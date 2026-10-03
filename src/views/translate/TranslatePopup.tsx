@@ -2,14 +2,14 @@
 //
 // - 顶部默认不显示原文（设置里可开），语言那一行右侧是"问 AI"和关闭
 // - 外观（宽高、字号、不透明度、圆角）按设置；右下角手柄拖拽改大小，改完记进设置
-// - 点"问 AI"：面板就地展开成对话，带着选中的文字。对话期间点别处不收起（不然对话就没了），
-//   也可以挪到独立窗口里接着聊
+// - 点"问 AI"：右侧展开一张对话卡片，压在翻译卡片下面（翻译仍可见），带着选中的文字。
+//   对话期间点别处不收起（不然对话就没了），也可以挪到独立窗口里接着聊
 
 import '@/views/ocr/ocr.css';
 
-import { LogicalSize } from '@tauri-apps/api/dpi';
-import { getCurrentWindow } from '@tauri-apps/api/window';
-import { ArrowLeft, ExternalLink, Sparkles, X } from 'lucide-react';
+import { LogicalPosition, LogicalSize } from '@tauri-apps/api/dpi';
+import { currentMonitor, getCurrentWindow } from '@tauri-apps/api/window';
+import { ExternalLink, Sparkles, X } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
@@ -21,6 +21,10 @@ import { IconButton } from '@/ui/controls';
 import { AiChat } from '@/views/ai/AiChat';
 
 import { TranslateBox } from './TranslateBox';
+
+/** 对话卡片压在翻译卡片下面的宽度 */
+const OVERLAP = 24;
+const PAD = 10;
 
 export default function TranslatePopup() {
   const { t } = useTranslation();
@@ -93,18 +97,36 @@ export default function TranslatePopup() {
     await getCurrentWindow().setSize(new LogicalSize(w, h));
   };
 
+  /** 翻译卡片展开前的窗口宽高（逻辑像素），收起对话时还原 */
+  const baseSize = useRef({ w: 460, h: 300 });
+
   const openAi = async () => {
     const panel = settings?.ai.panel;
     const win = getCurrentWindow();
     const scale = await win.scaleFactor();
     const size = await win.innerSize();
+    const base = { w: size.width / scale, h: size.height / scale };
+    baseSize.current = base;
+    const aiW = Math.min(panel?.width ?? 520, 620);
+    const w = base.w + aiW - OVERLAP;
+    const h = Math.max(base.h, Math.min(panel?.height ?? 620, 720));
     setMode('ai');
-    await resizeTo(Math.max(size.width / scale, Math.min(panel?.width ?? 520, 640)), panel?.height ?? 620);
+    await resizeTo(w, h);
+    // 往右展开超出屏幕了：整个窗口往左挪
+    const monitor = await currentMonitor();
+    if (monitor) {
+      const pos = (await win.outerPosition()).toLogical(scale);
+      const right = (monitor.position.x + monitor.size.width) / scale;
+      const bottom = (monitor.position.y + monitor.size.height) / scale;
+      const x = Math.max(monitor.position.x / scale, Math.min(pos.x, right - w));
+      const y = Math.max(monitor.position.y / scale, Math.min(pos.y, bottom - h));
+      if (x !== pos.x || y !== pos.y) await win.setPosition(new LogicalPosition(x, y));
+    }
   };
 
-  const backToTranslate = async () => {
+  const closeAi = async () => {
     setMode('translate');
-    if (popup) await resizeTo(popup.width, popup.height || 300);
+    await resizeTo(baseSize.current.w, baseSize.current.h);
   };
 
   const popOut = () => {
@@ -120,57 +142,61 @@ export default function TranslatePopup() {
 
   return (
     <div className="pop-root" style={style}>
-      <div className="pop" key={seq}>
-        {mode === 'translate' ? (
-          <>
-            {popup?.showSource && (
-              <div className="pop__source cn-selectable" title={text} data-tauri-drag-region>
-                {text}
-              </div>
-            )}
-            <div className="pop__body">
-              {text && (
-                <TranslateBox
-                  text={text}
-                  compact
-                  fontSize={popup?.fontSize}
-                  actions={
-                    <>
-                      <IconButton icon={Sparkles} size="sm" label={t('ai.ask')} onClick={() => void openAi()} />
-                      <IconButton icon={X} size="sm" label={t('common.close')} onClick={hide} />
-                    </>
-                  }
-                />
-              )}
-            </div>
-          </>
-        ) : (
-          <div className="pop__body">
-            <AiChat
+      <div className="pop pop--translate" key={seq} style={mode === 'ai' ? { flex: 'none', width: baseSize.current.w - PAD * 2, height: baseSize.current.h - PAD * 2 } : undefined}>
+        {popup?.showSource && (
+          <div className="pop__source cn-selectable" title={text} data-tauri-drag-region>
+            {text}
+          </div>
+        )}
+        <div className="pop__body">
+          {text && (
+            <TranslateBox
+              text={text}
               compact
-              context={{ text, images: [] }}
-              resetKey={seq}
-              onTurnsChange={keepTurns}
-              toolbar={
+              fontSize={popup?.fontSize}
+              actions={
                 <>
-                  <IconButton icon={ArrowLeft} size="sm" label={t('ai.backToTranslate')} onClick={() => void backToTranslate()} />
-                  <IconButton icon={ExternalLink} size="sm" label={t('ai.popOut')} onClick={popOut} />
+                  <IconButton
+                    icon={Sparkles}
+                    size="sm"
+                    active={mode === 'ai'}
+                    label={mode === 'ai' ? t('ai.hide') : t('ai.ask')}
+                    onClick={() => void (mode === 'ai' ? closeAi() : openAi())}
+                  />
                   <IconButton icon={X} size="sm" label={t('common.close')} onClick={hide} />
                 </>
               }
             />
-          </div>
+          )}
+        </div>
+        {mode === 'translate' && (
+          <span
+            className="pop__grip"
+            title={t('translate.resize')}
+            onPointerDown={(e) => {
+              e.preventDefault();
+              userResizing.current = true;
+              void getCurrentWindow().startResizeDragging('SouthEast');
+            }}
+          />
         )}
-        <span
-          className="pop__grip"
-          title={t('translate.resize')}
-          onPointerDown={(e) => {
-            e.preventDefault();
-            userResizing.current = true;
-            void getCurrentWindow().startResizeDragging('SouthEast');
-          }}
-        />
       </div>
+      {mode === 'ai' && (
+        <div className="pop pop--ai">
+          <AiChat
+            compact
+            context={{ text, images: [] }}
+            resetKey={seq}
+            onTurnsChange={keepTurns}
+            toolbar={
+              <>
+                <IconButton icon={ExternalLink} size="sm" label={t('ai.popOut')} onClick={popOut} />
+                <IconButton icon={X} size="sm" label={t('ai.hide')} onClick={() => void closeAi()} />
+              </>
+            }
+          />
+        </div>
+      )}
       <style>{`
         html[data-view='translate'], html[data-view='translate'] body { background: transparent !important; }
         .pop-root { position: fixed; inset: 0; padding: 10px; display: flex; }
@@ -182,6 +208,10 @@ export default function TranslatePopup() {
         .pop__source { max-height: 66px; overflow: hidden; padding: 12px 14px 8px; font: var(--cn-text-callout); color: var(--cn-label-secondary);
                        display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; box-shadow: inset 0 -0.5px 0 var(--cn-separator); flex: none; }
         .pop__body { flex: 1; min-height: 0; }
+        /* 翻译卡片在上层；对话卡片从它右边伸出来，左边缘压在它下面 */
+        .pop--translate { z-index: 2; align-self: flex-start; }
+        .pop--ai { z-index: 1; margin-left: -${OVERLAP}px; padding-left: ${OVERLAP}px; animation: pop-slide 200ms var(--cn-ease-out); }
+        @keyframes pop-slide { from { opacity: 0; transform: translateX(-40px); } }
         .pop__grip { position: absolute; right: 0; bottom: 0; width: 14px; height: 14px; cursor: nwse-resize;
                      background: linear-gradient(135deg, transparent 55%, var(--cn-label-tertiary) 55%, var(--cn-label-tertiary) 62%, transparent 62%, transparent 75%, var(--cn-label-tertiary) 75%, var(--cn-label-tertiary) 82%, transparent 82%); opacity: 0.6; }
         .pop__grip:hover { opacity: 1; }

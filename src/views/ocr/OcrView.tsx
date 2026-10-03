@@ -3,7 +3,8 @@
 
 import './ocr.css';
 
-import { getCurrentWindow } from '@tauri-apps/api/window';
+import { LogicalPosition, LogicalSize } from '@tauri-apps/api/dpi';
+import { currentMonitor, getCurrentWindow } from '@tauri-apps/api/window';
 import clsx from 'clsx';
 import { ChevronDown, Copy, FileSearch, Languages, RotateCw, ScanText, Sparkles } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -22,6 +23,9 @@ import { TranslateBox } from '@/views/translate/TranslateBox';
 
 import { ImageViewer } from './ImageViewer';
 
+/** AI 对话那一列的宽度（逻辑像素） */
+const AI_COLUMN = 420;
+
 export default function OcrView() {
   const { t } = useTranslation();
   const settings = useSettings();
@@ -38,7 +42,6 @@ export default function OcrView() {
   const adopt = useCallback((j: OcrJob | null) => {
     setJob(j);
     setHover(null);
-    setShowAi(false);
     if (j?.status === 'done' && j.result) {
       setTexts(j.result.paragraphs.map((p) => p.text));
       if (j.translate) setShowTranslate(true);
@@ -110,6 +113,27 @@ export default function OcrView() {
     listRef.current?.querySelector(`[data-index="${hover}"]`)?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
   }, [hover]);
 
+  // AI 是第三列：打开时窗口往右加宽一列，关掉时缩回去（放不下就贴着屏幕右边往左挪）
+  const toggleAi = async () => {
+    const next = !showAi;
+    setShowAi(next);
+    const win = getCurrentWindow();
+    if (await win.isMaximized()) return;
+    const scale = await win.scaleFactor();
+    const size = (await win.innerSize()).toLogical(scale);
+    const width = size.width + (next ? AI_COLUMN + 12 : -(AI_COLUMN + 12));
+    await win.setSize(new LogicalSize(Math.max(640, width), size.height));
+    if (next) {
+      const monitor = await currentMonitor();
+      if (monitor) {
+        const pos = (await win.outerPosition()).toLogical(scale);
+        const right = (monitor.position.x + monitor.size.width) / scale;
+        const x = Math.max(monitor.position.x / scale, Math.min(pos.x, right - width));
+        if (x !== pos.x) await win.setPosition(new LogicalPosition(x, pos.y));
+      }
+    }
+  };
+
   const rerun = (engine: string | null, upscale: boolean) => {
     if (job) void ocr.rerun(job.id, engine, upscale).catch(notify.error);
   };
@@ -128,7 +152,14 @@ export default function OcrView() {
           <EmptyState icon={ScanText} title={t('ocr.noJob')} description={t('ocr.noJobDesc')} />
         </div>
       ) : (
-        <div className="ocr-body" style={{ gridTemplateColumns: `minmax(0, ${split}fr) 6px minmax(0, ${1 - split}fr)` }}>
+        <div
+          className="ocr-body"
+          style={{
+            gridTemplateColumns: showAi
+              ? `minmax(0, ${split}fr) 6px minmax(0, ${1 - split}fr) 12px minmax(320px, ${AI_COLUMN}px)`
+              : `minmax(0, ${split}fr) 6px minmax(0, ${1 - split}fr)`,
+          }}
+        >
           <div className="ocr-image">
             <ImageViewer
               src={assetUrl(job.imagePath)}
@@ -161,7 +192,7 @@ export default function OcrView() {
               window.addEventListener('pointerup', up);
             }}
           />
-          <div className={clsx('ocr-side', (showTranslate || showAi) && 'ocr-side--split')}>
+          <div className={clsx('ocr-side', showTranslate && 'ocr-side--split')}>
             <div ref={listRef} className="ocr-text">
               {job.status === 'running' ? (
                 <div className="ocr-text__loading">
@@ -198,17 +229,20 @@ export default function OcrView() {
                 ))
               )}
             </div>
-            {showTranslate && !showAi && job.status === 'done' && (
+            {showTranslate && job.status === 'done' && (
               <div className="ocr-translate">
                 <TranslateBox text={fullText} />
               </div>
             )}
-            {showAi && job.status === 'done' && (
-              <div className="ocr-translate">
+          </div>
+          {showAi && job.status === 'done' && (
+            <>
+              <span />
+              <div className="ocr-translate ocr-ai">
                 <AiChat context={{ text: fullText, images: [], source: 'ocr' }} resetKey={job.id} />
               </div>
-            )}
-          </div>
+            </>
+          )}
         </div>
       )}
       <footer className="ocr-foot cn-hairline-top">
@@ -218,17 +252,14 @@ export default function OcrView() {
         <Button
           icon={Languages}
           disabled={job?.status !== 'done' || !fullText}
-          onClick={() => {
-            setShowAi(false);
-            setShowTranslate((v) => !(v && !showAi));
-          }}
+          onClick={() => setShowTranslate((v) => !v)}
         >
-          {showTranslate && !showAi ? t('ocr.hideTranslate') : t('ocr.translate')}
+          {showTranslate ? t('ocr.hideTranslate') : t('ocr.translate')}
         </Button>
         <Button
           icon={Sparkles}
           disabled={job?.status !== 'done' || !fullText}
-          onClick={() => setShowAi((v) => !v)}
+          onClick={() => void toggleAi()}
         >
           {showAi ? t('ai.hide') : t('ai.ask')}
         </Button>
