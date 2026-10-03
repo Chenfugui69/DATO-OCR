@@ -6,7 +6,7 @@ import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import { ai } from '@/lib/ipc';
-import type { AiProvider, QuickPrompt, Settings } from '@/lib/types';
+import { THINKING_LEVELS, type AiProvider, type QuickPrompt, type Settings } from '@/lib/types';
 import { Button, IconButton, Segmented, Select, Slider, Switch, TextField } from '@/ui/controls';
 import { DropdownMenu, notify, promptDialog } from '@/ui/overlays';
 
@@ -206,6 +206,15 @@ export function AiSettingsGroups({ settings, set }: { settings: Settings; set: (
         <Row title={t('settings.ai.temperature')} desc={t('settings.ai.temperatureDesc')}>
           <span className="set-row__value cn-numeric">{cfg.temperature.toFixed(1)}</span>
           <Slider value={cfg.temperature} min={0} max={2} step={0.1} onChange={(v) => set((d) => void (d.ai.temperature = Math.round(v * 10) / 10))} />
+        </Row>
+        <Row title={t('settings.ai.thinking')} desc={t('settings.ai.thinkingDesc')}>
+          <span className="set-row__value">{t(`ai.thinkingLevels.${cfg.thinking}`)}</span>
+          <Slider
+            value={Math.max(0, THINKING_LEVELS.indexOf(cfg.thinking))}
+            min={0}
+            max={THINKING_LEVELS.length - 1}
+            onChange={(v) => set((d) => void (d.ai.thinking = THINKING_LEVELS[v] ?? 'auto'))}
+          />
         </Row>
         <Row title={t('settings.ai.maxTokens')}>
           <Select

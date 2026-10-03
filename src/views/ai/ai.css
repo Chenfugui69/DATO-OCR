@@ -296,3 +296,136 @@
 .ai--compact .ai__bar {
   padding: var(--cn-space-2) var(--cn-space-3) 4px;
 }
+
+/* ── 思考深度 ── */
+.ai-think-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 24px;
+  padding: 0 9px 0 7px;
+  border: none;
+  border-radius: var(--cn-radius-full);
+  background: var(--cn-fill-tertiary);
+  color: var(--cn-label-secondary);
+  font: var(--cn-text-footnote);
+  white-space: nowrap;
+  cursor: pointer;
+  flex: none;
+  transition: background-color 120ms, color 120ms;
+}
+.ai-think-chip:hover,
+.ai-think-chip[data-state='open'] {
+  background: var(--cn-fill-secondary);
+  color: var(--cn-label);
+}
+/* 指定了深度就用强调色，一眼看出"开着" */
+.ai-think-chip:not([data-level='auto']) {
+  background: color-mix(in srgb, var(--cn-accent) 14%, transparent);
+  color: var(--cn-accent);
+}
+.ai-think-pop {
+  width: 244px;
+  padding: 12px 16px 12px;
+  transform-origin: var(--radix-popover-content-transform-origin);
+}
+.ai-think-pop__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: 8px;
+  font: var(--cn-text-footnote);
+  color: var(--cn-label-secondary);
+}
+.ai-think-pop__head b {
+  font-weight: 600;
+  color: var(--cn-label);
+}
+.ai-think-pop__ticks {
+  display: flex;
+  justify-content: space-between;
+  margin: 4px -6px 0;
+}
+.ai-think-pop__ticks button {
+  min-width: 34px;
+  padding: 2px 0;
+  border: none;
+  background: none;
+  color: var(--cn-label-tertiary);
+  font: var(--cn-text-caption);
+  cursor: pointer;
+}
+.ai-think-pop__ticks button:hover {
+  color: var(--cn-label-secondary);
+}
+.ai-think-pop__ticks button.is-on {
+  color: var(--cn-accent);
+  font-weight: 600;
+}
+.ai-think-pop__desc {
+  margin: 8px 0 0;
+  color: var(--cn-label-tertiary);
+  font: var(--cn-text-caption);
+  line-height: 1.45;
+}
+
+/* 回答上方的思考过程 */
+.ai-think {
+  align-self: flex-start;
+  max-width: 100%;
+  border-radius: var(--cn-radius-md);
+  color: var(--cn-label-secondary);
+  font: var(--cn-text-footnote);
+}
+.ai-think__head {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 8px 3px 6px;
+  border: none;
+  border-radius: var(--cn-radius-full);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+.ai-think__head:hover {
+  background: var(--cn-fill-quaternary);
+}
+.ai-think__chev {
+  transition: transform 160ms var(--cn-ease-out);
+}
+.ai-think.is-open .ai-think__chev {
+  transform: rotate(90deg);
+}
+/* 还在想：文字带一道流光 */
+.ai-think.is-active .ai-think__head span {
+  background: linear-gradient(90deg, var(--cn-label-tertiary) 30%, var(--cn-label) 50%, var(--cn-label-tertiary) 70%) 0 0 / 300% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: ai-shimmer 1.6s linear infinite;
+}
+@keyframes ai-shimmer {
+  from {
+    background-position: 100% 0;
+  }
+  to {
+    background-position: 0 0;
+  }
+}
+.ai-think__body {
+  max-height: 180px;
+  overflow: auto;
+  margin: 2px 0 2px 12px;
+  padding: 2px 0 2px 10px;
+  border-left: 2px solid var(--cn-separator);
+  color: var(--cn-label-tertiary);
+  line-height: 1.55;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.ai-msg__notice {
+  color: var(--cn-label-tertiary);
+  font: var(--cn-text-caption);
+}

@@ -5,16 +5,17 @@
 
 import './ai.css';
 
-import { ArrowUp, Copy, FileText, ImageIcon, RotateCw, Settings2, Square, SquarePen, X } from 'lucide-react';
+import * as Popover from '@radix-ui/react-popover';
+import { ArrowUp, Brain, ChevronRight, Copy, FileText, ImageIcon, RotateCw, Settings2, Square, SquarePen, X } from 'lucide-react';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import { ai, capture, system } from '@/lib/ipc';
 import { renderMarkdown } from '@/lib/markdown';
 import { assetUrl, shotUrl } from '@/lib/platform';
-import { useSettings } from '@/lib/settings';
-import type { ChatImage, ChatMessage, ChatTurn } from '@/lib/types';
-import { Button, EmptyState, IconButton, Select } from '@/ui/controls';
+import { useSettings, useSettingsStore } from '@/lib/settings';
+import { THINKING_LEVELS, type ChatImage, type ChatMessage, type ChatTurn, type ThinkingLevel } from '@/lib/types';
+import { Button, EmptyState, IconButton, Select, Slider } from '@/ui/controls';
 import { notify } from '@/ui/overlays';
 
 export interface ChatContext {
@@ -39,6 +40,77 @@ function compose(question: string, context: ChatContext | null, template?: strin
   if (template) return template.split('{text}').join(text ?? (context?.images.length ? '（见附图）' : ''));
   if (!text) return question;
   return `以下是参考内容：\n\n<context>\n${text}\n</context>\n\n${question}`;
+}
+
+/** 思考深度：顶栏上的小胶囊，点开是一条分档滑杆。改了就存进设置，所有对话窗口一起变。 */
+function ThinkingPicker({ value }: { value: ThinkingLevel }) {
+  const { t } = useTranslation();
+  const index = Math.max(0, THINKING_LEVELS.indexOf(value));
+  const setLevel = (level: ThinkingLevel) =>
+    void useSettingsStore
+      .getState()
+      .update((d) => void (d.ai.thinking = level))
+      .catch(notify.error);
+  return (
+    <Popover.Root>
+      <Popover.Trigger asChild>
+        <button type="button" className="ai-think-chip" data-level={value} title={t('ai.thinking')}>
+          <Brain size={13} strokeWidth={1.75} />
+          <span>{t(`ai.thinkingLevels.${value}`)}</span>
+        </button>
+      </Popover.Trigger>
+      <Popover.Portal>
+        <Popover.Content className="cn-popover ai-think-pop" side="bottom" align="start" sideOffset={6} collisionPadding={8}>
+          <div className="ai-think-pop__head">
+            <span>{t('ai.thinking')}</span>
+            <b>{t(`ai.thinkingLevels.${value}`)}</b>
+          </div>
+          <Slider
+            value={index}
+            min={0}
+            max={THINKING_LEVELS.length - 1}
+            width={212}
+            label={t('ai.thinking')}
+            onChange={(v) => setLevel(THINKING_LEVELS[v] ?? 'auto')}
+          />
+          <div className="ai-think-pop__ticks">
+            {THINKING_LEVELS.map((l) => (
+              <button key={l} type="button" className={l === value ? 'is-on' : undefined} onClick={() => setLevel(l)}>
+                {t(`ai.thinkingLevels.${l}`)}
+              </button>
+            ))}
+          </div>
+          <p className="ai-think-pop__desc">{t('ai.thinkingDesc')}</p>
+        </Popover.Content>
+      </Popover.Portal>
+    </Popover.Root>
+  );
+}
+
+/** 回答上方可折叠的思考过程。还在想的时候自动展开，开始回答后自动收起（用户点过就听用户的）。 */
+function Thought({ text, active }: { text: string; active: boolean }) {
+  const { t } = useTranslation();
+  const [open, setOpen] = useState<boolean | null>(null);
+  const bodyRef = useRef<HTMLDivElement>(null);
+  const shown = open ?? active;
+  useLayoutEffect(() => {
+    const el = bodyRef.current;
+    if (el && active) el.scrollTop = el.scrollHeight;
+  }, [text, active]);
+  return (
+    <div className={`ai-think${shown ? ' is-open' : ''}${active ? ' is-active' : ''}`}>
+      <button type="button" className="ai-think__head" onClick={() => setOpen(!shown)}>
+        <Brain size={13} strokeWidth={1.75} />
+        <span>{active ? t('ai.thinkingNow') : t('ai.thought')}</span>
+        <ChevronRight size={12} className="ai-think__chev" />
+      </button>
+      {shown && (
+        <div ref={bodyRef} className="ai-think__body cn-selectable">
+          {text}
+        </div>
+      )}
+    </div>
+  );
 }
 
 export function AiChat({
@@ -93,6 +165,8 @@ export function AiChat({
 
   useEffect(() => onTurnsChange?.(turns), [turns, onTurnsChange]);
 
+  const thinking: ThinkingLevel = cfg?.thinking ?? 'auto';
+
   // 新内容到了就滚到底，除非用户自己往上翻了
   useLayoutEffect(() => {
     const el = listRef.current;
@@ -124,9 +198,11 @@ export function AiChat({
         .map((m) => ({ role: m.role, content: m.sent ?? m.content, images: m.images ?? [] }));
       const patch = (fn: (r: Turn) => Turn) => setTurns((all) => all.map((m) => (m.id === reply.id ? fn(m) : m)));
       try {
-        await ai.chat({ id: requestId, model: activeModel || null, messages }, (e) => {
+        await ai.chat({ id: requestId, model: activeModel || null, messages, thinking }, (e) => {
           if (e.type === 'start') patch((r) => ({ ...r, model: e.model }));
           else if (e.type === 'delta') patch((r) => ({ ...r, content: r.content + e.text }));
+          else if (e.type === 'reasoning') patch((r) => ({ ...r, reasoning: (r.reasoning ?? '') + e.text }));
+          else if (e.type === 'notice') patch((r) => ({ ...r, notice: e.message }));
           else {
             if (e.type === 'error') patch((r) => ({ ...r, error: e.message, streaming: false }));
             else patch((r) => ({ ...r, streaming: false }));
@@ -138,7 +214,7 @@ export function AiChat({
         running.current = null;
       }
     },
-    [turns, context, activeModel],
+    [turns, context, activeModel, thinking],
   );
 
   const stop = () => {
@@ -175,7 +251,8 @@ export function AiChat({
   return (
     <div className={compact ? 'ai ai--compact' : 'ai'} data-layout={cfg?.panel.layout ?? 'bubble'} style={style}>
       <div className="ai__bar">
-        <Select value={activeModel} width={compact ? 180 : 220} options={models} onChange={setModel} />
+        <Select value={activeModel} width={compact ? 168 : 220} options={models} onChange={setModel} />
+        <ThinkingPicker value={thinking} />
         <span style={{ flex: 1 }} />
         <IconButton icon={SquarePen} size="sm" label={t('ai.newChat')} disabled={busy || turns.length === 0} onClick={() => setTurns([])} />
         {toolbar}
@@ -238,11 +315,13 @@ export function AiChat({
                 <div className="ai-msg__body cn-selectable">{m.content}</div>
               ) : (
                 <>
+                  {m.reasoning && <Thought text={m.reasoning} active={!!m.streaming && !m.content} />}
                   {m.content ? (
                     <div className="ai-msg__body ai-md cn-selectable" dangerouslySetInnerHTML={{ __html: renderMarkdown(m.content) }} />
                   ) : (
-                    m.streaming && <div className="ai-msg__body ai-typing"><span /><span /><span /></div>
+                    m.streaming && !m.reasoning && <div className="ai-msg__body ai-typing"><span /><span /><span /></div>
                   )}
+                  {m.notice && <div className="ai-msg__notice">{m.notice}</div>}
                   {m.error && <div className="ai-msg__error">{m.error}</div>}
                   {!m.streaming && (
                     <div className="ai-msg__foot">

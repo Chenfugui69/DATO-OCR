@@ -37,29 +37,50 @@ html[data-view='editor'][data-glass='off'] body {
 [data-glass='on'] .ocr-image {
   background-color: var(--cn-mica-content);
 }
+/* 列 / 行之间的拖动条：平时只是一道短短的细线，悬停或拖动时变成一根胶囊把手 */
 .ocr-splitter {
   cursor: col-resize;
   position: relative;
+  touch-action: none;
 }
 .ocr-splitter::after {
   content: '';
   position: absolute;
-  left: 2.5px;
-  top: 40%;
-  bottom: 40%;
-  width: 1px;
-  border-radius: 1px;
+  left: 50%;
+  top: 50%;
+  width: 2px;
+  height: 32px;
+  border-radius: 2px;
   background: var(--cn-separator);
+  transform: translate(-50%, -50%);
+  transition: background-color 120ms, height 160ms var(--cn-ease-out), width 160ms var(--cn-ease-out);
+}
+.ocr-splitter:hover::after,
+.ocr-splitter[data-dragging]::after {
+  width: 4px;
+  height: 48px;
+  background: var(--cn-label-tertiary);
+}
+.ocr-splitter[data-dragging]::after {
+  background: var(--cn-accent);
+}
+.ocr-splitter--row {
+  cursor: row-resize;
+}
+.ocr-splitter--row::after {
+  width: 32px;
+  height: 2px;
+}
+.ocr-splitter--row:hover::after,
+.ocr-splitter--row[data-dragging]::after {
+  width: 48px;
+  height: 4px;
 }
 .ocr-side {
   min-width: 0;
   min-height: 0;
   display: grid;
   grid-template-rows: minmax(0, 1fr);
-  gap: var(--cn-space-3);
-}
-.ocr-side--split {
-  grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
 }
 .ocr-text,
 .ocr-translate {
@@ -180,6 +201,19 @@ html[data-view='editor'][data-glass='off'] body {
   display: flex;
   align-items: center;
   gap: var(--cn-space-2);
+}
+/* 面板拖窄了：语言下拉框跟着收缩，文字省略，不把右边的按钮挤出去 */
+.tr-box__langs .cn-select-trigger {
+  flex: 0 1 auto;
+  min-width: 0 !important;
+  overflow: hidden;
+}
+.tr-box__langs .cn-select-trigger > span:first-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.tr-box__langs > button {
+  flex: none;
 }
 .tr-box__result {
   flex: 1;

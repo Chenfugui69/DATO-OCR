@@ -314,6 +314,8 @@ pub struct AiSettings {
     pub temperature: f64,
     /// 0 = 用服务商的默认值
     pub max_tokens: u32,
+    /// 思考深度：auto = 不指定（模型自己的默认）| low | medium | high | max
+    pub thinking: String,
     /// 快捷提问。`{text}` 换成上下文文字（选中的字 / 识字结果）
     pub quick_prompts: Vec<QuickPrompt>,
     pub panel: AiPanelStyle,
@@ -394,6 +396,7 @@ impl Default for AiSettings {
             system_prompt: "你是 DATO COR 里的助手。回答简洁、准确，默认用简体中文；用户给的内容是什么语言、要求用什么语言，就照做。".into(),
             temperature: 0.7,
             max_tokens: 0,
+            thinking: "auto".into(),
             quick_prompts: vec![
                 prompt("explain", "解释", "解释下面这段内容：\n\n{text}"),
                 prompt("summary", "总结", "用几句话总结下面这段内容的要点：\n\n{text}"),
@@ -406,6 +409,9 @@ impl Default for AiSettings {
         }
     }
 }
+
+/// AI 思考深度的几档，从浅到深。
+pub const THINKING_LEVELS: [&str; 5] = ["auto", "low", "medium", "high", "max"];
 
 /// 全部翻译源 id。内置免费源在前，自填密钥的在后。
 pub const TRANSLATE_PROVIDERS: [&str; 5] = ["bing", "transmart", "google", "deepl", "openai"];
@@ -629,6 +635,9 @@ impl Settings {
         }
         ai.temperature = ai.temperature.clamp(0.0, 2.0);
         ai.max_tokens = ai.max_tokens.min(200_000);
+        if !THINKING_LEVELS.contains(&ai.thinking.as_str()) {
+            ai.thinking = "auto".into();
+        }
         ai.providers.retain(|p| !p.id.trim().is_empty());
         for p in &mut ai.providers {
             if !matches!(p.kind.as_str(), "openai" | "anthropic") {

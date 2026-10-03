@@ -426,9 +426,14 @@ export interface AiSettings {
   systemPrompt: string;
   temperature: number;
   maxTokens: number;
+  thinking: ThinkingLevel;
   quickPrompts: QuickPrompt[];
   panel: { fontSize: number; width: number; height: number; layout: 'bubble' | 'plain' };
 }
+
+/** 思考深度：auto = 不指定，用模型自己的默认 */
+export type ThinkingLevel = 'auto' | 'low' | 'medium' | 'high' | 'max';
+export const THINKING_LEVELS: ThinkingLevel[] = ['auto', 'low', 'medium', 'high', 'max'];
 
 export type ChatImage = { kind: 'store'; id: string } | { kind: 'file'; path: string };
 
@@ -442,11 +447,14 @@ export interface ChatRequest {
   id: string;
   model?: string | null;
   messages: ChatMessage[];
+  thinking?: ThinkingLevel;
 }
 
 export type ChatEvent =
   | { type: 'start'; model: string }
   | { type: 'delta'; text: string }
+  | { type: 'reasoning'; text: string }
+  | { type: 'notice'; message: string }
   | { type: 'done' }
   | { type: 'error'; message: string };
 
@@ -468,6 +476,10 @@ export interface ChatTurn {
   images?: ChatImage[];
   template?: string;
   model?: string;
+  /** 模型的思考过程（服务给了才有） */
+  reasoning?: string;
+  /** 回答之外的一句提示 */
+  notice?: string;
   error?: string;
   streaming?: boolean;
 }

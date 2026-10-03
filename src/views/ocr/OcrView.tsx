@@ -1,5 +1,6 @@
 // 识字结果窗口（规格 04 §4）：左图右文，悬停段落 ↔ 高亮图上区域；右侧文字可直接改；
-// 翻译时右侧分成上下两栏（原文 / 译文），不开新窗口。
+// 翻译时右侧分成上下两栏（原文 / 译文），不开新窗口；问 AI 在最右边加一列。
+// 列与列、原文与译文之间都能拖动调整，调好的比例记在本机（localStorage）。
 
 import './ocr.css';
 
@@ -23,8 +24,47 @@ import { TranslateBox } from '@/views/translate/TranslateBox';
 
 import { ImageViewer } from './ImageViewer';
 
-/** AI 对话那一列的宽度（逻辑像素） */
+/** AI 对话那一列的默认宽度和可调范围（逻辑像素） */
 const AI_COLUMN = 420;
+const AI_MIN = 300;
+const AI_MAX = 900;
+/** 列之间拖动条的宽度 */
+const GUTTER = 8;
+
+function loadNumber(key: string, fallback: number, min: number, max: number): number {
+  try {
+    const v = Number(localStorage.getItem(key));
+    return Number.isFinite(v) && v >= min && v <= max ? v : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function saveNumber(key: string, value: number) {
+  try {
+    localStorage.setItem(key, String(Math.round(value * 1000) / 1000));
+  } catch {
+    // 存不了就算了，下次用默认值
+  }
+}
+
+/** 按下拖动条后跟着鼠标走，松手时回调一次（用来保存）。 */
+function dragSplitter(e: React.PointerEvent, onMove: (ev: PointerEvent) => void, onEnd: () => void) {
+  e.preventDefault();
+  const handle = e.currentTarget as HTMLElement;
+  handle.setPointerCapture(e.pointerId);
+  handle.dataset.dragging = '';
+  document.body.style.cursor = getComputedStyle(handle).cursor;
+  const up = () => {
+    window.removeEventListener('pointermove', onMove);
+    window.removeEventListener('pointerup', up);
+    delete handle.dataset.dragging;
+    document.body.style.cursor = '';
+    onEnd();
+  };
+  window.addEventListener('pointermove', onMove);
+  window.addEventListener('pointerup', up);
+}
 
 export default function OcrView() {
   const { t } = useTranslation();
@@ -35,7 +75,13 @@ export default function OcrView() {
   const [showTranslate, setShowTranslate] = useState(false);
   const [showAi, setShowAi] = useState(false);
   const [keepBreaks, setKeepBreaks] = useState(false);
-  const [split, setSplit] = useState(0.5);
+  /** 图片占 图片 + 文字 两列的比例 */
+  const [split, setSplit] = useState(() => loadNumber('ocr.split', 0.5, 0.2, 0.8));
+  /** 翻译打开时原文占上下两栏的比例 */
+  const [textSplit, setTextSplit] = useState(() => loadNumber('ocr.textSplit', 0.5, 0.2, 0.8));
+  const [aiWidth, setAiWidth] = useState(() => loadNumber('ocr.aiWidth', AI_COLUMN, AI_MIN, AI_MAX));
+  const aiWidthRef = useRef(aiWidth);
+  aiWidthRef.current = aiWidth;
   const listRef = useRef<HTMLDivElement>(null);
   const saveTimer = useRef<number | undefined>(undefined);
 
@@ -121,7 +167,7 @@ export default function OcrView() {
     if (await win.isMaximized()) return;
     const scale = await win.scaleFactor();
     const size = (await win.innerSize()).toLogical(scale);
-    const width = size.width + (next ? AI_COLUMN + 12 : -(AI_COLUMN + 12));
+    const width = size.width + (next ? 1 : -1) * (aiWidthRef.current + GUTTER);
     await win.setSize(new LogicalSize(Math.max(640, width), size.height));
     if (next) {
       const monitor = await currentMonitor();
@@ -156,8 +202,8 @@ export default function OcrView() {
           className="ocr-body"
           style={{
             gridTemplateColumns: showAi
-              ? `minmax(0, ${split}fr) 6px minmax(0, ${1 - split}fr) 12px minmax(320px, ${AI_COLUMN}px)`
-              : `minmax(0, ${split}fr) 6px minmax(0, ${1 - split}fr)`,
+              ? `minmax(0, ${split}fr) ${GUTTER}px minmax(0, ${1 - split}fr) ${GUTTER}px minmax(${AI_MIN}px, ${aiWidth}px)`
+              : `minmax(0, ${split}fr) ${GUTTER}px minmax(0, ${1 - split}fr)`,
           }}
         >
           <div className="ocr-image">
@@ -179,20 +225,26 @@ export default function OcrView() {
           <div
             className="ocr-splitter"
             onPointerDown={(e) => {
-              const el = e.currentTarget.parentElement;
-              if (!el) return;
-              e.currentTarget.setPointerCapture(e.pointerId);
-              const rect = el.getBoundingClientRect();
-              const move = (ev: PointerEvent) => setSplit(Math.min(0.75, Math.max(0.25, (ev.clientX - rect.left) / rect.width)));
-              const up = () => {
-                window.removeEventListener('pointermove', move);
-                window.removeEventListener('pointerup', up);
-              };
-              window.addEventListener('pointermove', move);
-              window.addEventListener('pointerup', up);
+              // 图片和文字两列一起算比例，AI 列宽度不变
+              const img = e.currentTarget.previousElementSibling?.getBoundingClientRect();
+              const side = e.currentTarget.nextElementSibling?.getBoundingClientRect();
+              if (!img || !side) return;
+              const total = side.right - img.left - GUTTER;
+              let last = split;
+              dragSplitter(
+                e,
+                (ev) => {
+                  last = Math.min(0.8, Math.max(0.2, (ev.clientX - img.left - GUTTER / 2) / total));
+                  setSplit(last);
+                },
+                () => saveNumber('ocr.split', last),
+              );
             }}
           />
-          <div className={clsx('ocr-side', showTranslate && 'ocr-side--split')}>
+          <div
+            className={clsx('ocr-side', showTranslate && job.status === 'done' && 'ocr-side--split')}
+            style={showTranslate && job.status === 'done' ? { gridTemplateRows: `minmax(0, ${textSplit}fr) ${GUTTER}px minmax(0, ${1 - textSplit}fr)` } : undefined}
+          >
             <div ref={listRef} className="ocr-text">
               {job.status === 'running' ? (
                 <div className="ocr-text__loading">
@@ -230,14 +282,50 @@ export default function OcrView() {
               )}
             </div>
             {showTranslate && job.status === 'done' && (
-              <div className="ocr-translate">
-                <TranslateBox text={fullText} />
-              </div>
+              <>
+                <div
+                  className="ocr-splitter ocr-splitter--row"
+                  onPointerDown={(e) => {
+                    const box = e.currentTarget.parentElement?.getBoundingClientRect();
+                    if (!box) return;
+                    let last = textSplit;
+                    dragSplitter(
+                      e,
+                      (ev) => {
+                        last = Math.min(0.8, Math.max(0.2, (ev.clientY - box.top - GUTTER / 2) / (box.height - GUTTER)));
+                        setTextSplit(last);
+                      },
+                      () => saveNumber('ocr.textSplit', last),
+                    );
+                  }}
+                />
+                <div className="ocr-translate">
+                  <TranslateBox text={fullText} />
+                </div>
+              </>
             )}
           </div>
           {showAi && job.status === 'done' && (
             <>
-              <span />
+              <div
+                className="ocr-splitter"
+                onPointerDown={(e) => {
+                  // 拖的是 AI 列的左边：往左拖变宽，图片和文字两列按比例让出空间
+                  const body = e.currentTarget.parentElement?.getBoundingClientRect();
+                  if (!body) return;
+                  const right = body.right - 12;
+                  const max = Math.min(AI_MAX, body.width - 360);
+                  let last = aiWidthRef.current;
+                  dragSplitter(
+                    e,
+                    (ev) => {
+                      last = Math.round(Math.min(max, Math.max(AI_MIN, right - ev.clientX - GUTTER / 2)));
+                      setAiWidth(last);
+                    },
+                    () => saveNumber('ocr.aiWidth', last),
+                  );
+                }}
+              />
               <div className="ocr-translate ocr-ai">
                 <AiChat context={{ text: fullText, images: [], source: 'ocr' }} resetKey={job.id} />
               </div>

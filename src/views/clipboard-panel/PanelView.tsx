@@ -23,8 +23,12 @@ import { notify } from '@/ui/overlays';
 
 import { clipMenu } from './actions';
 import { ClipCard } from './ClipCard';
+import { HScrollbar } from './HScrollbar';
 
 type Filter = 'all' | ClipType | 'pinned' | 'favorite';
+/** 底部卡片条：卡片宽度和间距 */
+const CARD_W = 172;
+const CARD_GAP = 12;
 const FILTERS: Filter[] = ['all', 'text', 'image', 'link', 'files', 'pinned', 'favorite'];
 
 function queryOf(filter: Filter, keyword: string) {
@@ -71,7 +75,7 @@ export default function PanelView() {
     count: items.length,
     horizontal,
     getScrollElement: () => scrollRef.current,
-    estimateSize: (i) => (horizontal ? 168 + 12 : items[i]?.type === 'image' ? 120 + 8 : 72 + 8),
+    estimateSize: (i) => (horizontal ? CARD_W + CARD_GAP : items[i]?.type === 'image' ? 120 + 8 : 72 + 8),
     overscan: 3,
     paddingStart: horizontal ? 16 : 8,
     paddingEnd: horizontal ? 16 : 8,
@@ -91,6 +95,39 @@ export default function PanelView() {
   useEffect(() => {
     if (items.length) virt.scrollToIndex(selected, { align: 'auto' });
   }, [selected, items.length, virt]);
+
+  // 横向卡片条：鼠标滚轮竖着滚 = 横着走，带一点缓动，不是一格一格地跳。
+  // 触控板本来就会横向滑动，交给浏览器
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el || !horizontal) return;
+    let target = el.scrollLeft;
+    let raf = 0;
+    const step = () => {
+      const d = target - el.scrollLeft;
+      const before = el.scrollLeft;
+      el.scrollLeft += Math.abs(d) < 4 ? d : d * 0.24;
+      // 到了，或者已经推不动了（到头 / 小数像素被吞）
+      if (Math.abs(d) < 4 || el.scrollLeft === before) {
+        raf = 0;
+        return;
+      }
+      raf = requestAnimationFrame(step);
+    };
+    const onWheel = (e: WheelEvent) => {
+      if (Math.abs(e.deltaX) > Math.abs(e.deltaY) || e.ctrlKey) return;
+      e.preventDefault();
+      const unit = e.deltaMode === 1 ? 40 : e.deltaMode === 2 ? el.clientWidth : 1;
+      if (!raf) target = el.scrollLeft;
+      target = Math.max(0, Math.min(el.scrollWidth - el.clientWidth, target + e.deltaY * unit * 1.6));
+      if (!raf) raf = requestAnimationFrame(step);
+    };
+    el.addEventListener('wheel', onWheel, { passive: false });
+    return () => {
+      el.removeEventListener('wheel', onWheel);
+      cancelAnimationFrame(raf);
+    };
+  }, [horizontal]);
 
   const hide = useCallback(() => {
     if (hiding.current) return;
@@ -273,7 +310,7 @@ export default function PanelView() {
           <IconButton icon={X} label={t('common.close')} size="sm" onClick={hide} />
         </header>
 
-        <div ref={scrollRef} className="panel__list" onWheel={(e) => horizontal && scrollRef.current && (scrollRef.current.scrollLeft += e.deltaY)}>
+        <div ref={scrollRef} className="panel__list">
           {query.isLoading ? (
             <div className="panel__loading">
               <Skeleton />
@@ -288,7 +325,7 @@ export default function PanelView() {
                   <div
                     key={item.id}
                     className="panel__cell"
-                    style={horizontal ? { transform: `translateX(${v.start}px)`, width: 168 } : { transform: `translateY(${v.start}px)`, height: v.size - 8, left: 8, right: 8 }}
+                    style={horizontal ? { transform: `translateX(${v.start}px)`, width: CARD_W } : { transform: `translateY(${v.start}px)`, height: v.size - 8, left: 8, right: 8 }}
                   >
                     <ClipCard
                       item={item}
@@ -309,6 +346,8 @@ export default function PanelView() {
             </div>
           )}
         </div>
+
+        {horizontal && <HScrollbar target={scrollRef} watch={`${items.length}:${query.isLoading}:${style}`} />}
 
         {preview && (
           <div className="panel__preview" onClick={() => setPreview(null)}>

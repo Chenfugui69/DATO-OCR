@@ -259,6 +259,7 @@
   height: 26px;
   padding: 0 var(--cn-space-2) 0 10px;
   border-radius: var(--cn-radius-sm);
+  white-space: nowrap;
   background: var(--cn-bg-elevated);
   box-shadow: 0 0.5px 2px rgba(0, 0, 0, 0.12), 0 0 0 0.5px var(--cn-separator);
   font: var(--cn-text-body);

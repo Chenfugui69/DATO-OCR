@@ -30,10 +30,10 @@ html[data-view='clipboard'] body {
     opacity 200ms var(--cn-ease-out);
 }
 [data-theme='light'] .panel {
-  background: rgba(246, 246, 248, 0.94);
+  background: rgba(246, 246, 248, 0.975);
 }
 [data-theme='dark'] .panel {
-  background: rgba(36, 36, 38, 0.94);
+  background: rgba(36, 36, 38, 0.975);
 }
 .panel-root--bottom[data-visible='false'] .panel {
   transform: translateY(105%);
@@ -109,8 +109,16 @@ html[data-view='clipboard'] body {
   min-height: 0;
   overflow-x: auto;
   overflow-y: hidden;
-  scrollbar-width: thin;
   contain: paint;
+}
+/* 底部卡片条不用系统滚动条（见 HScrollbar），两头渐隐，提示还能往两边滚 */
+.panel-root--bottom .panel__list {
+  scrollbar-width: none;
+  -webkit-mask-image: linear-gradient(90deg, transparent, #000 14px, #000 calc(100% - 14px), transparent);
+  mask-image: linear-gradient(90deg, transparent, #000 14px, #000 calc(100% - 14px), transparent);
+}
+.panel-root--bottom .panel__list::-webkit-scrollbar {
+  display: none;
 }
 .panel-root--vertical .panel__list {
   overflow-x: hidden;
@@ -128,35 +136,105 @@ html[data-view='clipboard'] body {
   padding: 0;
 }
 .panel-root--bottom .panel__cell {
-  top: 4px;
+  top: 6px;
 }
 
-/* ── 卡片：168×216，圆角 12 ── */
+/* ── 悬浮滚动条 ── */
+.hbar {
+  position: absolute;
+  left: 24px;
+  right: 24px;
+  bottom: 8px;
+  height: 14px;
+  display: flex;
+  align-items: center;
+  opacity: 0;
+  transition: opacity 240ms var(--cn-ease-out);
+  cursor: default;
+}
+.panel:hover .hbar {
+  opacity: 0.55;
+}
+.hbar.is-active,
+.panel .hbar:hover {
+  opacity: 1;
+}
+.hbar.is-empty {
+  visibility: hidden;
+}
+.hbar__thumb {
+  height: 5px;
+  border-radius: var(--cn-radius-full);
+  background: var(--cn-label-tertiary);
+  transition: height 140ms var(--cn-ease-out), background-color 140ms;
+  will-change: transform;
+}
+.hbar:hover .hbar__thumb,
+.hbar__thumb[data-dragging] {
+  height: 8px;
+  background: var(--cn-label-secondary);
+}
+
+/* ── 卡片：172×216，圆角 14 ── */
 .clip-card {
   position: relative;
   width: 100%;
   height: 100%;
   display: flex;
   flex-direction: column;
-  border-radius: var(--cn-radius-xl);
+  border-radius: 14px;
   background: var(--cn-bg-elevated);
-  box-shadow: var(--cn-shadow-sm), 0 0 0 0.5px var(--cn-separator);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06), 0 0 0 0.5px var(--cn-separator);
   overflow: hidden;
   cursor: pointer;
   transition:
-    transform var(--cn-duration-fast) var(--cn-ease-out),
-    box-shadow var(--cn-duration-fast);
+    transform 160ms var(--cn-ease-out),
+    box-shadow 160ms var(--cn-ease-out);
 }
 .clip-card:hover {
-  transform: translateY(-2px);
-  box-shadow: var(--cn-shadow-md), 0 0 0 0.5px var(--cn-separator);
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.1), 0 0 0 0.5px var(--cn-separator);
+}
+.clip-card:active {
+  transform: scale(0.98);
 }
 .clip-card--selected,
 .clip-card--selected:hover {
   box-shadow:
-    0 0 0 2.5px var(--cn-accent),
-    var(--cn-shadow-md);
+    0 0 0 2px var(--cn-accent),
+    0 6px 16px color-mix(in srgb, var(--cn-accent) 22%, transparent);
 }
+
+/* 卡片顶：来源应用 */
+.clip-card__head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 10px;
+  flex: none;
+}
+.clip-card__app {
+  width: 16px;
+  height: 16px;
+  flex: none;
+  border-radius: 4px;
+}
+.clip-card__app--blank {
+  background: var(--cn-fill-tertiary);
+}
+.clip-card__appname {
+  flex: 1;
+  font: 500 11px/1.2 var(--cn-font-sans);
+  color: var(--cn-label-secondary);
+}
+.clip-card__marks {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  color: var(--cn-orange);
+  flex: none;
+}
+
 .clip-card__body {
   flex: 1;
   min-height: 0;
@@ -164,28 +242,38 @@ html[data-view='clipboard'] body {
   position: relative;
 }
 .clip-card__text {
-  padding: var(--cn-space-3);
+  padding: 0 12px;
   font: var(--cn-text-callout);
-  line-height: 17px;
+  line-height: 18px;
   color: var(--cn-label);
   white-space: pre-wrap;
   word-break: break-word;
-  display: -webkit-box;
-  -webkit-line-clamp: 9;
-  -webkit-box-orient: vertical;
   overflow: hidden;
+  height: 100%;
   /* 超出部分渐隐 */
-  -webkit-mask-image: linear-gradient(180deg, #000 70%, transparent);
+  -webkit-mask-image: linear-gradient(180deg, #000 72%, transparent);
+  mask-image: linear-gradient(180deg, #000 72%, transparent);
 }
 .clip-card--row .clip-card__text {
+  display: -webkit-box;
   -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  height: auto;
   padding: 8px 12px 0;
   -webkit-mask-image: none;
+  mask-image: none;
 }
+/* 图片：嵌在卡片里的一张小相片 */
 .clip-card__image {
   position: absolute;
-  inset: 0;
-  background: var(--cn-fill-quaternary);
+  inset: 0 8px;
+  border-radius: 8px;
+  overflow: hidden;
+  background: repeating-conic-gradient(var(--cn-fill-quaternary) 0% 25%, transparent 0% 50%) 50% / 12px 12px;
+  box-shadow: inset 0 0 0 0.5px var(--cn-separator);
+}
+.clip-card--row .clip-card__image {
+  inset: 6px 8px 0;
 }
 .clip-card__image img {
   width: 100%;
@@ -193,30 +281,22 @@ html[data-view='clipboard'] body {
   object-fit: cover;
   display: block;
 }
-.clip-card__dim {
-  position: absolute;
-  right: 6px;
-  top: 6px;
-  padding: 1px 5px;
-  border-radius: 4px;
-  background: rgba(0, 0, 0, 0.55);
-  color: #fff;
-  font: var(--cn-text-caption);
-}
 .clip-card__color {
   height: 100%;
   display: grid;
   place-items: center;
-  font: 600 15px/1 var(--cn-font-mono);
-}
-.clip-card--color .clip-card__meta {
-  background: rgba(0, 0, 0, 0.12);
-  color: inherit;
+  font: 600 16px/1 var(--cn-font-mono);
+  letter-spacing: 0.02em;
 }
 .clip-card--color .clip-card__appname,
-.clip-card--color .clip-card__time {
+.clip-card--color .clip-card__time,
+.clip-card--color .clip-card__detail {
   color: inherit;
-  opacity: 0.85;
+  opacity: 0.8;
+}
+.clip-card--color .clip-card__index {
+  background: rgba(0, 0, 0, 0.14);
+  color: inherit;
 }
 .clip-card__link,
 .clip-card__files {
@@ -225,7 +305,7 @@ html[data-view='clipboard'] body {
   flex-direction: column;
   justify-content: center;
   gap: 6px;
-  padding: var(--cn-space-3);
+  padding: 0 12px 8px;
   color: var(--cn-label-secondary);
 }
 .clip-card--row .clip-card__link,
@@ -233,6 +313,11 @@ html[data-view='clipboard'] body {
   flex-direction: row;
   align-items: center;
   justify-content: flex-start;
+  padding: 8px 12px 0;
+}
+.clip-card__link svg,
+.clip-card__files svg {
+  color: var(--cn-accent);
 }
 .clip-card__domain,
 .clip-card__fname {
@@ -244,6 +329,7 @@ html[data-view='clipboard'] body {
 }
 .clip-card__url {
   font: var(--cn-text-footnote);
+  color: var(--cn-label-tertiary);
   word-break: break-all;
   display: -webkit-box;
   -webkit-line-clamp: 3;
@@ -257,62 +343,35 @@ html[data-view='clipboard'] body {
   font: var(--cn-text-footnote);
 }
 
-.clip-card__meta {
+/* 卡片底：细节 + 时间 */
+.clip-card__foot {
   display: flex;
   align-items: center;
   gap: 6px;
+  height: 30px;
+  padding: 0 10px 0 12px;
+  flex: none;
+}
+.clip-card--row .clip-card__foot {
   height: 28px;
-  padding: 0 10px;
-  flex: none;
-  box-shadow: inset 0 0.5px 0 var(--cn-separator);
-  background: var(--cn-bg-elevated);
 }
-.clip-card__app {
-  width: 16px;
-  height: 16px;
-  flex: none;
-  border-radius: 3px;
-}
-.clip-card__app--blank {
-  background: var(--cn-fill-tertiary);
-}
-.clip-card__appname {
+.clip-card__detail {
   flex: 1;
-  font: var(--cn-text-footnote);
-  color: var(--cn-label-secondary);
-}
-.clip-card__time {
-  font: var(--cn-text-footnote);
-  color: var(--cn-label-tertiary);
-  white-space: nowrap;
-}
-.clip-card__badges {
-  position: absolute;
-  top: 6px;
-  right: 8px;
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  color: var(--cn-orange);
-}
-.clip-card--image .clip-card__badges {
-  top: auto;
-  bottom: 34px;
-  color: #fff;
-  filter: drop-shadow(0 1px 1px rgba(0, 0, 0, 0.5));
-}
-.clip-card__count {
   font: var(--cn-text-caption);
   color: var(--cn-label-tertiary);
 }
+.clip-card__time {
+  font: var(--cn-text-caption);
+  color: var(--cn-label-tertiary);
+  white-space: nowrap;
+}
 .clip-card__index {
-  position: absolute;
-  left: 8px;
-  bottom: 34px;
   width: 16px;
   height: 16px;
   display: grid;
   place-items: center;
+  flex: none;
+  margin-left: -2px;
   border-radius: 4px;
   background: var(--cn-fill-tertiary);
   font: 600 10px/1 var(--cn-font-sans);
@@ -320,6 +379,7 @@ html[data-view='clipboard'] body {
   opacity: 0;
   transition: opacity var(--cn-duration-fast);
 }
+/* 数字键 1–9 直接粘贴：面板没在打字时显示编号 */
 .panel:not(:focus-within) .clip-card__index,
 .clip-card--selected .clip-card__index {
   opacity: 1;

@@ -92,6 +92,9 @@ pub struct ChatRequest {
     /// `服务商id/模型名`；空 = 默认模型
     pub model: Option<String>,
     pub messages: Vec<ChatMessage>,
+    /// 思考深度（对话框里的滑杆）；空 = 用设置里的
+    #[serde(default)]
+    pub thinking: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -103,6 +106,14 @@ pub enum ChatEvent {
     },
     Delta {
         text: String,
+    },
+    /// 模型的思考过程（服务给了才有：Claude 的思考摘要、DeepSeek / 通义等的 reasoning_content）
+    Reasoning {
+        text: String,
+    },
+    /// 一句提示，不影响回答（比如"这个模型不支持调思考深度，已按默认回答"）
+    Notice {
+        message: String,
     },
     Done,
     Error {
@@ -116,7 +127,75 @@ pub struct Params {
     pub system: String,
     pub temperature: f64,
     pub max_tokens: u32,
+    /// 思考深度 low | medium | high | max；None = 不指定，用模型自己的默认
+    pub effort: Option<&'static str>,
 }
+
+/// 流里解析出来的一段。
+pub enum Piece<'a> {
+    Text(&'a str),
+    Reasoning(&'a str),
+    Notice(&'a str),
+}
+
+/// 去掉 OpenRouter 这类聚合服务加的 `厂商/` 前缀，转小写，方便按名字认模型。
+fn bare_model(model: &str) -> String {
+    model
+        .rsplit('/')
+        .next()
+        .unwrap_or(model)
+        .to_ascii_lowercase()
+}
+
+/// 不接受自定义采样温度的模型：OpenAI 推理模型、新一代 Claude。发了温度会直接 400。
+pub(crate) fn fixed_sampling(model: &str) -> bool {
+    let m = bare_model(model);
+    [
+        "opus-4-7", "opus-4-8", "opus-5", "sonnet-5", "haiku-5", "fable", "mythos",
+    ]
+    .iter()
+    .any(|k| m.contains(k))
+        || ["o1", "o3", "o4", "gpt-5"].iter().any(|k| m.starts_with(k))
+}
+
+/// 老一代 Claude（4.5 及更早）：思考要用 `budget_tokens`，不认自适应思考和 effort。
+pub(crate) fn legacy_claude(model: &str) -> bool {
+    let m = bare_model(model);
+    m.contains("claude-3")
+        || ["-4-5", "-4-1", "-4-0", "opus-4-2025", "sonnet-4-2025"]
+            .iter()
+            .any(|k| m.contains(k))
+}
+
+/// 依次试几份请求体：服务不认某个参数（400 / 422）就退到下一份，越往后越保守。
+/// 返回成功的响应和用上的是第几份。
+pub(crate) async fn send_first_ok(
+    bodies: &[serde_json::Value],
+    send: impl Fn(&serde_json::Value) -> reqwest::RequestBuilder,
+) -> AppResult<(reqwest::Response, usize)> {
+    let mut i = 0;
+    loop {
+        let resp = send(&bodies[i]).send().await?;
+        if resp.status().is_success() {
+            return Ok((resp, i));
+        }
+        let code = resp.status().as_u16();
+        let err = api_error(resp).await;
+        if !matches!(code, 400 | 422) || i + 1 >= bodies.len() {
+            return Err(err);
+        }
+        tracing::info!("AI 请求参数被拒，换一组更保守的参数重试：{err}");
+        i += 1;
+    }
+}
+
+/// 请求体去重（相邻两份一样就只留一份），免得白重试。
+pub(crate) fn dedup_bodies(mut bodies: Vec<serde_json::Value>) -> Vec<serde_json::Value> {
+    bodies.dedup();
+    bodies
+}
+
+pub(crate) const NOTICE_NO_THINKING: &str = "这个模型不支持调节思考深度，已按默认方式回答";
 
 /// 编码好的一条消息：图片已转成 base64 PNG。
 pub struct Prepared {
@@ -296,20 +375,37 @@ pub async fn chat(app: AppHandle, req: ChatRequest, channel: Channel<ChatEvent>)
         .map_err(|e| AppError::msg(e.to_string()))??;
     let key = key_of(&app, &provider.id);
     let client = net::client(&app, Purpose::Ai);
+    let thinking = req
+        .thinking
+        .as_deref()
+        .filter(|t| !t.is_empty())
+        .unwrap_or(&ai.thinking);
     let params = Params {
         model: model.clone(),
         system: ai.system_prompt.clone(),
         temperature: ai.temperature,
         max_tokens: ai.max_tokens,
+        effort: crate::settings::THINKING_LEVELS
+            .iter()
+            .copied()
+            .find(|l| *l == thinking && *l != "auto"),
     };
     let id = req.id.clone();
     let _ = channel.send(ChatEvent::Start {
         model: format!("{} · {model}", provider.name),
     });
     let handle = tauri::async_runtime::spawn(async move {
-        let delta = |text: &str| {
-            let _ = channel.send(ChatEvent::Delta {
-                text: text.to_string(),
+        let delta = |piece: Piece| {
+            let _ = channel.send(match piece {
+                Piece::Text(text) => ChatEvent::Delta {
+                    text: text.to_string(),
+                },
+                Piece::Reasoning(text) => ChatEvent::Reasoning {
+                    text: text.to_string(),
+                },
+                Piece::Notice(message) => ChatEvent::Notice {
+                    message: message.to_string(),
+                },
             });
         };
         let result = match provider.kind.as_str() {
