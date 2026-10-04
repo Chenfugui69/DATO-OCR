@@ -130,22 +130,38 @@
   height: 100%;
 }
 
-/* 文字工具的输入框：字体、字号、颜色和最终绘制完全一致（所见即所得） */
+/* 文字工具的输入框：字体、字号、颜色和最终绘制完全一致（所见即所得）。
+   边框画在文字外面（outline-offset），里面那圈空隙铺一层很淡的主题色，像一个获得焦点的输入框 */
 .an-text-input {
   position: absolute;
   min-width: 24px;
   margin: 0;
   padding: 0;
   border: none;
-  outline: 1px dashed var(--cn-accent);
-  outline-offset: 3px;
+  border-radius: 2px;
+  outline: 1.5px solid var(--cn-accent);
+  outline-offset: 5px;
   background: transparent;
+  box-shadow:
+    0 0 0 5px color-mix(in srgb, var(--cn-accent) 10%, rgba(0, 0, 0, 0.18)),
+    0 0 0 6.5px color-mix(in srgb, var(--cn-accent) 30%, transparent),
+    0 4px 18px 6px rgba(0, 0, 0, 0.28);
   resize: none;
   overflow: hidden;
   white-space: pre;
-  caret-color: var(--cn-accent);
   -webkit-text-stroke: 0;
   z-index: 20;
+  animation: an-text-in 140ms var(--cn-ease-out);
+}
+.an-text-input::placeholder {
+  color: currentColor;
+  opacity: 0.45;
+}
+@keyframes an-text-in {
+  from {
+    outline-offset: 9px;
+    outline-color: transparent;
+  }
 }
 
 /* 选中的标注：虚线框 + 白色控制点（只显示，命中由引擎判断） */

@@ -1,7 +1,9 @@
 // 文字工具的输入框（规格 02 §5.2 文字）：点击位置出现可直接打字的输入框，
-// 字体/字号/颜色与最终绘制完全一致；Esc 或点击别处提交；Enter 换行。
+// 字体/字号/颜色与最终绘制完全一致；Esc、Ctrl+Enter 或点击别处（左右键都一样）提交；Enter 换行。
+// 框本身只是外面一圈主题色细边 + 一层淡淡的底，不挤占文字的位置（文字位置要和最终画出来的一致）。
 
 import { useEffect, useRef, useSyncExternalStore } from 'react';
+import { useTranslation } from 'react-i18next';
 
 import type { AnnotationEngine } from './engine';
 import { TEXT_FONT, TEXT_LINE_HEIGHT } from './model';
@@ -14,6 +16,7 @@ export function useEngineVersion(engine: AnnotationEngine): number {
 }
 
 export function TextEditor({ engine, displayScale }: { engine: AnnotationEngine; displayScale: number }) {
+  const { t } = useTranslation();
   useEngineVersion(engine);
   const ref = useRef<HTMLTextAreaElement>(null);
   const draft = engine.text;
@@ -32,13 +35,16 @@ export function TextEditor({ engine, displayScale }: { engine: AnnotationEngine;
   }, [editingKey]);
 
   if (!draft) return null;
-  const size = engine.textSize(draft);
+  const placeholder = t('tools.textPlaceholder');
+  // 还没打字时按提示文字的宽度摆框，免得只剩一条细缝
+  const size = engine.textSize({ ...draft, content: draft.content || placeholder });
   const fontPx = draft.fontSize / displayScale;
   return (
     <textarea
       ref={ref}
       className="an-text-input"
       value={draft.content}
+      placeholder={placeholder}
       spellCheck={false}
       style={{
         left: draft.at.x / displayScale,
@@ -48,6 +54,7 @@ export function TextEditor({ engine, displayScale }: { engine: AnnotationEngine;
         font: `${draft.bold ? 600 : 400} ${fontPx}px ${TEXT_FONT}`,
         lineHeight: TEXT_LINE_HEIGHT,
         color: draft.color,
+        caretColor: draft.color,
       }}
       onChange={(e) => engine.updateText(e.target.value)}
       onPointerDown={(e) => e.stopPropagation()}

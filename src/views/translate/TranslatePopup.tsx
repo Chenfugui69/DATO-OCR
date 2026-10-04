@@ -7,19 +7,22 @@
 //     抽屉顶上的小横条可以上下拖，调翻译和对话各占多少
 //   - 侧边：面板往右长出对话区，翻译卡片压在对话区上面；中间的缝可以左右拖
 //   对话期间点别处不收起（不然对话就没了），也可以挪到独立窗口里接着聊
+// - 展开 / 收起的动画：窗口先一步到位（一次原生调用同时改位置和大小），外框先按原来的尺寸
+//   定住，看起来什么都没变；然后外框用 CSS 过渡长到新尺寸、对话区滑进来。窗口尺寸和动画
+//   分开做，动画过程中窗口不再变，才不会一顿一顿地跳
 // - 每块区域只涂一层底色（卡片圆角外露出来的那一小块用径向渐变补上），调不透明度时
 //   各处一样透，不会因为叠了两层而一块透一块不透
 
 import '@/views/ocr/ocr.css';
 
-import { LogicalPosition, LogicalSize } from '@tauri-apps/api/dpi';
-import { currentMonitor, getCurrentWindow } from '@tauri-apps/api/window';
+import { getCurrentWindow } from '@tauri-apps/api/window';
 import { ArrowUp, ChevronDown, ExternalLink, Sparkles, X } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { flushSync } from 'react-dom';
 import { useTranslation } from 'react-i18next';
 
 import { useEvent } from '@/lib/events';
-import { ai, translate } from '@/lib/ipc';
+import { ai, system, translate } from '@/lib/ipc';
 import { useSettings, useSettingsStore } from '@/lib/settings';
 import type { ChatTurn } from '@/lib/types';
 import { IconButton } from '@/ui/controls';
@@ -37,6 +40,27 @@ const MIN_TRANSLATE_H = 110;
 const MIN_DRAWER = 200;
 
 type Layout = 'drawer' | 'side';
+
+/**
+ * 展开 / 收起过渡中外框的样子：尺寸、在窗口里的偏移（窗口为了放得下往回挪了多少，外框就往反方向
+ * 偏多少，屏幕上看位置不变）、对话区有没有滑进来、这一步要不要动画（补偿窗口挪动的那一步不能有）
+ */
+interface Sheet {
+  w: number;
+  h: number;
+  x: number;
+  y: number;
+  open: boolean;
+  animate: boolean;
+  /** 展开后外框的完整尺寸：对话区始终按这个大小摆，靠位移滑进滑出 */
+  fw: number;
+  fh: number;
+}
+
+const ANIM_MS = 340;
+const EASE = 'cubic-bezier(0.32, 0.72, 0, 1)';
+const frame = () => new Promise<void>((r) => requestAnimationFrame(() => r()));
+const wait = (ms: number) => new Promise<void>((r) => window.setTimeout(r, ms));
 
 const logicalWindowSize = () => ({ w: window.innerWidth, h: window.innerHeight });
 
@@ -89,6 +113,10 @@ export default function TranslatePopup() {
   const transRef = useRef<HTMLDivElement>(null);
   /** 展开对话前的窗口大小，收起时还原 */
   const baseSize = useRef({ w: 460, h: 300 });
+  /** 展开时为了放得下，窗口往左 / 往上挪了多少；收起时挪回去 */
+  const shift = useRef({ x: 0, y: 0 });
+  const [sheet, setSheet] = useState<Sheet | null>(null);
+  const animating = useRef(false);
 
   const adopt = useCallback((next: string) => {
     setText(next);
@@ -168,55 +196,92 @@ export default function TranslatePopup() {
     };
   }, [hide]);
 
-  const resizeTo = async (w: number, h: number) => {
-    userResizing.current = false;
-    await getCurrentWindow().setSize(new LogicalSize(w, h));
-  };
-
   const openAi = async (ask?: string) => {
-    const next: Layout = popup?.aiLayout === 'side' ? 'side' : 'drawer';
-    const panel = settings?.ai.panel;
-    const win = getCurrentWindow();
-    const scale = await win.scaleFactor();
-    const base = logicalWindowSize();
-    baseSize.current = base;
-    const monitor = await currentMonitor();
-    const screenW = monitor ? monitor.size.width / scale : 1920;
-    const screenH = monitor ? monitor.size.height / scale : 1080;
-    let w: number;
-    let h: number;
-    if (next === 'side') {
-      const trans = Math.max(MIN_TRANSLATE, base.w - pad * 2);
-      setTransW(trans);
-      w = Math.min(screenW - 16, trans + pad * 2 + Math.max(MIN_AI, panel?.width ?? 520));
-      h = Math.min(screenH - 16, Math.max(base.h, panel?.height ?? 620));
-    } else {
-      // 输入框收起，抽屉从底部接上；翻译区保持原来的高度
-      const trans = Math.max(MIN_TRANSLATE_H, base.h - pad * 2 - ASK_H);
-      w = Math.max(base.w, 380);
-      h = Math.min(screenH - 16, pad * 2 + trans + (popup?.drawerHeight ?? 380));
-      setTransH(Math.min(trans, h - pad * 2 - MIN_DRAWER));
-    }
-    setLayout(next);
-    if (ask) setPendingAsk({ id: Date.now(), text: ask });
-    setQuestion('');
-    setMode('ai');
-    await resizeTo(w, h);
-    // 往右 / 往下展开超出屏幕了：整个窗口往回挪
-    if (monitor) {
-      const pos = (await win.outerPosition()).toLogical(scale);
-      const right = (monitor.position.x + monitor.size.width) / scale;
-      const bottom = (monitor.position.y + monitor.size.height) / scale;
-      const x = Math.max(monitor.position.x / scale, Math.min(pos.x, right - w));
-      const y = Math.max(monitor.position.y / scale, Math.min(pos.y, bottom - h));
-      if (x !== pos.x || y !== pos.y) await win.setPosition(new LogicalPosition(x, y));
+    if (animating.current) return;
+    animating.current = true;
+    try {
+      const next: Layout = popup?.aiLayout === 'side' ? 'side' : 'drawer';
+      const panel = settings?.ai.panel;
+      const base = logicalWindowSize();
+      baseSize.current = base;
+      // 位置、屏幕可用区域都直接读浏览器的同步值（逻辑像素），少几次来回，点下去立刻开始动
+      const pos = { x: window.screenX, y: window.screenY };
+      const scr = window.screen as Screen & { availLeft?: number; availTop?: number };
+      const mx = scr.availLeft ?? 0;
+      const my = scr.availTop ?? 0;
+      const mw = scr.availWidth;
+      const mh = scr.availHeight;
+      let w: number;
+      let h: number;
+      if (next === 'side') {
+        const trans = Math.max(MIN_TRANSLATE, base.w - pad * 2);
+        setTransW(trans);
+        w = Math.min(mw - 16, trans + pad * 2 + Math.max(MIN_AI, panel?.width ?? 520));
+        h = Math.min(mh - 16, Math.max(base.h, panel?.height ?? 620));
+      } else {
+        // 输入框那一条让给抽屉，翻译区保持原来的高度
+        const trans = Math.max(MIN_TRANSLATE_H, base.h - pad * 2 - ASK_H);
+        w = Math.max(base.w, 380);
+        h = Math.min(mh - 16, pad * 2 + trans + (popup?.drawerHeight ?? 380));
+        setTransH(Math.min(trans, h - pad * 2 - MIN_DRAWER));
+      }
+      // 原地往右 / 往下长；放不下才整个往回挪
+      const x = Math.max(mx, Math.min(pos.x, mx + mw - w));
+      const y = Math.max(my, Math.min(pos.y, my + mh - h));
+      shift.current = { x: pos.x - x, y: pos.y - y };
+      const full = { fw: w - pad * 2, fh: h - pad * 2 };
+      const start = { w: base.w - pad * 2, h: base.h - pad * 2, ...full };
+
+      // 1. 外框按现在的尺寸定住（要往回挪的话同时往反方向偏，屏幕上看不动），对话区先藏着；
+      //    同步提交到 DOM，然后窗口一步到位
+      flushSync(() => {
+        setLayout(next);
+        if (ask) setPendingAsk({ id: Date.now(), text: ask });
+        setQuestion('');
+        setSheet({ ...start, x: shift.current.x, y: shift.current.y, open: false, animate: false });
+        setMode('ai');
+      });
+      userResizing.current = false;
+      await system.setBounds(x, y, w, h);
+      await frame();
+      await frame();
+      // 2. 外框长到新尺寸、回到原点，对话区滑进来
+      setSheet({ w: full.fw, h: full.fh, ...full, x: 0, y: 0, open: true, animate: true });
+      await wait(ANIM_MS + 40);
+      setSheet(null);
+    } finally {
+      animating.current = false;
     }
   };
 
   const closeAi = async () => {
-    setMode('translate');
-    setPendingAsk(null);
-    await resizeTo(baseSize.current.w, baseSize.current.h);
+    if (animating.current) return;
+    animating.current = true;
+    try {
+      const pos = { x: window.screenX, y: window.screenY };
+      const cur = logicalWindowSize();
+      const target = baseSize.current;
+      const { x: sx, y: sy } = shift.current;
+      const full = { fw: cur.w - pad * 2, fh: cur.h - pad * 2 };
+      // 1. 外框按现在的尺寸定住，然后缩回原来的大小、偏到窗口挪回去之后的位置，对话区滑出去
+      flushSync(() => setSheet({ w: full.fw, h: full.fh, ...full, x: 0, y: 0, open: true, animate: false }));
+      await frame();
+      setSheet({ w: target.w - pad * 2, h: target.h - pad * 2, ...full, x: sx, y: sy, open: false, animate: true });
+      await wait(ANIM_MS + 20);
+      // 2. 窗口一步还原，外框同时回到原点
+      userResizing.current = false;
+      flushSync(() => {
+        setSheet({ w: target.w - pad * 2, h: target.h - pad * 2, ...full, x: 0, y: 0, open: false, animate: false });
+      });
+      await system.setBounds(pos.x + sx, pos.y + sy, target.w, target.h);
+      await frame();
+      shift.current = { x: 0, y: 0 };
+      setMode('translate');
+      setPendingAsk(null);
+      setSheet(null);
+    } finally {
+      animating.current = false;
+    }
   };
 
   /** 侧边：拖翻译卡片和对话区之间的缝，窗口大小不变，两边此消彼长 */
@@ -272,11 +337,58 @@ export default function TranslatePopup() {
   } as React.CSSProperties;
 
   const shellClass = ['pop-shell', mode === 'ai' ? `is-${layout}` : 'is-plain', blur ? 'is-blur' : ''].join(' ');
-  const paneStyle = mode !== 'ai' ? undefined : layout === 'side' ? { width: transW } : { height: transH };
+  const transition = (props: string[]) => props.map((p) => `${p} ${ANIM_MS}ms ${EASE}`).join(', ');
+  const shellStyle: React.CSSProperties | undefined = sheet
+    ? {
+        flex: 'none',
+        width: sheet.w,
+        height: sheet.h,
+        transform: `translate(${sheet.x}px, ${sheet.y}px)`,
+        transition: sheet.animate ? transition(['width', 'height', 'transform']) : 'none',
+      }
+    : undefined;
+  // 过渡期间翻译区保持展开前的高度（带着输入框），抽屉滑上来盖住它的下沿
+  const paneStyle =
+    mode !== 'ai'
+      ? undefined
+      : layout === 'side'
+        ? { width: transW, maxWidth: sheet ? 'none' : undefined }
+        : { height: sheet ? baseSize.current.h - pad * 2 : transH };
+  /**
+   * 过渡期间对话区贴着外框底边（侧边是右边），高度（宽度）从 0 长到最终值，和外框用同一条缓动曲线：
+   * 外框往下长多少，抽屉就往上长多少，顶边从翻译区底部平滑升到最终位置，中间不会露出空隙。
+   * 里面的内容按最终大小固定在抽屉顶部（左边），只是被逐渐露出来，不跟着重新排版
+   */
+  const drawerStyle: React.CSSProperties | undefined = sheet
+    ? {
+        position: 'absolute',
+        left: 0,
+        right: 0,
+        bottom: 0,
+        height: sheet.open ? sheet.fh - transH : 0,
+        transition: sheet.animate ? transition(['height']) : 'none',
+      }
+    : undefined;
+  const drawerInner: React.CSSProperties | undefined = sheet
+    ? { position: 'absolute', left: 0, right: 0, top: 0, height: sheet.fh - transH, flex: 'none' }
+    : undefined;
+  const sideStyle: React.CSSProperties | undefined = sheet
+    ? {
+        position: 'absolute',
+        top: 0,
+        bottom: 0,
+        right: 0,
+        width: sheet.open ? sheet.fw - transW : 0,
+        transition: sheet.animate ? transition(['width']) : 'none',
+      }
+    : undefined;
+  const sideInner: React.CSSProperties | undefined = sheet
+    ? { position: 'absolute', top: 0, bottom: 0, left: 0, width: sheet.fw - transW, flex: 'none' }
+    : undefined;
 
   return (
     <div className="pop-root" style={style}>
-      <div className={shellClass}>
+      <div className={shellClass} style={shellStyle}>
         <div ref={transRef} className="pop-pane pop-pane--translate" key={seq} style={paneStyle}>
           {popup?.showSource && (
             <div className="pop__source cn-selectable" title={text} data-tauri-drag-region>
@@ -304,7 +416,7 @@ export default function TranslatePopup() {
               />
             )}
           </div>
-          {mode === 'translate' && text && (
+          {(mode === 'translate' || (sheet && layout === 'drawer')) && text && (
             <div className="pop-ask">
               <Sparkles size={14} strokeWidth={1.75} />
               <input
@@ -326,37 +438,41 @@ export default function TranslatePopup() {
         </div>
         {mode === 'ai' && layout === 'side' && (
           <>
-            <span className="pop-seam" style={{ left: transW - 5 }} title={t('translate.resize')} onPointerDown={dragSeam} />
-            <div className="pop-pane pop-pane--ai">
+            {!sheet && <span className="pop-seam" style={{ left: transW - 5 }} title={t('translate.resize')} onPointerDown={dragSeam} />}
+            <div className="pop-pane pop-pane--ai" style={sideStyle}>
+              <div className="pop-inner" style={sideInner}>
+                <AiChat
+                  compact
+                  context={{ text, images: [] }}
+                  resetKey={seq}
+                  onTurnsChange={keepTurns}
+                  ask={pendingAsk}
+                  toolbar={<IconButton icon={ExternalLink} size="sm" label={t('ai.popOut')} onClick={popOut} />}
+                />
+              </div>
+            </div>
+          </>
+        )}
+        {mode === 'ai' && layout === 'drawer' && (
+          <div className="pop-drawer" style={drawerStyle}>
+            <span className="pop-drawer__grab" title={t('translate.resize')} onPointerDown={dragDrawer}>
+              <i />
+            </span>
+            <div className="pop-inner" style={drawerInner}>
               <AiChat
                 compact
                 context={{ text, images: [] }}
                 resetKey={seq}
                 onTurnsChange={keepTurns}
                 ask={pendingAsk}
-                toolbar={<IconButton icon={ExternalLink} size="sm" label={t('ai.popOut')} onClick={popOut} />}
+                toolbar={
+                  <>
+                    <IconButton icon={ExternalLink} size="sm" label={t('ai.popOut')} onClick={popOut} />
+                    <IconButton icon={ChevronDown} size="sm" label={t('ai.hide')} onClick={() => void closeAi()} />
+                  </>
+                }
               />
             </div>
-          </>
-        )}
-        {mode === 'ai' && layout === 'drawer' && (
-          <div className="pop-drawer">
-            <span className="pop-drawer__grab" title={t('translate.resize')} onPointerDown={dragDrawer}>
-              <i />
-            </span>
-            <AiChat
-              compact
-              context={{ text, images: [] }}
-              resetKey={seq}
-              onTurnsChange={keepTurns}
-              ask={pendingAsk}
-              toolbar={
-                <>
-                  <IconButton icon={ExternalLink} size="sm" label={t('ai.popOut')} onClick={popOut} />
-                  <IconButton icon={ChevronDown} size="sm" label={t('ai.hide')} onClick={() => void closeAi()} />
-                </>
-              }
-            />
           </div>
         )}
         <span
@@ -380,7 +496,8 @@ html[data-view='translate'], html[data-view='translate'] body { background: tran
 
 /* 两档底色：浮在上面的一层（hi）和压在下面的一层（lo）。透明窗口里 backdrop-filter 模糊不了
    桌面，不开毛玻璃时默认不透明；不透明度可在设置里调 */
-.pop-shell { position: relative; flex: 1; min-width: 0; display: flex; border-radius: var(--pop-radius); overflow: hidden;
+/* overflow: clip 而不是 hidden：hidden 的元素还能被滚动（聚焦藏在外面的输入框时浏览器会自动滚），一滚整块内容就跳 */
+.pop-shell { position: relative; flex: 1; min-width: 0; display: flex; border-radius: var(--pop-radius); overflow: clip;
              box-shadow: 0 8px 28px rgba(0,0,0,0.26), 0 0 0 0.5px rgba(0,0,0,0.28); animation: cn-pop-in 160ms var(--cn-ease-out);
              --pop-hi: rgba(252,252,254,var(--pop-alpha)); --pop-lo: rgba(236,236,241,var(--pop-alpha));
              --r: min(var(--pop-radius), 16px); }
@@ -390,7 +507,7 @@ html[data-view='translate'], html[data-view='translate'] body { background: tran
 .pop-shell.is-drawer { flex-direction: column; }
 
 .pop-pane { position: relative; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
-.pop-pane--translate { flex: 1; z-index: 2; background: var(--pop-hi); }
+.pop-pane--translate { flex: 1; z-index: 2; background-color: var(--pop-hi); transition: background-color ${ANIM_MS}ms ${EASE}; }
 .pop__source { max-height: 66px; overflow: hidden; padding: 12px 14px 8px; font: var(--cn-text-callout); color: var(--cn-label-secondary);
                display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; box-shadow: inset 0 -0.5px 0 var(--cn-separator); flex: none; }
 .pop__body { flex: 1; min-height: 0; }
@@ -414,22 +531,22 @@ html[data-view='translate'], html[data-view='translate'] body { background: tran
     linear-gradient(var(--pop-hi), var(--pop-hi)) right center / var(--r) calc(100% - 2 * var(--r)) no-repeat; }
 .is-side .pop-pane--translate::after { content: ''; position: absolute; inset: 0; border-radius: 0 var(--r) var(--r) 0; pointer-events: none;
   box-shadow: 0.5px 0 0 var(--cn-separator), 8px 0 18px -10px rgba(0,0,0,0.4); clip-path: inset(0 -40px 0 calc(100% - var(--r) - 1px)); }
-.pop-pane--ai { flex: 1; z-index: 1; background: var(--pop-lo); animation: pop-slide 220ms var(--cn-ease-out); }
-@keyframes pop-slide { from { opacity: 0; transform: translateX(-48px); } }
+/* 过渡时里面的内容伸出对话区之外的部分由外框裁掉（对话区自己不裁，顶边的阴影要露出来） */
+.pop-pane--ai { flex: 1; z-index: 1; background: var(--pop-lo); }
+.pop-inner { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
 .pop-pane--ai .ai__bar { padding: var(--cn-space-3) var(--cn-space-3) 6px; }
 
 /* ── 抽屉：翻译区退到下层，对话卡片从底部滑上来盖住它的下沿 ── */
-.is-drawer .pop-pane--translate { flex: none; background: var(--pop-lo); }
+.is-drawer .pop-pane--translate { flex: none; background-color: var(--pop-lo); }
 .pop-drawer { position: relative; z-index: 3; flex: 1; min-height: 0; display: flex; flex-direction: column;
   background:
     radial-gradient(circle at 100% 100%, var(--pop-hi) calc(var(--r) - 0.6px), var(--pop-lo) var(--r)) left top / var(--r) var(--r) no-repeat,
     radial-gradient(circle at 0 100%, var(--pop-hi) calc(var(--r) - 0.6px), var(--pop-lo) var(--r)) right top / var(--r) var(--r) no-repeat,
     linear-gradient(var(--pop-hi), var(--pop-hi)) center top / calc(100% - 2 * var(--r)) var(--r) no-repeat,
     linear-gradient(var(--pop-hi), var(--pop-hi)) left bottom / 100% calc(100% - var(--r)) no-repeat;
-  animation: drawer-up 280ms var(--cn-ease-out); }
+}
 .pop-drawer::before { content: ''; position: absolute; inset: 0; border-radius: var(--r) var(--r) 0 0; pointer-events: none;
   box-shadow: 0 -0.5px 0 var(--cn-separator), 0 -10px 22px -14px rgba(0,0,0,0.45); clip-path: inset(-40px 0 calc(100% - var(--r) - 1px) 0); }
-@keyframes drawer-up { from { transform: translateY(100%); } }
 .pop-drawer__grab { position: absolute; left: 0; right: 0; top: 0; height: 14px; z-index: 1; display: grid; place-items: center; cursor: row-resize; touch-action: none; }
 .pop-drawer__grab i { width: 36px; height: 4px; border-radius: 2px; background: var(--cn-label-tertiary); opacity: 0.5; transition: opacity 120ms, background-color 120ms; }
 .pop-drawer__grab:hover i { opacity: 0.9; }

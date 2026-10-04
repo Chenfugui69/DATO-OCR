@@ -159,6 +159,7 @@ pub fn run() {
             commands::system::pick_directory,
             commands::system::show_main,
             commands::system::toast_hide,
+            commands::system::window_set_bounds,
             commands::system::quit_app,
             commands::system::report_error,
         ]);

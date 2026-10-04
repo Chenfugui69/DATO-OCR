@@ -105,6 +105,18 @@ pub mod effects {
     pub fn set_no_activate(window: &WebviewWindow) {}
     /// contentView.layer.cornerRadius
     pub fn set_rounded(window: &WebviewWindow, rounded: bool) {}
+    /// NSWindow.setFrame(_:display:)
+    pub fn set_bounds(
+        window: &WebviewWindow,
+        x: i32,
+        y: i32,
+        width: u32,
+        height: u32,
+    ) -> AppResult<()> {
+        window.set_position(tauri::PhysicalPosition::new(x, y))?;
+        window.set_size(tauri::PhysicalSize::new(width, height))?;
+        Ok(())
+    }
     /// orderOut
     pub fn hide_window(window: &WebviewWindow) {
         let _ = window.hide();

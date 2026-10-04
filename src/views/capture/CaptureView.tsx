@@ -72,8 +72,8 @@ let press: { at: Point; hover: Rect | null } | null = null;
 let drag: { kind: 'move' | 'resize'; handle?: Handle; at: Point; orig: Rect } | null = null;
 let lines: SnapLines = { xs: [], ys: [] };
 let activeElsewhere: number | null = null;
-/** 文字工具下按住已有文字：松手时没拖动 = 进入编辑 */
-let pendingTextEdit: string | null = null;
+/** 正在打字时按了右键：已经在按下时提交了文字，紧跟着的 contextmenu 不能再当"退出截图" */
+let swallowMenu = false;
 
 const scale = () => get().session?.monitor.scaleFactor ?? window.devicePixelRatio;
 
@@ -346,7 +346,14 @@ function copyColor() {
 function onPointerDown(e: React.PointerEvent) {
   const st = get();
   if (!st.session || st.busy) return;
-  if (e.button === 2) return;
+  if (e.button === 2) {
+    // 打字时右键和左键一样：提交文字，不退出截图（防止打完字误触右键全没了）
+    if (engine.text) {
+      engine.commitText();
+      swallowMenu = true;
+    }
+    return;
+  }
   if (e.button !== 0) return;
   const p = toPx(e);
 
@@ -378,11 +385,11 @@ function onPointerDown(e: React.PointerEvent) {
     return;
   }
   if (canPick(st.tool, st.options) && contains(sel, p)) {
+    // 单击已有标注（包括文字）= 选中，可拖动、拖控制点缩放；双击文字才进入编辑
     const hit = engine.hit(p, 4 * scale());
     if (hit) {
       engine.select(hit.id);
       engine.beginTransform(p, 'move');
-      pendingTextEdit = st.tool === 'text' && hit.kind === 'text' ? hit.id : null;
       return;
     }
   }
@@ -482,11 +489,7 @@ function onPointerUp() {
     return;
   }
   if (engine.drawing) engine.end();
-  if (engine.transforming) {
-    const moved = engine.endTransform();
-    if (!moved && pendingTextEdit) engine.editText(pendingTextEdit);
-  }
-  pendingTextEdit = null;
+  if (engine.transforming) engine.endTransform();
   drag = null;
 }
 
@@ -519,6 +522,12 @@ function onContextMenu(e: React.MouseEvent) {
   e.preventDefault();
   const st = get();
   if (!st.session) return;
+  if (swallowMenu) {
+    swallowMenu = false;
+    return;
+  }
+  // 在输入框里点右键：什么都不做，接着打字
+  if ((e.target as Element).closest?.('.an-text-input')) return;
   if (engine.text) {
     engine.commitText();
     return;

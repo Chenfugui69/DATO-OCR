@@ -36,6 +36,7 @@ const zhCN = {
     ocrCapture: '识字',
   },
   tools: {
+    textPlaceholder: '输入文字',
     mosaicBrush: '涂抹',
     mosaicRect: '矩形打码',
     cellSize: '格子大小',

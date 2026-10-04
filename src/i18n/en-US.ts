@@ -18,6 +18,7 @@ const enUS: Dict = {
   },
   nav: { library: 'Screenshots', clipboard: 'Clipboard', ocr: 'Text Recognition', settings: 'Settings', hotkeys: 'Shortcuts', capture: 'Capture', longshot: 'Scrolling', ocrCapture: 'Recognize' },
   tools: {
+    textPlaceholder: 'Type here',
     mosaicBrush: 'Brush',
     mosaicRect: 'Rectangle',
     cellSize: 'Cell size',

@@ -25,8 +25,6 @@ import { SubToolbar, TOOL_KEYS, Toolbar, type ActionId } from '@/views/annotate/
 
 const engine = new AnnotationEngine();
 const PAD = 24;
-/** 文字工具下按住已有文字：松手时没拖动 = 进入编辑 */
-let pendingTextEdit: string | null = null;
 const TOO_LONG_TO_PASTE = 8000;
 
 export default function EditorView() {
@@ -218,10 +216,10 @@ export default function EditorView() {
                   const ah = engine.hitHandle(p, 7 * ds);
                   if (ah) return void engine.beginTransform(p, ah);
                   const hit = canPick(tool, options) ? engine.hit(p, 4 * ds) : null;
+                  // 单击已有标注（包括文字）= 选中，可拖动、拖控制点缩放；双击文字才进入编辑
                   if (hit) {
                     engine.select(hit.id);
                     engine.beginTransform(p, 'move');
-                    pendingTextEdit = tool === 'text' && hit.kind === 'text' ? hit.id : null;
                     return;
                   }
                   engine.select(null);
@@ -239,8 +237,7 @@ export default function EditorView() {
                 }}
                 onPointerUp={() => {
                   if (engine.drawing) engine.end();
-                  if (engine.transforming && !engine.endTransform() && pendingTextEdit) engine.editText(pendingTextEdit);
-                  pendingTextEdit = null;
+                  if (engine.transforming) engine.endTransform();
                 }}
                 onDoubleClick={(e) => {
                   const hit = engine.hit(toPx(e, e.currentTarget), 4 * ds);

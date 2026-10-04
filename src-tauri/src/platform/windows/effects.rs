@@ -3,8 +3,8 @@
 use tauri::WebviewWindow;
 use windows::Win32::UI::WindowsAndMessaging::{
     GetWindowLongPtrW, SetWindowDisplayAffinity, SetWindowLongPtrW, SetWindowPos, ShowWindow,
-    GWL_EXSTYLE, HWND_TOPMOST, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_SHOWWINDOW, SW_HIDE,
-    SW_SHOWNOACTIVATE, WDA_EXCLUDEFROMCAPTURE, WDA_NONE, WS_EX_NOACTIVATE,
+    GWL_EXSTYLE, HWND_TOPMOST, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER,
+    SWP_SHOWWINDOW, SW_HIDE, SW_SHOWNOACTIVATE, WDA_EXCLUDEFROMCAPTURE, WDA_NONE, WS_EX_NOACTIVATE,
 };
 
 use windows::Win32::Graphics::Dwm::{
@@ -100,6 +100,31 @@ pub fn show_without_activate(window: &WebviewWindow) -> AppResult<()> {
             0,
             0,
             SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW,
+        )?;
+    }
+    Ok(())
+}
+
+/// 一次同时改位置和大小（物理像素）。分两次调的话中间会多出一帧"挪了没变大"或"变大了没挪"，
+/// 面板展开动画就会跳一下。
+pub fn set_bounds(
+    window: &WebviewWindow,
+    x: i32,
+    y: i32,
+    width: u32,
+    height: u32,
+) -> AppResult<()> {
+    let h = hwnd(native_handle(window)?);
+    // SAFETY: h 是存活的 Tauri 窗口。
+    unsafe {
+        SetWindowPos(
+            h,
+            None,
+            x,
+            y,
+            width as i32,
+            height as i32,
+            SWP_NOZORDER | SWP_NOACTIVATE,
         )?;
     }
     Ok(())

@@ -186,4 +186,6 @@ export const system = {
   showMain: (page?: string) => call<void>('show_main', { page: page ?? null }),
   quit: () => call<void>('quit_app'),
   hideToast: () => call<void>('toast_hide'),
+  /** 当前窗口一次同时改位置和大小（逻辑像素） */
+  setBounds: (x: number, y: number, width: number, height: number) => call<void>('window_set_bounds', { x, y, width, height }),
 };

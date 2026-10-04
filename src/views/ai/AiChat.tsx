@@ -152,7 +152,8 @@ export function AiChat({
     setInput('');
     if (running.current) void ai.cancel(running.current);
     running.current = null;
-    window.setTimeout(() => inputRef.current?.focus(), 50);
+    // 不让浏览器为了露出输入框去滚动外层（划词面板的抽屉还在滑进来的路上，一滚整块内容就跳）
+    window.setTimeout(() => inputRef.current?.focus({ preventScroll: true }), 50);
     // initial 跟着 resetKey 一起变，只认 resetKey
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [resetKey]);

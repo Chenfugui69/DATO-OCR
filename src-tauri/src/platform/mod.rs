@@ -137,6 +137,17 @@ pub fn set_no_activate(window: &WebviewWindow) {
     sys::effects::set_no_activate(window);
 }
 
+/// 一次同时改窗口位置和大小（物理像素）。
+pub fn set_bounds(
+    window: &WebviewWindow,
+    x: i32,
+    y: i32,
+    width: u32,
+    height: u32,
+) -> AppResult<()> {
+    sys::effects::set_bounds(window, x, y, width, height)
+}
+
 /// 系统圆角（Win11）。
 pub fn set_rounded(window: &WebviewWindow, rounded: bool) {
     sys::effects::set_rounded(window, rounded);

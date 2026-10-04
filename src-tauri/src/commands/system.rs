@@ -239,13 +239,34 @@ pub async fn show_main(app: AppHandle, page: Option<String>) -> AppResult<()> {
 }
 
 /// toast 全部消失后由前端调用：藏窗口（诊断模式下顺带恢复抓屏排除）。
+/// 显示时走的是原生"显示但不激活"，隐藏也要走原生的，只调 Tauri 的 `hide()` 窗口会一直挂着。
 #[tauri::command]
 pub async fn toast_hide(app: AppHandle) -> AppResult<()> {
     if let Some(w) = tauri::Manager::get_webview_window(&app, wm::TOAST) {
-        let _ = w.hide();
+        crate::platform::hide_window(&w);
         crate::platform::reveal_for_tests(&w, false);
     }
     Ok(())
+}
+
+/// 调用方窗口一次同时改位置和大小（逻辑像素）。划词面板展开 / 收起 AI 时用，
+/// 让窗口一步到位，动画全在页面里做。
+#[tauri::command]
+pub async fn window_set_bounds(
+    window: tauri::WebviewWindow,
+    x: f64,
+    y: f64,
+    width: f64,
+    height: f64,
+) -> AppResult<()> {
+    let s = window.scale_factor()?;
+    crate::platform::set_bounds(
+        &window,
+        (x * s).round() as i32,
+        (y * s).round() as i32,
+        (width * s).round().max(1.0) as u32,
+        (height * s).round().max(1.0) as u32,
+    )
 }
 
 #[tauri::command]

@@ -6,8 +6,8 @@
 // 两块画布都是**图像物理像素分辨率**：已完成的标注一块、正在画的那一笔一块（画完合并）。
 //
 // 画完的标注可以再选中：拖动挪位置，拖控制点改大小（矩形、椭圆、矩形马赛克、文字块是八个点，
-// 箭头是两头），Delete 删掉，选中时改颜色 / 粗细直接作用在它身上。撤销按"操作"回退
-// （加、挪、改、删都算一步），每步前存一份快照。
+// 箭头是两头，文字是四个角、按比例缩放字号），Delete 删掉，选中时改颜色 / 粗细直接作用在它身上。
+// 撤销按"操作"回退（加、挪、改、删都算一步），每步前存一份快照。
 
 import {
   constrainAngle,
@@ -48,6 +48,34 @@ export interface SelectionInfo {
 }
 
 const MAX_HISTORY = 100;
+/** 文字只有四个角能拖：字是按比例缩放的，拉单边没有意义 */
+const TEXT_HANDLES: Handle[] = ['nw', 'ne', 'se', 'sw'];
+
+/** 拖文字的某个角：按拖出来的框和原框的比例缩放字号，对角保持不动。 */
+function scaledText(o: Extract<Annotation, { kind: 'text' }>, handle: Handle, p: Point): Annotation {
+  const b = annotationBounds(o);
+  const r = resizeByHandle(b, handle, p);
+  const ratio = Math.max(0.2, Math.min(10, (r.width / b.width + r.height / b.height) / 2));
+  const fontSize = Math.max(6, o.fontSize * ratio);
+  const m = measureText({ content: o.content, fontSize, bold: o.bold });
+  // annotationBounds 比文字本身四周各宽 2 像素
+  const w = m.width + 4;
+  const h = m.height + 4;
+  const left = handle.includes('w') ? b.x + b.width - w : b.x;
+  const top = handle.includes('n') ? b.y + b.height - h : b.y;
+  return { ...o, fontSize, at: { x: left + 2, y: top + 2 } };
+}
+
+function drawMosaicPreview(ctx: CanvasRenderingContext2D, r: Rect, scale: number) {
+  ctx.save();
+  ctx.fillStyle = 'rgba(128, 128, 134, 0.42)';
+  ctx.fillRect(r.x, r.y, r.width, r.height);
+  ctx.lineWidth = Math.max(1, scale);
+  ctx.strokeStyle = 'rgba(210, 210, 216, 0.95)';
+  ctx.setLineDash([4 * scale, 3 * scale]);
+  ctx.strokeRect(r.x + ctx.lineWidth / 2, r.y + ctx.lineWidth / 2, Math.max(0, r.width - ctx.lineWidth), Math.max(0, r.height - ctx.lineWidth));
+  ctx.restore();
+}
 
 function distToSegment(p: Point, a: Point, b: Point): number {
   const dx = b.x - a.x;
@@ -379,6 +407,10 @@ export class AnnotationEngine {
             { id: 'to', at: a.to },
           ],
         };
+      case 'text': {
+        const b = annotationBounds(a);
+        return { id: a.id, kind: a.kind, outline: b, handles: TEXT_HANDLES.map((h) => ({ id: h, at: handlePoint(b, h) })) };
+      }
       default:
         return { id: a.id, kind: a.kind, outline: annotationBounds(a), handles: [] };
     }
@@ -422,6 +454,8 @@ export class AnnotationEngine {
       next = tf.handle === 'from' ? { ...o, from: shift ? constrainAngle(o.to, p) : p } : { ...o, to: shift ? constrainAngle(o.from, p) : p };
     } else if ((o.kind === 'rect' || o.kind === 'ellipse' || o.kind === 'mosaicRect' || o.kind === 'label') && tf.handle !== 'from' && tf.handle !== 'to') {
       next = { ...o, rect: resizeByHandle(o.rect, tf.handle, p) };
+    } else if (o.kind === 'text' && tf.handle !== 'from' && tf.handle !== 'to') {
+      next = scaledText(o, tf.handle, p);
     }
     this.replace(next);
   }
@@ -620,7 +654,11 @@ export class AnnotationEngine {
     ctx.setTransform(1, 0, 0, 1, -this.origin.x, -this.origin.y);
     ctx.clearRect(dirty.x - 2, dirty.y - 2, dirty.width + 4, dirty.height + 4);
     this.lastDraftBounds = b;
-    this.withClip(ctx, () => drawAnnotation(ctx, d, this.backdrop));
+    this.withClip(ctx, () => {
+      // 矩形马赛克拖动时只画一个灰色预览框，松手才真正打码（大块打码每帧取色太慢）
+      if (d.kind === 'mosaicRect') drawMosaicPreview(ctx, d.rect, this.scale);
+      else drawAnnotation(ctx, d, this.backdrop);
+    });
   }
 
   private get visible(): Annotation[] {
