@@ -120,6 +120,7 @@ export function AiChat({
   toolbar,
   initialTurns,
   onTurnsChange,
+  ask: pendingAsk,
 }: {
   context: ChatContext | null;
   /** 变了就开新对话（换了上下文） */
@@ -130,6 +131,8 @@ export function AiChat({
   /** 接着已有的对话聊（从划词面板挪到独立窗口时） */
   initialTurns?: ChatTurn[];
   onTurnsChange?: (turns: ChatTurn[]) => void;
+  /** 打开就直接问这句（划词面板底部输入框里打的字）；id 变了才算新的一问 */
+  ask?: { id: number; text: string } | null;
 }) {
   const { t } = useTranslation();
   const settings = useSettings();
@@ -216,6 +219,13 @@ export function AiChat({
     },
     [turns, context, activeModel, thinking],
   );
+
+  // 外面递进来的提问：在"开新对话"那个副作用之后执行（声明顺序靠后），不会被它清掉
+  const askRef = useRef(ask);
+  askRef.current = ask;
+  useEffect(() => {
+    if (pendingAsk?.text) void askRef.current(pendingAsk.text);
+  }, [pendingAsk?.id, pendingAsk?.text]);
 
   const stop = () => {
     if (!running.current) return;

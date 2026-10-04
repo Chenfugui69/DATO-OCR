@@ -16,14 +16,17 @@ import type { EditorAction, EditorDoc } from '@/lib/types';
 import { Spinner } from '@/ui/controls';
 import { notify } from '@/ui/overlays';
 import { TitleBar } from '@/ui/TitleBar';
-import { AnnotationEngine } from '@/views/annotate/engine';
-import { defaultToolOptions, type Tool, type ToolOptions } from '@/views/annotate/model';
+import { AnnotationEngine, toolOf } from '@/views/annotate/engine';
+import { BRUSH_RANGE, defaultToolOptions, PEN_RANGE, type Tool, type ToolOptions } from '@/views/annotate/model';
 import { bitmapSource } from '@/views/annotate/pixels';
+import { canPick, handleCursor, SelectionOverlay, toolCursor } from '@/views/annotate/SelectionOverlay';
 import { TextEditor, useEngineVersion } from '@/views/annotate/TextEditor';
 import { SubToolbar, TOOL_KEYS, Toolbar, type ActionId } from '@/views/annotate/Toolbar';
 
 const engine = new AnnotationEngine();
 const PAD = 24;
+/** 文字工具下按住已有文字：松手时没拖动 = 进入编辑 */
+let pendingTextEdit: string | null = null;
 const TOO_LONG_TO_PASTE = 8000;
 
 export default function EditorView() {
@@ -36,6 +39,8 @@ export default function EditorView() {
   const [shown, setShown] = useState(false);
   const [busy, setBusy] = useState(false);
   const [box, setBox] = useState({ width: 800, height: 600 });
+  /** 悬停时的指针；'tool' = 当前工具自己的指针 */
+  const [hoverCursor, setHoverCursor] = useState('tool');
   const [view, setView] = useState({ left: 0, top: 0, width: 0, height: 0 });
   const scroller = useRef<HTMLDivElement>(null);
   const committed = useRef<HTMLCanvasElement>(null);
@@ -112,6 +117,10 @@ export default function EditorView() {
     engine.setOrigin({ x: Math.floor(view.left * ds), y: Math.floor(view.top * ds) });
   }, [view, ds]);
 
+  // 选中了已有标注：二级工具条显示它的样式，改了直接作用到它身上
+  const picked = engine.selectedAnnotation;
+  const pickedTool = picked ? toolOf(picked) : null;
+
   const toPx = (e: { clientX: number; clientY: number }, stage: HTMLElement) => {
     const r = stage.getBoundingClientRect();
     return { x: Math.round((e.clientX - r.left) * ds), y: Math.round((e.clientY - r.top) * ds) };
@@ -157,6 +166,8 @@ export default function EditorView() {
       if (engine.text) return;
       const ctrl = e.ctrlKey || e.metaKey;
       const k = e.key.toLowerCase();
+      if ((e.key === 'Delete' || e.key === 'Backspace') && engine.selected) return void (e.preventDefault(), engine.deleteSelected());
+      if (e.key === 'Escape' && engine.selected) return void (e.preventDefault(), engine.select(null));
       if (ctrl && k === 'z') return void (e.preventDefault(), engine.undo());
       if (e.key === 'Enter') return void (e.preventDefault(), done());
       if (ctrl && k === 'c') return void (e.preventDefault(), finish('copy'));
@@ -166,7 +177,10 @@ export default function EditorView() {
       if (ctrl && k === 'w') return void (e.preventDefault(), getCurrentWindow().close());
       if (!ctrl && !e.altKey) {
         const next = (Object.keys(TOOL_KEYS) as Tool[]).find((x) => TOOL_KEYS[x] === e.key.toUpperCase());
-        if (next) setTool((cur) => (cur === next ? null : next));
+        if (next) {
+          engine.select(null);
+          setTool((cur) => (cur === next ? null : next));
+        }
       }
     };
     window.addEventListener('keydown', onKey);
@@ -191,20 +205,58 @@ export default function EditorView() {
               <div
                 className="ed-stage"
                 data-loading={!shown || undefined}
-                style={{ width: stageW, height: stageH, cursor: tool === 'text' ? 'text' : tool ? 'crosshair' : 'default' }}
+                style={{ width: stageW, height: stageH, cursor: hoverCursor === 'tool' ? toolCursor(tool, options) : hoverCursor }}
                 onPointerDown={(e) => {
-                  if (e.button !== 0 || !tool) return;
+                  if (e.button !== 0) return;
                   if (engine.text) {
                     engine.commitText();
                     return;
                   }
                   (e.target as Element).setPointerCapture(e.pointerId);
                   const p = toPx(e, e.currentTarget);
+                  // 先看是不是点在已画好的标注上：拖控制点改大小、拖本体挪位置
+                  const ah = engine.hitHandle(p, 7 * ds);
+                  if (ah) return void engine.beginTransform(p, ah);
+                  const hit = canPick(tool, options) ? engine.hit(p, 4 * ds) : null;
+                  if (hit) {
+                    engine.select(hit.id);
+                    engine.beginTransform(p, 'move');
+                    pendingTextEdit = tool === 'text' && hit.kind === 'text' ? hit.id : null;
+                    return;
+                  }
+                  engine.select(null);
+                  if (!tool) return;
                   if (tool === 'text') engine.startText(p, options);
                   else if (tool !== 'mosaic' || ready) engine.begin(tool, p, options);
                 }}
-                onPointerMove={(e) => engine.drawing && engine.update(toPx(e, e.currentTarget), e.shiftKey)}
-                onPointerUp={() => engine.drawing && engine.end()}
+                onPointerMove={(e) => {
+                  const p = toPx(e, e.currentTarget);
+                  if (engine.drawing) return engine.update(p, e.shiftKey);
+                  if (engine.transforming) return engine.updateTransform(p, e.shiftKey);
+                  const ah = engine.hitHandle(p, 7 * ds);
+                  const next = ah ? handleCursor(ah) : canPick(tool, options) && engine.hit(p, 4 * ds) ? 'move' : 'tool';
+                  if (next !== hoverCursor) setHoverCursor(next);
+                }}
+                onPointerUp={() => {
+                  if (engine.drawing) engine.end();
+                  if (engine.transforming && !engine.endTransform() && pendingTextEdit) engine.editText(pendingTextEdit);
+                  pendingTextEdit = null;
+                }}
+                onDoubleClick={(e) => {
+                  const hit = engine.hit(toPx(e, e.currentTarget), 4 * ds);
+                  if (hit?.kind === 'text') engine.editText(hit.id);
+                }}
+                onWheel={(e) => {
+                  // 画笔 / 手绘马赛克时滚轮调粗细（按住 Ctrl 才是原来的滚动缩放之类）
+                  if (e.ctrlKey || (tool !== 'pen' && !(tool === 'mosaic' && options.mosaic.shape === 'brush'))) return;
+                  const dir = e.deltaY < 0 ? 1 : -1;
+                  const clamp = (v: number, [lo, hi]: [number, number]) => Math.max(lo, Math.min(hi, v));
+                  setOptions((o) =>
+                    tool === 'pen'
+                      ? { ...o, pen: { ...o.pen, lineWidth: clamp(o.pen.lineWidth + dir, PEN_RANGE) } }
+                      : { ...o, mosaic: { ...o.mosaic, brushSize: clamp(o.mosaic.brushSize + dir * 4, BRUSH_RANGE) } },
+                  );
+                }}
               >
                 <img
                   src={shotUrl(doc.imageId)}
@@ -225,6 +277,7 @@ export default function EditorView() {
                   style={{ left: view.left, top: view.top, width: view.width, height: view.height }}
                 />
                 <div className="ed-text-layer">
+                  <SelectionOverlay engine={engine} displayScale={ds} />
                   <TextEditor engine={engine} displayScale={ds} />
                 </div>
               </div>
@@ -233,11 +286,22 @@ export default function EditorView() {
         </div>
       </div>
       <footer className="ed-dock">
-        {tool && <SubToolbar className="ed-sub" tool={tool} options={options} onChange={setOptions} />}
+        {(pickedTool ?? tool) && (
+          <SubToolbar
+            className="ed-sub"
+            tool={(pickedTool ?? tool)!}
+            options={picked && pickedTool ? engine.optionsOf(picked, options) : options}
+            onChange={(o) => {
+              if (picked && pickedTool) engine.applyOptions(o);
+              setOptions(o);
+            }}
+          />
+        )}
         <Toolbar
           tool={tool}
           onTool={(next) => {
             if (engine.text) engine.commitText();
+            engine.select(null);
             setTool(next);
           }}
           canUndo={engine.canUndo}

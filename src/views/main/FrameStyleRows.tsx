@@ -3,6 +3,7 @@
 import { useTranslation } from 'react-i18next';
 
 import type { FrameStyle } from '@/lib/types';
+import { ColorPicker } from '@/ui/ColorPicker';
 import { Segmented, Slider } from '@/ui/controls';
 
 import { Row } from './settingsParts';
@@ -30,9 +31,15 @@ export function FrameStyleRows({ name, value, onChange }: { name: string; value:
               onClick={() => patch({ color: c })}
             />
           ))}
-          <label className="frame-swatch frame-swatch--custom" data-active={custom || undefined} title={t('settings.frame.custom')}>
-            <input type="color" value={value.color === 'accent' ? '#0A84FF' : value.color} onChange={(e) => patch({ color: e.target.value.toUpperCase() })} />
-          </label>
+          <ColorPicker value={value.color === 'accent' ? '#0A84FF' : value.color} onChange={(c) => patch({ color: c })} onCommit={(c) => patch({ color: c })}>
+            <button
+              type="button"
+              className="frame-swatch frame-swatch--custom"
+              data-active={custom || undefined}
+              title={t('settings.frame.custom')}
+              style={custom ? { background: value.color } : undefined}
+            />
+          </ColorPicker>
         </div>
       </Row>
       <Row title={t('settings.frame.width', { name })}>

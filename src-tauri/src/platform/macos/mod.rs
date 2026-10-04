@@ -103,6 +103,8 @@ pub mod effects {
     pub fn reveal_for_tests(window: &WebviewWindow, visible: bool) {}
     /// NSPanel + .nonactivatingPanel 样式
     pub fn set_no_activate(window: &WebviewWindow) {}
+    /// contentView.layer.cornerRadius
+    pub fn set_rounded(window: &WebviewWindow, rounded: bool) {}
     /// orderOut
     pub fn hide_window(window: &WebviewWindow) {
         let _ = window.hide();

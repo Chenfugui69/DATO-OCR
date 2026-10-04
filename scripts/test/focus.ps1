@@ -1,6 +1,7 @@
 ﻿# 把 DATO COR 的某个窗口切到前台（AttachThreadInput 绕过前台锁）。
 # 发热键前先用它：有的程序（远程控制、游戏）在前台时会吞掉全局热键。
-param([string]$Title = "DATO COR")
+# 同名窗口多时用 -Handle 指定句柄（winshot.ps1 -List 打出来的第一列）
+param([string]$Title = "DATO COR", [long]$Handle = 0)
 Add-Type @"
 using System; using System.Text; using System.Collections.Generic; using System.Runtime.InteropServices;
 public static class Fz {
@@ -22,7 +23,8 @@ foreach ($h in [Fz]::All()) {
   $p = 0; [void][Fz]::GetWindowThreadProcessId($h, [ref]$p)
   if ($procs -notcontains $p -or -not [Fz]::IsWindowVisible($h)) { continue }
   $sb = New-Object Text.StringBuilder 256; [void][Fz]::GetWindowText($h, $sb, 256)
-  if ($sb.ToString() -ne $Title) { continue }
+  if ($Handle -ne 0) { if ($h.ToInt64() -ne $Handle) { continue } }
+  elseif ($sb.ToString() -ne $Title) { continue }
   $fg = [Fz]::GetForegroundWindow(); $x = 0
   $fgThread = [Fz]::GetWindowThreadProcessId($fg, [ref]$x)
   $me = [Fz]::GetCurrentThreadId()

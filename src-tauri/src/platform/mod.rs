@@ -137,6 +137,11 @@ pub fn set_no_activate(window: &WebviewWindow) {
     sys::effects::set_no_activate(window);
 }
 
+/// 系统圆角（Win11）。
+pub fn set_rounded(window: &WebviewWindow, rounded: bool) {
+    sys::effects::set_rounded(window, rounded);
+}
+
 pub fn show_without_activate(window: &WebviewWindow) -> AppResult<()> {
     sys::effects::show_without_activate(window)
 }

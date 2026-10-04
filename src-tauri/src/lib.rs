@@ -81,6 +81,7 @@ pub fn run() {
             commands::capture::capture_window_children,
             commands::capture::capture_finish,
             commands::capture::capture_cancel,
+            commands::capture::capture_translate,
             commands::capture::clipboard_write_text,
             commands::capture::longshot_set_regions,
             commands::capture::longshot_finish,

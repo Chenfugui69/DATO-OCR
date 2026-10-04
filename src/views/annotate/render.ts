@@ -118,6 +118,107 @@ function drawMosaic(ctx: Ctx, a: Extract<Annotation, { kind: 'mosaic' }>, bg: Ba
   ctx.filter = 'none';
 }
 
+type RectCache = { key: string; cells: [number, number, number][]; cols: number };
+const rectCache = new WeakMap<Annotation, RectCache>();
+
+/** 矩形马赛克：格子从框的左上角起排，框挪了、变了大小就重新取色。 */
+function drawMosaicRect(ctx: Ctx, a: Extract<Annotation, { kind: 'mosaicRect' }>, bg: Backdrop) {
+  const r = a.rect;
+  if (r.width < 1 || r.height < 1) return;
+  if (a.mode === 'blur') {
+    if (!bg.bitmap) return;
+    ctx.beginPath();
+    ctx.rect(r.x, r.y, r.width, r.height);
+    ctx.clip();
+    const blur = Math.max(4, Math.round(a.cell * 0.8));
+    const sx = Math.max(0, r.x - blur * 2);
+    const sy = Math.max(0, r.y - blur * 2);
+    const sw = r.width + blur * 4;
+    const sh = r.height + blur * 4;
+    ctx.filter = `blur(${blur}px)`;
+    ctx.drawImage(bg.bitmap, sx, sy, sw, sh, sx, sy, sw, sh);
+    ctx.filter = 'none';
+    return;
+  }
+  const src = bg.pixels;
+  if (!src) return;
+  const cols = Math.ceil(r.width / a.cell);
+  const rows = Math.ceil(r.height / a.cell);
+  const key = `${r.x},${r.y},${r.width},${r.height},${a.cell}`;
+  let cache = rectCache.get(a);
+  if (!cache || cache.key !== key) {
+    const cells: [number, number, number][] = [];
+    for (let row = 0; row < rows; row += 1) {
+      for (let col = 0; col < cols; col += 1) {
+        const x = r.x + col * a.cell;
+        const y = r.y + row * a.cell;
+        cells.push(src.average(x, y, Math.min(a.cell, r.x + r.width - x), Math.min(a.cell, r.y + r.height - y)));
+      }
+    }
+    cache = { key, cells, cols };
+    rectCache.set(a, cache);
+  }
+  ctx.beginPath();
+  ctx.rect(r.x, r.y, r.width, r.height);
+  ctx.clip();
+  cache.cells.forEach((v, i) => {
+    const col = i % cache!.cols;
+    const row = Math.floor(i / cache!.cols);
+    ctx.fillStyle = `rgb(${v[0]},${v[1]},${v[2]})`;
+    ctx.fillRect(r.x + col * a.cell, r.y + row * a.cell, a.cell + 0.5, a.cell + 0.5);
+  });
+}
+
+/** 文字块排版：按框宽自动换行。英文按词断，中日韩按字断。 */
+export function wrapLabel(text: string, fontSize: number, maxWidth: number): string[] {
+  measureCtx ??= new OffscreenCanvas(1, 1).getContext('2d');
+  const ctx = measureCtx;
+  if (!ctx) return [text];
+  ctx.font = textFont({ fontSize, bold: false });
+  const out: string[] = [];
+  for (const para of text.split('\n')) {
+    // 词：连续的拉丁字母数字算一个，其他字符（汉字、标点、空格）各算一个
+    const tokens = para.match(/[A-Za-z0-9\u00C0-\u024F'’-]+|\s+|./gu) ?? [''];
+    let line = '';
+    for (const tok of tokens) {
+      const next = line + tok;
+      if (line && ctx.measureText(next).width > maxWidth) {
+        out.push(line.trimEnd());
+        line = tok.trimStart();
+        // 单个词就比框宽：硬拆
+        while (line && ctx.measureText(line).width > maxWidth) {
+          let n = line.length - 1;
+          while (n > 1 && ctx.measureText(line.slice(0, n)).width > maxWidth) n -= 1;
+          out.push(line.slice(0, n));
+          line = line.slice(n);
+        }
+      } else {
+        line = next;
+      }
+    }
+    out.push(line.trimEnd());
+  }
+  return out;
+}
+
+export const LABEL_LINE_HEIGHT = 1.28;
+
+function drawLabel(ctx: Ctx, a: Extract<Annotation, { kind: 'label' }>) {
+  const r = a.rect;
+  ctx.fillStyle = a.bg;
+  ctx.fillRect(r.x, r.y, r.width, r.height);
+  const pad = Math.max(1, a.fontSize * 0.08);
+  const lines = wrapLabel(a.text, a.fontSize, r.width - pad * 2);
+  const lh = a.fontSize * LABEL_LINE_HEIGHT;
+  const total = lines.length * lh;
+  // 字少就在框里竖直居中，多了从顶上排（超出的部分照画，不裁）
+  const top = total < r.height ? r.y + (r.height - total) / 2 : r.y;
+  ctx.font = textFont({ fontSize: a.fontSize, bold: false });
+  ctx.textBaseline = 'middle';
+  ctx.fillStyle = a.color;
+  lines.forEach((line, i) => ctx.fillText(line, r.x + pad, top + i * lh + lh / 2));
+}
+
 function drawArrow(ctx: Ctx, a: Extract<Annotation, { kind: 'arrow' }>) {
   const dx = a.to.x - a.from.x;
   const dy = a.to.y - a.from.y;
@@ -257,8 +358,14 @@ export function drawAnnotation(ctx: Ctx, a: Annotation, bg: Backdrop): void {
     case 'mosaic':
       drawMosaic(ctx, a, bg);
       break;
+    case 'mosaicRect':
+      drawMosaicRect(ctx, a, bg);
+      break;
     case 'text':
       drawText(ctx, a);
+      break;
+    case 'label':
+      if (!a.hidden) drawLabel(ctx, a);
       break;
   }
   ctx.restore();
@@ -283,6 +390,8 @@ export function annotationBounds(a: Annotation): Rect {
   switch (a.kind) {
     case 'rect':
     case 'ellipse':
+    case 'mosaicRect':
+    case 'label':
       return a.rect;
     case 'arrow': {
       const w = (a.style === 'thick' ? a.lineWidth * 1.6 : a.lineWidth) * 2 + 2;

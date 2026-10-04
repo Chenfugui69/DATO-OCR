@@ -33,13 +33,13 @@ pub struct Rect {
 }
 
 impl Rect {
-    fn right(&self) -> f64 {
+    pub(crate) fn right(&self) -> f64 {
         self.x + self.w
     }
-    fn bottom(&self) -> f64 {
+    pub(crate) fn bottom(&self) -> f64 {
         self.y + self.h
     }
-    fn union(&self, o: &Rect) -> Rect {
+    pub(crate) fn union(&self, o: &Rect) -> Rect {
         let x = self.x.min(o.x);
         let y = self.y.min(o.y);
         Rect {
@@ -78,7 +78,7 @@ pub struct Reflowed {
     pub raw_text: String,
 }
 
-fn aabb(quad: &[[f64; 2]; 4]) -> Rect {
+pub(crate) fn aabb(quad: &[[f64; 2]; 4]) -> Rect {
     let xs = quad.iter().map(|p| p[0]);
     let ys = quad.iter().map(|p| p[1]);
     let x0 = xs.clone().fold(f64::MAX, f64::min);
@@ -93,12 +93,12 @@ fn aabb(quad: &[[f64; 2]; 4]) -> Rect {
     }
 }
 
-fn vertical_overlap(a: &Rect, b: &Rect) -> f64 {
+pub(crate) fn vertical_overlap(a: &Rect, b: &Rect) -> f64 {
     let overlap = a.bottom().min(b.bottom()) - a.y.max(b.y);
     overlap.max(0.0) / a.h.min(b.h).max(1.0)
 }
 
-fn char_width(text: &str, rect: &Rect) -> f64 {
+pub(crate) fn char_width(text: &str, rect: &Rect) -> f64 {
     // CJK 字符按 1 个字宽、拉丁字符按半个估算，避免英文行的平均字宽被低估一半
     let units: f64 = text
         .chars()
@@ -113,7 +113,7 @@ fn char_width(text: &str, rect: &Rect) -> f64 {
     rect.w / units.max(1.0)
 }
 
-fn needs_space(prev: &str, next: &str) -> bool {
+pub(crate) fn needs_space(prev: &str, next: &str) -> bool {
     let a = prev.chars().last();
     let b = next.chars().next();
     match (a, b) {

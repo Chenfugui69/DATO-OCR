@@ -14,6 +14,10 @@ interface SettingsState {
   update: (mutate: (draft: Settings) => void) => Promise<Settings | null>;
 }
 
+/** 保存排队：一次只发一个；排队期间又改了好几次的，只发最后那份（拖滑杆、取色时每秒几十次）。 */
+let chain: Promise<unknown> = Promise.resolve();
+let pending: Settings | null = null;
+
 export const useSettingsStore = create<SettingsState>((set, get) => ({
   settings: null,
   load: async () => {
@@ -21,20 +25,32 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     set({ settings: s });
     return s;
   },
-  update: async (mutate) => {
+  update: (mutate) => {
     const current = get().settings;
-    if (!current) return null;
+    if (!current) return Promise.resolve(null);
     const draft = structuredClone(current);
     mutate(draft);
     set({ settings: draft });
-    try {
-      const saved = await system.setSettings(draft);
-      set({ settings: saved });
-      return saved;
-    } catch (err) {
-      set({ settings: current });
-      throw err;
-    }
+    pending = draft;
+    const run = chain
+      .catch(() => undefined)
+      .then(async () => {
+        const next = pending;
+        // 前面排队的那次已经把这份一起存了
+        if (!next) return get().settings;
+        pending = null;
+        try {
+          const saved = await system.setSettings(next);
+          // 存的过程中又有新改动：别用旧结果盖掉界面上的新值
+          if (!pending) set({ settings: saved });
+          return saved;
+        } catch (err) {
+          if (!pending) set({ settings: await system.settings().catch(() => current) });
+          throw err;
+        }
+      });
+    chain = run;
+    return run;
   },
 }));
 

@@ -592,12 +592,6 @@ html[data-view='main'][data-glass='off'] body {
   background: conic-gradient(#ff3b30, #ffcc00, #34c759, #00c7be, #0a84ff, #af52de, #ff2d55, #ff3b30);
   overflow: hidden;
 }
-.frame-swatch--custom input {
-  position: absolute;
-  inset: 0;
-  opacity: 0;
-  cursor: pointer;
-}
 .frame-preview {
   display: inline-block;
   width: 44px;

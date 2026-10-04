@@ -54,6 +54,15 @@ pub async fn capture_finish(app: AppHandle, request: Request<'_>) -> AppResult<(
     blocking(move || capture::finish(&app, meta, body)).await
 }
 
+/// 截图原位翻译：识别选区里的文字并整批翻译，返回每段的位置和译文。
+#[tauri::command]
+pub async fn capture_translate(
+    app: AppHandle,
+    request: capture::region_translate::RegionRequest,
+) -> AppResult<capture::region_translate::RegionTranslation> {
+    capture::region_translate::translate_region(&app, request).await
+}
+
 #[tauri::command]
 pub async fn capture_cancel(app: AppHandle, session_id: u64) -> AppResult<()> {
     capture::end_session(&app, session_id, true);

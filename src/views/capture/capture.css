@@ -281,3 +281,59 @@ html[data-view='capture'] #root {
   text-align: center;
   box-shadow: inset 0 0.5px 0 var(--cn-separator);
 }
+
+/* 原位翻译：进行中的提示、完成后的译文 / 原文切换条 */
+.cap-busy {
+  position: absolute;
+  left: 0;
+  top: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 14px;
+  margin: -17px 0 0 -70px;
+  border-radius: var(--cn-radius-full);
+  font: var(--cn-text-callout);
+  color: var(--cn-label);
+  white-space: nowrap;
+  pointer-events: none;
+}
+.cap-trbar {
+  position: absolute;
+  left: 0;
+  top: 0;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  height: 34px;
+  padding: 3px;
+  border-radius: var(--cn-radius-lg);
+  user-select: none;
+}
+.cap-trbar button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 28px;
+  padding: 0 9px;
+  border: none;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--cn-label-secondary);
+  font: 500 12px/1 var(--cn-font-sans);
+  cursor: pointer;
+}
+.cap-trbar button:hover {
+  background: var(--cn-bg-hover);
+  color: var(--cn-label);
+}
+.cap-trbar button.is-on {
+  background: var(--cn-accent);
+  color: var(--cn-label-on-accent);
+}
+.cap-trbar__sep {
+  width: 0.5px;
+  height: 18px;
+  margin: 0 4px;
+  background: var(--cn-separator);
+}

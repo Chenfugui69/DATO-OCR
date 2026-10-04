@@ -453,6 +453,12 @@ pub struct PopupStyle {
     pub radius: u32,
     /// 面板顶部显示原文
     pub show_source: bool,
+    /// 问 AI 时对话区怎么出来：drawer = 从面板底部往上弹出的抽屉 | side = 在右侧展开
+    pub ai_layout: String,
+    /// 抽屉的高度（逻辑像素）
+    pub drawer_height: u32,
+    /// 毛玻璃：窗口背后的内容模糊透出来（系统材质，圆角由系统决定）
+    pub blur: bool,
     #[serde(flatten)]
     pub extra: Map<String, Value>,
 }
@@ -466,6 +472,9 @@ impl Default for PopupStyle {
             opacity: 1.0,
             radius: 14,
             show_source: false,
+            ai_layout: "drawer".into(),
+            drawer_height: 380,
+            blur: false,
             extra: Map::new(),
         }
     }
@@ -627,8 +636,12 @@ impl Settings {
             pop.height = pop.height.clamp(200, 1200);
         }
         pop.font_size = pop.font_size.clamp(12, 22);
-        pop.opacity = pop.opacity.clamp(0.6, 1.0);
+        pop.opacity = pop.opacity.clamp(0.3, 1.0);
         pop.radius = pop.radius.min(24);
+        if !matches!(pop.ai_layout.as_str(), "drawer" | "side") {
+            pop.ai_layout = "drawer".into();
+        }
+        pop.drawer_height = pop.drawer_height.clamp(200, 1000);
         let ai = &mut self.ai;
         if ai.system_prompt.starts_with("你是 CHENOCR 里的助手。") {
             ai.system_prompt = ai.system_prompt.replacen("CHENOCR", "DATO COR", 1);

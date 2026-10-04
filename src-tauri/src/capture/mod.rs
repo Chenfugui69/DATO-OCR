@@ -11,6 +11,7 @@
 //! 5. 用户完成 → `capture_finish`：裁剪 + 叠标注 → 复制/保存/贴图/识字/翻译/长截图
 
 pub mod overlay;
+pub mod region_translate;
 
 use std::collections::HashSet;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};

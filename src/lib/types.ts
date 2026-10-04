@@ -101,6 +101,11 @@ export interface PopupStyle {
   opacity: number;
   radius: number;
   showSource: boolean;
+  /** 问 AI 时对话区怎么出来 */
+  aiLayout: 'drawer' | 'side';
+  drawerHeight: number;
+  /** 毛玻璃 */
+  blur: boolean;
 }
 
 export interface FrameStyle {
@@ -503,4 +508,12 @@ export interface ToastPayload {
 export interface ClipChanged {
   id: number;
   isNew: boolean;
+}
+
+/** 截图原位翻译的结果（坐标是本屏局部物理像素） */
+export interface RegionTranslation {
+  blocks: { x: number; y: number; width: number; height: number; lineHeight: number; source: string; text: string }[];
+  provider: string;
+  from: string;
+  to: string;
 }

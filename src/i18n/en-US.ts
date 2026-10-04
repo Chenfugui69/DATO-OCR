@@ -1,7 +1,7 @@
 import type { Dict } from './zh-CN';
 
 const enUS: Dict = {
-  common: { remove: 'Remove', ok: 'OK', cancel: 'Cancel', close: 'Close', delete: 'Delete', retry: 'Retry', change: 'Change…', open: 'Open', more: 'More' },
+  common: { remove: 'Remove', eyedropper: 'Pick from screen', ok: 'OK', cancel: 'Cancel', close: 'Close', delete: 'Delete', retry: 'Retry', change: 'Change…', open: 'Open', more: 'More' },
   window: { minimize: 'Minimize', maximize: 'Maximize', restore: 'Restore', close: 'Close' },
   time: {
     justNow: 'Just now',
@@ -18,6 +18,9 @@ const enUS: Dict = {
   },
   nav: { library: 'Screenshots', clipboard: 'Clipboard', ocr: 'Text Recognition', settings: 'Settings', hotkeys: 'Shortcuts', capture: 'Capture', longshot: 'Scrolling', ocrCapture: 'Recognize' },
   tools: {
+    mosaicBrush: 'Brush',
+    mosaicRect: 'Rectangle',
+    cellSize: 'Cell size',
     rect: 'Rectangle',
     ellipse: 'Ellipse',
     arrow: 'Arrow',
@@ -39,6 +42,12 @@ const enUS: Dict = {
   },
   actions: { ocr: 'Recognize text', translate: 'Translate', ai: 'Ask AI', longshot: 'Scrolling capture', pin: 'Pin', save: 'Save', cancel: 'Cancel', done: 'Done' },
   capture: {
+    translating: 'Recognizing and translating…',
+    translated: 'Translation',
+    original: 'Original',
+    copyTranslation: 'Copy translation',
+    translationCopied: 'Translation copied',
+    removeTranslation: 'Remove translation',
     intent: {
       ocr: 'Select an area, then press Enter to recognize text',
       translate: 'Select an area, then press Enter to translate',
@@ -183,6 +192,7 @@ const enUS: Dict = {
     openSettings: 'Open Settings',
     backToTranslate: 'Back to translation',
     popOut: 'Open in a window',
+    askPlaceholder: 'Ask AI…  Enter to send',
     thinking: 'Thinking depth',
     thinkingDesc: 'Deeper is slower; models that do not support it answer normally',
     thinkingLevels: { auto: 'Auto', low: 'Low', medium: 'Medium', high: 'High', max: 'Max' },
@@ -371,6 +381,14 @@ const enUS: Dict = {
       radius: 'Corner radius',
       showSource: 'Show the original text',
       showSourceDesc: 'Shows the selected text at the top of the panel',
+      opacityDesc: 'With frosted glass, lower is more see-through',
+      radiusDesc: 'With frosted glass the system decides the corner radius',
+      blur: 'Frosted glass',
+      blurDesc: 'Blur what is behind the panel (looks best on Windows 11)',
+      aiLayout: 'AI chat opens as',
+      aiLayoutDesc: 'When you click Ask AI or type in the box at the bottom',
+      drawer: 'Bottom drawer',
+      side: 'Side panel',
       reset: 'Restore default appearance',
       resetButton: 'Restore',
     },

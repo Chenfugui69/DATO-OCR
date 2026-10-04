@@ -1,6 +1,7 @@
 const zhCN = {
   common: {
     remove: '移除',
+    eyedropper: '从屏幕取色',
     ok: '好',
     cancel: '取消',
     close: '关闭',
@@ -35,6 +36,9 @@ const zhCN = {
     ocrCapture: '识字',
   },
   tools: {
+    mosaicBrush: '涂抹',
+    mosaicRect: '矩形打码',
+    cellSize: '格子大小',
     rect: '矩形',
     ellipse: '椭圆',
     arrow: '箭头',
@@ -65,6 +69,12 @@ const zhCN = {
     done: '完成',
   },
   capture: {
+    translating: '正在识别并翻译…',
+    translated: '译文',
+    original: '原文',
+    copyTranslation: '复制译文',
+    translationCopied: '已复制译文',
+    removeTranslation: '去掉译文',
     intent: {
       ocr: '选好区域后按 Enter 识字',
       translate: '选好区域后按 Enter 翻译',
@@ -209,6 +219,7 @@ const zhCN = {
     openSettings: '去设置',
     backToTranslate: '返回翻译',
     popOut: '在独立窗口中打开',
+    askPlaceholder: '问 AI…  Enter 发送',
     thinking: '思考深度',
     thinkingDesc: '想得越深回答越慢；模型不支持时按默认方式回答',
     thinkingLevels: { auto: '自动', low: '低', medium: '中', high: '高', max: '最高' },
@@ -397,6 +408,14 @@ const zhCN = {
       radius: '圆角',
       showSource: '显示原文',
       showSourceDesc: '在面板顶部显示选中的原文',
+      opacityDesc: '开了毛玻璃时，越低越通透',
+      radiusDesc: '毛玻璃模式下圆角由系统决定',
+      blur: '毛玻璃',
+      blurDesc: '面板后面的内容模糊着透出来（Windows 11 效果最好）',
+      aiLayout: 'AI 对话展开方式',
+      aiLayoutDesc: '点"问 AI"或在底部输入框提问时',
+      drawer: '底部抽屉',
+      side: '右侧展开',
       reset: '恢复默认外观',
       resetButton: '恢复',
     },

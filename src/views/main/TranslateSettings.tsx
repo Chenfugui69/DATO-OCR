@@ -199,13 +199,40 @@ export function TranslateSettingsGroups({ settings, set }: { settings: Settings;
           <span className="set-row__value cn-numeric">{pop.fontSize}px</span>
           <Slider value={pop.fontSize} min={12} max={22} onChange={(v) => set((d) => void (d.translate.popup.fontSize = v))} />
         </Row>
-        <Row title={t('settings.popup.opacity')}>
-          <span className="set-row__value cn-numeric">{Math.round(pop.opacity * 100)}%</span>
-          <Slider value={Math.round(pop.opacity * 100)} min={60} max={100} onChange={(v) => set((d) => void (d.translate.popup.opacity = v / 100))} />
+        <Row title={t('settings.popup.blur')} desc={t('settings.popup.blurDesc')}>
+          <Switch
+            checked={pop.blur}
+            onChange={(v) =>
+              set((d) => {
+                d.translate.popup.blur = v;
+                // 系统亚克力自带一层色调，页面上再铺的色调太浓就看不出模糊了，给个看得出效果的默认值
+                if (v && d.translate.popup.opacity > 0.6) d.translate.popup.opacity = 0.45;
+              })
+            }
+          />
         </Row>
-        <Row title={t('settings.popup.radius')}>
+        <Row title={t('settings.popup.opacity')} desc={pop.blur ? t('settings.popup.opacityDesc') : undefined}>
+          <span className="set-row__value cn-numeric">{Math.round(pop.opacity * 100)}%</span>
+          <Slider
+            value={Math.round(pop.opacity * 100)}
+            min={pop.blur ? 30 : 60}
+            max={100}
+            onChange={(v) => set((d) => void (d.translate.popup.opacity = v / 100))}
+          />
+        </Row>
+        <Row title={t('settings.popup.radius')} desc={pop.blur ? t('settings.popup.radiusDesc') : undefined}>
           <span className="set-row__value cn-numeric">{pop.radius}px</span>
           <Slider value={pop.radius} min={0} max={24} onChange={(v) => set((d) => void (d.translate.popup.radius = v))} />
+        </Row>
+        <Row title={t('settings.popup.aiLayout')} desc={t('settings.popup.aiLayoutDesc')}>
+          <Segmented
+            value={pop.aiLayout}
+            options={[
+              { value: 'drawer', label: t('settings.popup.drawer') },
+              { value: 'side', label: t('settings.popup.side') },
+            ]}
+            onChange={(v) => set((d) => void (d.translate.popup.aiLayout = v))}
+          />
         </Row>
         <Row title={t('settings.popup.showSource')} desc={t('settings.popup.showSourceDesc')}>
           <Switch checked={pop.showSource} onChange={(v) => set((d) => void (d.translate.popup.showSource = v))} />
@@ -216,7 +243,7 @@ export function TranslateSettingsGroups({ settings, set }: { settings: Settings;
             icon={RotateCcw}
             onClick={() =>
               set((d) => {
-                d.translate.popup = { width: 460, height: 0, fontSize: 15, opacity: 1, radius: 14, showSource: false };
+                d.translate.popup = { ...d.translate.popup, width: 460, height: 0, fontSize: 15, opacity: 1, radius: 14, showSource: false, blur: false };
               })
             }
           >

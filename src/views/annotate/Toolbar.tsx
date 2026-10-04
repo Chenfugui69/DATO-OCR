@@ -4,6 +4,7 @@ import clsx from 'clsx';
 import {
   ArrowUpRight,
   Bold,
+  Brush,
   Check,
   Circle,
   Download,
@@ -15,6 +16,7 @@ import {
   ScrollText,
   Sparkles,
   Square,
+  SquareDashed,
   Type,
   Undo2,
   X,
@@ -269,7 +271,21 @@ export const SubToolbar = forwardRef<
       const o = options.mosaic;
       body = (
         <>
-          <SizeDots label={t('tools.brushSize')} sizes={BRUSH_SIZES} value={o.brushSize} onChange={(v) => set('mosaic', { brushSize: v })} />
+          <div className="an-group">
+            <Choice label={t('tools.mosaicBrush')} active={o.shape === 'brush'} onClick={() => set('mosaic', { shape: 'brush' })}>
+              <Brush size={14} strokeWidth={1.5} />
+            </Choice>
+            <Choice label={t('tools.mosaicRect')} active={o.shape === 'rect'} onClick={() => set('mosaic', { shape: 'rect' })}>
+              <SquareDashed size={14} strokeWidth={1.5} />
+            </Choice>
+          </div>
+          <Sep />
+          <SizeDots
+            label={o.shape === 'rect' ? t('tools.cellSize') : t('tools.brushSize')}
+            sizes={BRUSH_SIZES}
+            value={o.brushSize}
+            onChange={(v) => set('mosaic', { brushSize: v })}
+          />
           <Sep />
           <div className="an-group">
             <Choice label={t('tools.pixelate')} active={o.mode === 'pixelate'} onClick={() => set('mosaic', { mode: 'pixelate' })}>

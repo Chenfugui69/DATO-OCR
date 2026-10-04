@@ -21,11 +21,19 @@ pub async fn settings_get(app: AppHandle) -> AppResult<Settings> {
     Ok(state(&app).settings())
 }
 
+/// 设置一次只改一个：拖滑杆、取色时前端会连着发好几次，同时写同一个临时文件会互相
+/// 踩掉（"系统找不到指定的文件"），前后比较也会错乱。
+static SETTINGS_LOCK: parking_lot::Mutex<()> = parking_lot::Mutex::new(());
+
 #[tauri::command]
 pub async fn settings_set(app: AppHandle, settings: Settings) -> AppResult<Settings> {
     let st = state(&app);
-    let before = st.settings();
-    let next = st.update_settings(&app, settings)?;
+    let (before, next) = {
+        let _guard = SETTINGS_LOCK.lock();
+        let before = st.settings();
+        let next = st.update_settings(&app, settings)?;
+        (before, next)
+    };
 
     if before.hotkeys != next.hotkeys {
         let ui = app.clone();
@@ -47,6 +55,10 @@ pub async fn settings_set(app: AppHandle, settings: Settings) -> AppResult<Setti
     }
     if before.translate.selection != next.translate.selection {
         translate::selection::reconfigure(&app);
+    }
+    if before.translate.popup.blur != next.translate.popup.blur {
+        let ui = app.clone();
+        app.run_on_main_thread(move || translate::selection::apply_popup_material(&ui))?;
     }
     if before.appearance != next.appearance {
         let ui = app.clone();

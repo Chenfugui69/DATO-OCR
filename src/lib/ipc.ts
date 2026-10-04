@@ -2,36 +2,7 @@
 
 import { Channel, invoke } from '@tauri-apps/api/core';
 
-import type {
-  AiContext,
-  AppInfo,
-  ChatEvent,
-  ChatRequest,
-  CaptureIntent,
-  ClipDetail,
-  ClipGroup,
-  ClipPage,
-  ClipQuery,
-  ClipStats,
-  EditorAction,
-  EditorDoc,
-  EngineStatus,
-  FinishAction,
-  HotkeyStatus,
-  OcrJob,
-  OcrPage,
-  PhysicalRect,
-  PinInfo,
-  ProviderInfo,
-  SecretsStatus,
-  SessionInfo,
-  Settings,
-  ShotPage,
-  ShotQuery,
-  TranslateRequest,
-  TranslateResult,
-  VisualCapabilities,
-} from './types';
+import type { AiContext, AppInfo, CaptureIntent, ChatEvent, ChatRequest, ClipDetail, ClipGroup, ClipPage, ClipQuery, ClipStats, EditorAction, EditorDoc, EngineStatus, FinishAction, HotkeyStatus, OcrJob, OcrPage, PhysicalRect, PinInfo, ProviderInfo, RegionTranslation, SecretsStatus, SessionInfo, Settings, ShotPage, ShotQuery, TranslateRequest, TranslateResult, VisualCapabilities } from './types';
 
 /** Rust 侧 AppError 的结构化形态。 */
 export class AppError extends Error {
@@ -94,6 +65,9 @@ export const capture = {
     annotationPng: Uint8Array,
   ) => callRaw<void>('capture_finish', meta, annotationPng),
   cancel: (sessionId: number) => call<void>('capture_cancel', { sessionId }),
+  /** 截图原位翻译：识别选区文字、整批翻译，返回每段的位置和译文 */
+  translateRegion: (request: { sessionId: number; monitorId: number; rect: PhysicalRect }) =>
+    call<RegionTranslation>('capture_translate', { request }),
   writeText: (text: string) => call<void>('clipboard_write_text', { text }),
 };
 

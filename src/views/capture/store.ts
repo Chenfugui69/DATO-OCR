@@ -31,6 +31,12 @@ export interface OverlayState {
   cursorStyle: string;
   longshot: LongshotProgress | null;
   busy: boolean;
+  /** 原位翻译进行中 */
+  translating: boolean;
+  /** 原位翻译后切到"看原文" */
+  showOriginal: boolean;
+  /** 原位翻译的全部译文（复制用） */
+  translatedText: string;
 }
 
 export const initialOverlay = (): Omit<OverlayState, 'options'> => ({
@@ -46,6 +52,9 @@ export const initialOverlay = (): Omit<OverlayState, 'options'> => ({
   cursorStyle: 'crosshair',
   longshot: null,
   busy: false,
+  translating: false,
+  showOriginal: false,
+  translatedText: '',
 });
 
 // 工具的线宽/颜色在一次运行期间记忆（规格 02 §3.7.4）—— 不随会话重置

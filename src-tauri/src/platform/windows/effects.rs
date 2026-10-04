@@ -7,6 +7,11 @@ use windows::Win32::UI::WindowsAndMessaging::{
     SW_SHOWNOACTIVATE, WDA_EXCLUDEFROMCAPTURE, WDA_NONE, WS_EX_NOACTIVATE,
 };
 
+use windows::Win32::Graphics::Dwm::{
+    DwmSetWindowAttribute, DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_DONOTROUND, DWMWCP_ROUND,
+    DWM_WINDOW_CORNER_PREFERENCE,
+};
+
 use super::util::{handle_of, hwnd};
 use crate::error::AppResult;
 
@@ -37,6 +42,29 @@ pub fn set_exclude_from_capture(window: &WebviewWindow, exclude: bool) {
     // SAFETY: h 是存活的 Tauri 窗口。Win10 2004 以下不支持 EXCLUDE，静默降级。
     if let Err(err) = unsafe { SetWindowDisplayAffinity(h, affinity) } {
         tracing::debug!(label = window.label(), "设置抓屏排除失败：{err}");
+    }
+}
+
+/// Win11 系统圆角（无边框窗口默认是直角）。毛玻璃材质会跟着圆角裁，阴影也是系统画的。
+/// Win10 没有这个属性，调用失败就算了。
+pub fn set_rounded(window: &WebviewWindow, rounded: bool) {
+    let Ok(h) = window.hwnd() else { return };
+    let pref: DWM_WINDOW_CORNER_PREFERENCE = if rounded {
+        DWMWCP_ROUND
+    } else {
+        DWMWCP_DONOTROUND
+    };
+    // SAFETY: h 是存活的 Tauri 窗口；传入的是一个 4 字节枚举值及其大小。
+    let result = unsafe {
+        DwmSetWindowAttribute(
+            h,
+            DWMWA_WINDOW_CORNER_PREFERENCE,
+            std::ptr::from_ref(&pref).cast(),
+            std::mem::size_of::<DWM_WINDOW_CORNER_PREFERENCE>() as u32,
+        )
+    };
+    if let Err(err) = result {
+        tracing::debug!(label = window.label(), "设置窗口圆角失败：{err}");
     }
 }
 

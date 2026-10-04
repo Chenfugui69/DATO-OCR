@@ -7,6 +7,7 @@ import './capture.css';
 import '@/views/annotate/annotate.css';
 
 import { Window } from '@tauri-apps/api/window';
+import { Copy, Eye, Languages, X } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { flushSync } from 'react-dom';
 import { useTranslation } from 'react-i18next';
@@ -17,12 +18,15 @@ import { useElementSize } from '@/lib/hooks';
 import { capture, reportError } from '@/lib/ipc';
 import { shotUrl, windowLabel } from '@/lib/platform';
 import type { CaptureIntent, FinishAction, FrameStyle } from '@/lib/types';
+import { Spinner } from '@/ui/controls';
 import { notify } from '@/ui/overlays';
-import { AnnotationEngine } from '@/views/annotate/engine';
-import type { Tool } from '@/views/annotate/model';
+import { AnnotationEngine, toolOf } from '@/views/annotate/engine';
+import { BRUSH_RANGE, PEN_RANGE, type Tool } from '@/views/annotate/model';
 import { bmpSource, type PixelSource } from '@/views/annotate/pixels';
+import { canPick, handleCursor, SelectionOverlay, toolCursor } from '@/views/annotate/SelectionOverlay';
 import { TextEditor, useEngineVersion } from '@/views/annotate/TextEditor';
 import { SubToolbar, TOOL_KEYS, Toolbar, type ActionId } from '@/views/annotate/Toolbar';
+import { buildLabels, TRANSLATION_GROUP } from '@/views/annotate/translateLayer';
 
 import {
   HANDLES,
@@ -68,6 +72,8 @@ let press: { at: Point; hover: Rect | null } | null = null;
 let drag: { kind: 'move' | 'resize'; handle?: Handle; at: Point; orig: Rect } | null = null;
 let lines: SnapLines = { xs: [], ys: [] };
 let activeElsewhere: number | null = null;
+/** 文字工具下按住已有文字：松手时没拖动 = 进入编辑 */
+let pendingTextEdit: string | null = null;
 
 const scale = () => get().session?.monitor.scaleFactor ?? window.devicePixelRatio;
 
@@ -255,8 +261,10 @@ function enterEditing(sel: Rect) {
   const s = get().session;
   if (!s) return;
   void broadcast('capture-active-monitor', { sessionId: s.sessionId, monitorId: MONITOR_ID });
-  // 截图识字：框好就直接出结果（设置里可关，关了就和普通截图一样先进编辑态）
-  if (isTextIntent(s.intent) && s.settings.ocrInstant) void finish(intentAction(s.intent));
+  // 截图识字：框好就直接出结果（设置里可关，关了就和普通截图一样先进编辑态）；
+  // 截图翻译：就在选区里原位显示译文
+  if (s.intent === 'translate' && s.settings.ocrInstant) void translateInPlace();
+  else if (s.intent === 'ocr' && s.settings.ocrInstant) void finish('ocr');
 }
 
 function clearSelection() {
@@ -297,8 +305,28 @@ async function finish(action: FinishAction | 'cancel') {
 function onAction(id: ActionId) {
   const s = get().session;
   if (!s) return;
-  if (id === 'done') void finish(intentAction(s.intent));
+  if (id === 'done') void finish(s.intent === 'translate' ? 'copy' : intentAction(s.intent));
+  else if (id === 'translate') void translateInPlace();
   else void finish(id === 'cancel' ? 'cancel' : id === 'save' ? 'save' : id);
+}
+
+/** 截图原位翻译：识别选区里的字、翻译，在原位置铺底色写上译文（变成可撤销、可导出的标注）。 */
+async function translateInPlace() {
+  const { session, selection, translating } = get();
+  if (!session || !selection || translating) return;
+  if (engine.text) engine.commitText();
+  set({ translating: true });
+  try {
+    const r = await capture.translateRegion({ sessionId: session.sessionId, monitorId: MONITOR_ID, rect: selection });
+    if (get().session?.sessionId !== session.sessionId) return;
+    engine.removeGroup(TRANSLATION_GROUP);
+    engine.addAll(buildLabels(r.blocks, pixels, scale(), selection));
+    set({ showOriginal: false, translatedText: r.blocks.map((b) => b.text).join('\n') });
+  } catch (err) {
+    notify.error(err);
+  } finally {
+    set({ translating: false });
+  }
 }
 
 function copyColor() {
@@ -343,6 +371,22 @@ function onPointerDown(e: React.PointerEvent) {
   }
   const sel = st.selection;
   const handleRadius = 7 * scale();
+  // 先看是不是点在已画好的标注上：拖控制点改大小、拖本体挪位置
+  const ah = engine.hitHandle(p, handleRadius);
+  if (ah) {
+    engine.beginTransform(p, ah);
+    return;
+  }
+  if (canPick(st.tool, st.options) && contains(sel, p)) {
+    const hit = engine.hit(p, 4 * scale());
+    if (hit) {
+      engine.select(hit.id);
+      engine.beginTransform(p, 'move');
+      pendingTextEdit = st.tool === 'text' && hit.kind === 'text' ? hit.id : null;
+      return;
+    }
+  }
+  engine.select(null);
   if (st.tool) {
     if (!contains(sel, p)) return;
     if (st.tool === 'text') engine.startText(p, st.options);
@@ -382,6 +426,10 @@ function onPointerMove(e: React.PointerEvent) {
         engine.update(p, e.shiftKey);
         return;
       }
+      if (engine.transforming) {
+        engine.updateTransform(p, e.shiftKey);
+        return;
+      }
       if (drag?.kind === 'move') {
         const moved = { ...drag.orig, x: drag.orig.x + p.x - drag.at.x, y: drag.orig.y + p.y - drag.at.y };
         setSelection(clampMove(snapMove(moved, lines, snapThreshold(e)), screenRect()));
@@ -400,11 +448,13 @@ function onPointerMove(e: React.PointerEvent) {
         setSelection(clampRect(sel, screenRect()));
         return;
       }
-      // 悬停时更新光标形状
+      // 悬停时更新光标形状。'tool' = 用当前工具自己的指针（画笔是跟粗细一样大的圆圈）
       const sel = st.selection;
-      let cursor = 'crosshair';
-      if (st.tool === 'text') cursor = engine.hitText(p) ? 'text' : sel && contains(sel, p) ? 'text' : 'default';
-      else if (st.tool) cursor = sel && contains(sel, p) ? 'crosshair' : 'default';
+      let cursor = 'default';
+      const ah = engine.hitHandle(p, 7 * scale());
+      if (ah) cursor = handleCursor(ah);
+      else if (sel && contains(sel, p) && canPick(st.tool, st.options) && engine.hit(p, 4 * scale())) cursor = 'move';
+      else if (st.tool) cursor = sel && contains(sel, p) ? 'tool' : 'default';
       else if (sel) {
         const h = hitHandle(sel, p, 7 * scale());
         cursor = h ? HANDLE_CURSORS[h] : contains(sel, p) ? 'move' : 'default';
@@ -432,14 +482,37 @@ function onPointerUp() {
     return;
   }
   if (engine.drawing) engine.end();
+  if (engine.transforming) {
+    const moved = engine.endTransform();
+    if (!moved && pendingTextEdit) engine.editText(pendingTextEdit);
+  }
+  pendingTextEdit = null;
   drag = null;
+}
+
+/** 画笔 / 手绘马赛克时滚轮调粗细，指针的圆圈跟着变 */
+function onWheel(e: React.WheelEvent) {
+  const st = get();
+  if (st.phase !== 'editing' || !st.tool) return;
+  const o = st.options;
+  const dir = e.deltaY < 0 ? 1 : -1;
+  const clamp = (v: number, [lo, hi]: [number, number]) => Math.max(lo, Math.min(hi, v));
+  if (st.tool === 'pen') set({ options: { ...o, pen: { ...o.pen, lineWidth: clamp(o.pen.lineWidth + dir, PEN_RANGE) } } });
+  else if (st.tool === 'mosaic' && o.mosaic.shape === 'brush') {
+    set({ options: { ...o, mosaic: { ...o.mosaic, brushSize: clamp(o.mosaic.brushSize + dir * 4, BRUSH_RANGE) } } });
+  }
 }
 
 function onDoubleClick(e: React.MouseEvent) {
   const st = get();
-  if (st.phase === 'editing' && !st.tool && st.selection && contains(st.selection, toPx(e)) && st.session) {
-    void finish(intentAction(st.session.intent));
+  if (st.phase !== 'editing' || !st.selection || !st.session) return;
+  // 双击文字 = 改字
+  const hit = engine.hit(toPx(e), 4 * scale());
+  if (hit?.kind === 'text') {
+    engine.editText(hit.id);
+    return;
   }
+  if (!st.tool && !hit && contains(st.selection, toPx(e))) void finish(st.session.intent === 'translate' ? 'copy' : intentAction(st.session.intent));
 }
 
 function onContextMenu(e: React.MouseEvent) {
@@ -475,13 +548,20 @@ function onKeyDown(e: KeyboardEvent) {
 
   if (key === 'Escape') {
     e.preventDefault();
-    cancel();
+    // 有选中的标注先取消选中，再按一次才退出截图
+    if (engine.selected) engine.select(null);
+    else cancel();
     return;
   }
   if (key === 'Enter') {
     e.preventDefault();
     if (st.phase === 'detect' && st.hover) enterEditing(st.hover);
-    if (get().selection) void finish(intentAction(st.session.intent));
+    if (get().selection) void finish(st.session.intent === 'translate' ? 'copy' : intentAction(st.session.intent));
+    return;
+  }
+  if ((key === 'Delete' || key === 'Backspace') && st.phase === 'editing' && engine.selected) {
+    e.preventDefault();
+    engine.deleteSelected();
     return;
   }
   if (ctrl && key.toLowerCase() === 'a') {
@@ -506,7 +586,7 @@ function onKeyDown(e: KeyboardEvent) {
   }
   if (ctrl && key.toLowerCase() === 's') return void (e.preventDefault(), finish('save'));
   if (ctrl && key.toLowerCase() === 'p') return void (e.preventDefault(), finish('pin'));
-  if (ctrl && key.toLowerCase() === 't') return void (e.preventDefault(), finish('translate'));
+  if (ctrl && key.toLowerCase() === 't') return void (e.preventDefault(), translateInPlace());
   if (ctrl && key.toLowerCase() === 'c') return void (e.preventDefault(), finish('copy'));
 
   const arrows: Record<string, [number, number]> = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] };
@@ -522,7 +602,8 @@ function onKeyDown(e: KeyboardEvent) {
     if (tool) {
       e.preventDefault();
       if (tool === 'mosaic' && !st.pixelsReady) return;
-      set({ tool: st.tool === tool ? null : tool });
+      engine.select(null);
+      set({ tool: st.tool === tool ? null : tool, cursorStyle: 'tool' });
     }
   }
 }
@@ -596,10 +677,66 @@ function Handles({ rect, s, radius }: { rect: Rect; s: number; radius: number })
   );
 }
 
+/** 原位翻译后浮在选区右上角的小条（左上角是尺寸提示）：译文 / 原文切换、复制译文、去掉译文 */
+function TranslationBar({ css }: { css: { x: number; y: number; width: number } }) {
+  const { t } = useTranslation();
+  useEngineVersion(engine);
+  const showOriginal = useOverlay((x) => x.showOriginal);
+  const text = useOverlay((x) => x.translatedText);
+  const ref = useRef<HTMLDivElement>(null);
+  const size = useElementSize(ref, { width: 220, height: 34 });
+  if (!engine.hasGroup(TRANSLATION_GROUP)) return null;
+  const toggle = () => {
+    engine.setGroupHidden(TRANSLATION_GROUP, !showOriginal);
+    set({ showOriginal: !showOriginal });
+  };
+  return (
+    <div
+      ref={ref}
+      className="cap-trbar cn-glass"
+      style={{ transform: `translate(${Math.max(0, css.x + css.width - size.width)}px, ${Math.max(0, css.y - size.height - 6)}px)` }}
+      onPointerDown={(e) => e.stopPropagation()}
+    >
+      <button type="button" className={showOriginal ? '' : 'is-on'} onClick={() => showOriginal && toggle()}>
+        <Languages size={14} strokeWidth={1.75} />
+        {t('capture.translated')}
+      </button>
+      <button type="button" className={showOriginal ? 'is-on' : ''} onClick={() => !showOriginal && toggle()}>
+        <Eye size={14} strokeWidth={1.75} />
+        {t('capture.original')}
+      </button>
+      <span className="cap-trbar__sep" />
+      <button
+        type="button"
+        title={t('capture.copyTranslation')}
+        onClick={() =>
+          void capture
+            .writeText(text)
+            .then(() => notify.success(t('capture.translationCopied')))
+            .catch(notify.error)
+        }
+      >
+        <Copy size={14} strokeWidth={1.75} />
+      </button>
+      <button
+        type="button"
+        title={t('capture.removeTranslation')}
+        onClick={() => {
+          engine.removeGroup(TRANSLATION_GROUP);
+          set({ showOriginal: false });
+        }}
+      >
+        <X size={14} strokeWidth={1.75} />
+      </button>
+    </div>
+  );
+}
+
 function Toolbars({ rect, s, viewport }: { rect: Rect; s: number; viewport: { width: number; height: number } }) {
   const { t } = useTranslation();
   useEngineVersion(engine);
   const tool = useOverlay((x) => x.tool);
+  const translating = useOverlay((x) => x.translating);
   const options = useOverlay((x) => x.options);
   const pixelsReady = useOverlay((x) => x.pixelsReady);
   const bitmapReady = useOverlay((x) => x.bitmapReady);
@@ -618,6 +755,11 @@ function Toolbars({ rect, s, viewport }: { rect: Rect; s: number; viewport: { wi
 
   // 长截图入口只在这块屏的选区足够大时有意义；模糊需要位图到位
   const blurPending = tool === 'mosaic' && options.mosaic.mode === 'blur' && !bitmapReady;
+  // 选中了已有标注：二级工具条显示它的样式，改了直接作用到它身上
+  const picked = engine.selectedAnnotation;
+  const pickedTool = picked ? toolOf(picked) : null;
+  const subTool = pickedTool ?? tool;
+  const subOptions = picked && pickedTool ? engine.optionsOf(picked, options) : options;
   return (
     <>
       <Toolbar
@@ -627,7 +769,8 @@ function Toolbars({ rect, s, viewport }: { rect: Rect; s: number; viewport: { wi
         tool={tool}
         onTool={(next) => {
           if (engine.text) engine.commitText();
-          set({ tool: next, cursorStyle: next === 'text' ? 'text' : 'crosshair' });
+          engine.select(null);
+          set({ tool: next, cursorStyle: 'tool' });
         }}
         canUndo={engine.canUndo}
         onUndo={() => engine.undo()}
@@ -637,17 +780,28 @@ function Toolbars({ rect, s, viewport }: { rect: Rect; s: number; viewport: { wi
         ]}
         onAction={onAction}
         disabledTools={{ mosaic: !pixelsReady }}
+        disabledActions={{ translate: translating }}
       />
-      {tool && (
+      {subTool && (
         <SubToolbar
           ref={subRef}
           style={{ transform: `translate(${subX}px, ${subY}px)` }}
-          tool={tool}
-          options={options}
-          onChange={(o) => set({ options: o })}
+          tool={subTool}
+          options={subOptions}
+          onChange={(o) => {
+            if (picked && pickedTool) engine.applyOptions(o);
+            set({ options: o });
+          }}
         />
       )}
-      {intent !== 'normal' && (
+      <TranslationBar css={css} />
+      {translating && (
+        <div className="cap-busy cn-glass" style={{ transform: `translate(${css.x + css.width / 2}px, ${css.y + css.height / 2}px)` }}>
+          <Spinner size={16} />
+          {t('capture.translating')}
+        </div>
+      )}
+      {intent !== 'normal' && !engine.hasGroup(TRANSLATION_GROUP) && (
         <div className="cap-intent cn-glass-thin" style={{ transform: `translate(${css.x}px, ${Math.max(0, css.y - 32)}px)` }}>
           {t(`capture.intent.${intent}`)}
         </div>
@@ -666,6 +820,8 @@ export default function CaptureView() {
   const hover = useOverlay((x) => x.hover);
   const cursor = useOverlay((x) => x.cursor);
   const cursorStyle = useOverlay((x) => x.cursorStyle);
+  const tool = useOverlay((x) => x.tool);
+  const options = useOverlay((x) => x.options);
   const pixelsReady = useOverlay((x) => x.pixelsReady);
   const colorFormat = useOverlay((x) => x.colorFormat);
   const [viewport, setViewport] = useState({ width: window.innerWidth, height: window.innerHeight });
@@ -735,7 +891,12 @@ export default function CaptureView() {
     <div
       className="cap-root"
       data-phase={phase}
-      style={{ cursor: phase === 'editing' ? cursorStyle : phase === 'passive' ? 'default' : 'crosshair', ...frameVars(frame) }}
+      style={{
+        // 只有框选时是十字；编辑时按工具：画笔、手绘马赛克是圆圈，文字是 I 形，挪动标注是四向箭头
+        cursor: phase === 'editing' ? (cursorStyle === 'tool' ? toolCursor(tool, options) : cursorStyle) : phase === 'passive' ? 'default' : 'crosshair',
+        ...frameVars(frame),
+      }}
+      onWheel={onWheel}
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
       onPointerUp={onPointerUp}
@@ -762,6 +923,7 @@ export default function CaptureView() {
         <>
           {!engine.drawing && <Handles rect={selection} s={s} radius={radius} />}
           <div className="cap-text-layer">
+            <SelectionOverlay engine={engine} displayScale={s} />
             <TextEditor engine={engine} displayScale={s} />
           </div>
           <Toolbars rect={selection} s={s} viewport={viewport} />

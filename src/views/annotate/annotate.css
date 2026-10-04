@@ -147,3 +147,21 @@
   -webkit-text-stroke: 0;
   z-index: 20;
 }
+
+/* 选中的标注：虚线框 + 白色控制点（只显示，命中由引擎判断） */
+.an-sel {
+  position: absolute;
+  outline: 1px dashed var(--cn-accent);
+  outline-offset: 3px;
+  pointer-events: none;
+}
+.an-sel-handle {
+  position: absolute;
+  width: 8px;
+  height: 8px;
+  margin: -4px 0 0 -4px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 0 0 1px var(--cn-accent), 0 1px 3px rgba(0, 0, 0, 0.45);
+  pointer-events: none;
+}
