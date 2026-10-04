@@ -118,10 +118,13 @@ function drawMosaic(ctx: Ctx, a: Extract<Annotation, { kind: 'mosaic' }>, bg: Ba
   ctx.filter = 'none';
 }
 
-type RectCache = { key: string; cells: [number, number, number][]; cols: number };
-const rectCache = new WeakMap<Annotation, RectCache>();
+/** 矩形马赛克每个格子的颜色，按格子左上角的绝对坐标存 */
+const rectCache = new WeakMap<Annotation, Map<string, [number, number, number]>>();
 
-/** 矩形马赛克：格子从框的左上角起排，框挪了、变了大小就重新取色。 */
+/**
+ * 矩形马赛克：格子从框的左上角起排。拖动画框时每一帧都要画出打码效果，所以格子颜色按绝对位置
+ * 缓存：往右下拖时起点不变，已经取过色的格子直接用，只算新露出来的。
+ */
 function drawMosaicRect(ctx: Ctx, a: Extract<Annotation, { kind: 'mosaicRect' }>, bg: Backdrop) {
   const r = a.rect;
   if (r.width < 1 || r.height < 1) return;
@@ -144,29 +147,29 @@ function drawMosaicRect(ctx: Ctx, a: Extract<Annotation, { kind: 'mosaicRect' }>
   if (!src) return;
   const cols = Math.ceil(r.width / a.cell);
   const rows = Math.ceil(r.height / a.cell);
-  const key = `${r.x},${r.y},${r.width},${r.height},${a.cell}`;
   let cache = rectCache.get(a);
-  if (!cache || cache.key !== key) {
-    const cells: [number, number, number][] = [];
-    for (let row = 0; row < rows; row += 1) {
-      for (let col = 0; col < cols; col += 1) {
-        const x = r.x + col * a.cell;
-        const y = r.y + row * a.cell;
-        cells.push(src.average(x, y, Math.min(a.cell, r.x + r.width - x), Math.min(a.cell, r.y + r.height - y)));
-      }
-    }
-    cache = { key, cells, cols };
+  if (!cache) {
+    cache = new Map();
     rectCache.set(a, cache);
   }
   ctx.beginPath();
   ctx.rect(r.x, r.y, r.width, r.height);
   ctx.clip();
-  cache.cells.forEach((v, i) => {
-    const col = i % cache!.cols;
-    const row = Math.floor(i / cache!.cols);
-    ctx.fillStyle = `rgb(${v[0]},${v[1]},${v[2]})`;
-    ctx.fillRect(r.x + col * a.cell, r.y + row * a.cell, a.cell + 0.5, a.cell + 0.5);
-  });
+  for (let row = 0; row < rows; row += 1) {
+    for (let col = 0; col < cols; col += 1) {
+      const x = r.x + col * a.cell;
+      const y = r.y + row * a.cell;
+      const key = `${x},${y},${a.cell}`;
+      let v = cache.get(key);
+      if (!v) {
+        // 按整格取色（框边上的半格也按整格算），格子位置不变颜色就不变，拖动时不闪
+        v = src.average(x, y, a.cell, a.cell);
+        cache.set(key, v);
+      }
+      ctx.fillStyle = `rgb(${v[0]},${v[1]},${v[2]})`;
+      ctx.fillRect(x, y, a.cell + 0.5, a.cell + 0.5);
+    }
+  }
 }
 
 /** 文字块排版：按框宽自动换行。英文按词断，中日韩按字断。 */

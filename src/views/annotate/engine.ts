@@ -66,17 +66,6 @@ function scaledText(o: Extract<Annotation, { kind: 'text' }>, handle: Handle, p:
   return { ...o, fontSize, at: { x: left + 2, y: top + 2 } };
 }
 
-function drawMosaicPreview(ctx: CanvasRenderingContext2D, r: Rect, scale: number) {
-  ctx.save();
-  ctx.fillStyle = 'rgba(128, 128, 134, 0.42)';
-  ctx.fillRect(r.x, r.y, r.width, r.height);
-  ctx.lineWidth = Math.max(1, scale);
-  ctx.strokeStyle = 'rgba(210, 210, 216, 0.95)';
-  ctx.setLineDash([4 * scale, 3 * scale]);
-  ctx.strokeRect(r.x + ctx.lineWidth / 2, r.y + ctx.lineWidth / 2, Math.max(0, r.width - ctx.lineWidth), Math.max(0, r.height - ctx.lineWidth));
-  ctx.restore();
-}
-
 function distToSegment(p: Point, a: Point, b: Point): number {
   const dx = b.x - a.x;
   const dy = b.y - a.y;
@@ -654,11 +643,7 @@ export class AnnotationEngine {
     ctx.setTransform(1, 0, 0, 1, -this.origin.x, -this.origin.y);
     ctx.clearRect(dirty.x - 2, dirty.y - 2, dirty.width + 4, dirty.height + 4);
     this.lastDraftBounds = b;
-    this.withClip(ctx, () => {
-      // 矩形马赛克拖动时只画一个灰色预览框，松手才真正打码（大块打码每帧取色太慢）
-      if (d.kind === 'mosaicRect') drawMosaicPreview(ctx, d.rect, this.scale);
-      else drawAnnotation(ctx, d, this.backdrop);
-    });
+    this.withClip(ctx, () => drawAnnotation(ctx, d, this.backdrop));
   }
 
   private get visible(): Annotation[] {
