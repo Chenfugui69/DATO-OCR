@@ -402,6 +402,8 @@ pub enum FinishAction {
     Longshot,
     /// 带着截图问 AI
     Ai,
+    /// 录制选区为 GIF
+    Gif,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -439,6 +441,9 @@ pub fn finish(app: &AppHandle, meta: FinishMeta, annotation_png: Vec<u8>) -> App
 
     if meta.action == FinishAction::Longshot {
         return longshot::start(app, session.clone(), monitor, global);
+    }
+    if meta.action == FinishAction::Gif {
+        return crate::gif_record::start(app, session.clone(), monitor, global);
     }
 
     let mut image = imaging::crop_opaque(&shot.image, meta.rect)?;
@@ -541,7 +546,7 @@ pub(crate) fn perform(
             );
             add_to_library();
         }
-        FinishAction::Longshot => {}
+        FinishAction::Longshot | FinishAction::Gif => {}
     }
     Ok(())
 }

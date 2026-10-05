@@ -169,6 +169,16 @@ export function SettingsPage({ section }: { section: string | null }) {
             <Row title={t('settings.capture.instantCursor')} desc={t('settings.capture.instantCursorDesc')}>
               <Switch checked={c.instantCursor} onChange={(v) => set((d) => void (d.capture.instantCursor = v))} />
             </Row>
+            <Row title={t('settings.capture.gifFps')} desc={t('settings.capture.gifFpsDesc')}>
+              <Segmented
+                value={String(c.gifFps)}
+                options={['10', '15', '20', '30'].map((v) => ({ value: v, label: `${v} fps` }))}
+                onChange={(v) => set((d) => void (d.capture.gifFps = Number(v)))}
+              />
+            </Row>
+            <Row title={t('settings.capture.gifCursor')}>
+              <Switch checked={c.gifCursor} onChange={(v) => set((d) => void (d.capture.gifCursor = v))} />
+            </Row>
             <FrameStyleRows name={t('settings.frame.captureName')} value={c.frame} onChange={(v) => set((d) => void (d.capture.frame = v))} />
             <Row title={t('settings.capture.magnifier')}>
               <Switch checked={c.showMagnifier} onChange={(v) => set((d) => void (d.capture.showMagnifier = v))} />

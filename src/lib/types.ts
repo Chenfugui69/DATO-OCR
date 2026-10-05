@@ -122,6 +122,8 @@ export interface CaptureSettings {
   ocrInstant: boolean;
   instantAction: 'select' | 'copy' | 'save';
   instantCursor: boolean;
+  gifFps: number;
+  gifCursor: boolean;
   frame: FrameStyle;
   ocrFrame: FrameStyle;
   showMagnifier: boolean;
@@ -179,7 +181,7 @@ export interface AppInfo {
 // ───────────────────────── 截图 ─────────────────────────
 
 export type CaptureIntent = 'normal' | 'ocr' | 'longshot' | 'translate';
-export type FinishAction = 'copy' | 'save' | 'pin' | 'ocr' | 'translate' | 'longshot' | 'ai';
+export type FinishAction = 'copy' | 'save' | 'pin' | 'ocr' | 'translate' | 'longshot' | 'ai' | 'gif';
 
 export interface SessionInfo {
   sessionId: number;
@@ -190,6 +192,19 @@ export interface SessionInfo {
   cursor: [number, number] | null;
   hasFocus: boolean;
   settings: CaptureSettings;
+}
+
+/** GIF 录制开始 / 结束（rect 是本屏局部物理坐标） */
+export interface GifStateEvent {
+  active: boolean;
+  monitorId: number;
+  rect: PhysicalRect;
+}
+
+export interface GifProgress {
+  elapsedMs: number;
+  maxMs: number;
+  frames: number;
 }
 
 export interface LongshotStateEvent {

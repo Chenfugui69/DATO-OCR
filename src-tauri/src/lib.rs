@@ -17,6 +17,7 @@ mod commands;
 mod editor;
 mod error;
 mod events;
+mod gif_record;
 mod hotkeys;
 mod image_store;
 mod imaging;
@@ -86,6 +87,9 @@ pub fn run() {
             commands::capture::longshot_set_regions,
             commands::capture::longshot_finish,
             commands::capture::longshot_abort,
+            commands::capture::gif_set_regions,
+            commands::capture::gif_finish,
+            commands::capture::gif_cancel,
             commands::capture::longshot_undo,
             commands::capture::pin_info,
             commands::capture::pin_close,

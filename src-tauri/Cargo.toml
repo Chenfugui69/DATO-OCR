@@ -32,6 +32,8 @@ tracing-appender = "0.2"
 # 抓屏（Apache-2.0）。必须开 wgc：默认 GDI 路径在 4K 屏上要 260ms+。
 xcap = { version = "0.9", features = ["wgc"] }
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "bmp"] }
+# GIF 录制的编码（MIT / Apache-2.0；调色板量化用的 color_quant 是 MIT）
+gif = "0.14"
 
 # 数据库：bundled 静态链接 SQLite（含 FTS5）
 rusqlite = { version = "0.32", features = ["bundled"] }

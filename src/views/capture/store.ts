@@ -7,15 +7,16 @@
 //   editing  编辑态：选区确定，工具条出现
 //   passive  另一块屏上已有选区，本屏只显示遮罩
 //   longshot 长截图采集中（遮罩鼠标穿透，露出真实桌面）
+//   gif      GIF 录制中（同上）
 
 import { create } from 'zustand';
 
-import type { LongshotProgress, SessionInfo } from '@/lib/types';
+import type { GifProgress, LongshotProgress, SessionInfo } from '@/lib/types';
 import { defaultToolOptions, type Tool, type ToolOptions } from '@/views/annotate/model';
 
 import type { Point, Rect } from './geometry';
 
-export type Phase = 'idle' | 'detect' | 'pressing' | 'selecting' | 'editing' | 'passive' | 'longshot' | 'longshot-other';
+export type Phase = 'idle' | 'detect' | 'pressing' | 'selecting' | 'editing' | 'passive' | 'longshot' | 'longshot-other' | 'gif' | 'gif-other';
 
 export interface OverlayState {
   session: SessionInfo | null;
@@ -30,6 +31,7 @@ export interface OverlayState {
   colorFormat: 'hex' | 'rgb' | 'hsl';
   cursorStyle: string;
   longshot: LongshotProgress | null;
+  gif: GifProgress | null;
   busy: boolean;
   /** 原位翻译进行中 */
   translating: boolean;
@@ -51,6 +53,7 @@ export const initialOverlay = (): Omit<OverlayState, 'options'> => ({
   colorFormat: 'hex',
   cursorStyle: 'crosshair',
   longshot: null,
+  gif: null,
   busy: false,
   translating: false,
   showOriginal: false,

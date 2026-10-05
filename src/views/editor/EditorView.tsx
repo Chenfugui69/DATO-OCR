@@ -156,7 +156,7 @@ export default function EditorView() {
   const onAction = (id: ActionId) => {
     if (id === 'cancel') void getCurrentWindow().close();
     else if (id === 'done') void done();
-    else if (id !== 'longshot') void finish(id);
+    else if (id !== 'longshot' && id !== 'gif') void finish(id);
   };
 
   useEffect(() => {

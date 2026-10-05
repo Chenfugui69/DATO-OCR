@@ -88,6 +88,24 @@ pub async fn longshot_set_regions(app: AppHandle, regions: Vec<PhysicalRect>) ->
 }
 
 #[tauri::command]
+pub async fn gif_set_regions(regions: Vec<PhysicalRect>) -> AppResult<()> {
+    crate::gif_record::set_regions(regions);
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn gif_finish() -> AppResult<()> {
+    crate::gif_record::finish();
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn gif_cancel() -> AppResult<()> {
+    crate::gif_record::cancel();
+    Ok(())
+}
+
+#[tauri::command]
 pub async fn longshot_finish(app: AppHandle) -> AppResult<()> {
     blocking(move || {
         longshot::finish(&app);

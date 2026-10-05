@@ -10,6 +10,8 @@ pub const CAPTURE_HOTKEY: &str = "capture-hotkey";
 
 pub const LONGSHOT_PROGRESS: &str = "longshot-progress";
 pub const LONGSHOT_STATE: &str = "longshot-state";
+pub const GIF_STATE: &str = "gif-state";
+pub const GIF_PROGRESS: &str = "gif-progress";
 
 pub const CLIPBOARD_CHANGED: &str = "clipboard-changed";
 pub const CLIPBOARD_PANEL_SHOW: &str = "clipboard-panel-show";

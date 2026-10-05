@@ -60,6 +60,9 @@ pub fn capture_monitor(id: MonitorId) -> AppResult<RgbaImage> {
     sys::capture::capture_monitor(id)
 }
 
+/// 连续录一块屏（GIF 用）。`next` 取新画面，画面不变时超时返回 None；drop 时停止。
+pub use sys::capture::ScreenRecorder;
+
 /// 预先支付首次抓屏的设备初始化开销（冷 137ms vs 热 49ms），结果丢弃。
 pub fn warm_up_capture() {
     sys::capture::warm_up()

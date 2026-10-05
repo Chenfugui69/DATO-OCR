@@ -162,6 +162,10 @@ pub struct CaptureSettings {
     pub instant_action: String,
     /// 瞬间截屏把鼠标指针也画进去
     pub instant_cursor: bool,
+    /// GIF 录制的帧率
+    pub gif_fps: u32,
+    /// GIF 录制把鼠标指针也录进去
+    pub gif_cursor: bool,
     /// 普通截图的选区框样式
     pub frame: FrameStyle,
     /// 截图识字（F3）的选区框样式，默认白色圆角
@@ -195,6 +199,8 @@ impl Default for CaptureSettings {
             ocr_instant: true,
             instant_action: "select".into(),
             instant_cursor: true,
+            gif_fps: 15,
+            gif_cursor: true,
             frame: FrameStyle::default(),
             ocr_frame: FrameStyle {
                 color: "#FFFFFF".into(),
@@ -605,6 +611,7 @@ impl Settings {
             c.file_name_template = DEFAULT_FILE_NAME.into();
         }
         c.mask_opacity = c.mask_opacity.clamp(0.0, 0.9);
+        c.gif_fps = c.gif_fps.clamp(5, 30);
         c.ocr_mask_opacity = c.ocr_mask_opacity.clamp(0.0, 0.9);
         if !matches!(c.instant_action.as_str(), "select" | "copy" | "save") {
             c.instant_action = "select".into();

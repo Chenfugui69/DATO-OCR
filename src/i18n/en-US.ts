@@ -41,7 +41,7 @@ const enUS: Dict = {
     bold: 'Bold',
     customColor: 'Custom color',
   },
-  actions: { ocr: 'Recognize text', translate: 'Translate', ai: 'Ask AI', longshot: 'Scrolling capture', pin: 'Pin', save: 'Save', cancel: 'Cancel', done: 'Done' },
+  actions: { ocr: 'Recognize text', translate: 'Translate', ai: 'Ask AI', longshot: 'Scrolling capture', gif: 'Record GIF', pin: 'Pin', save: 'Save', cancel: 'Cancel', done: 'Done' },
   capture: {
     translating: 'Recognizing and translating…',
     translated: 'Translation',
@@ -56,6 +56,7 @@ const enUS: Dict = {
     },
     preparing: 'Preparing blur brush…',
   },
+  gif: { recording: 'Recording', done: 'Done' },
   longshot: {
     start: 'Scroll the mouse wheel to start',
     collecting: 'Keep scrolling · {{frames}} frames · {{height}}px',
@@ -284,6 +285,9 @@ const enUS: Dict = {
       instantSave: 'Save the whole screen',
       instantCursor: 'Include the mouse pointer in instant captures',
       instantCursorDesc: 'Draws the pointer as it looked at that moment',
+      gifFps: 'GIF frame rate',
+      gifFpsDesc: 'Use "Record GIF" on the capture toolbar (Ctrl+G). Higher is smoother but bigger; up to 60 seconds',
+      gifCursor: 'Record the mouse pointer in GIFs',
       rightClick: 'Right click',
       rightClickExit: 'Exit capture',
       rightClickCancel: 'Clear selection first',

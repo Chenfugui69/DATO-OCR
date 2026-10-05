@@ -337,3 +337,57 @@ html[data-view='capture'] #root {
   margin: 0 4px;
   background: var(--cn-separator);
 }
+
+/* ── GIF 录制 ── */
+.gif-frame {
+  position: absolute;
+  border: 2px solid #ff3b30;
+  border-radius: 3px;
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.35), 0 0 18px rgba(255, 59, 48, 0.35);
+  pointer-events: none;
+}
+.gif-bar {
+  position: absolute;
+  left: 0;
+  top: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 44px;
+  padding: 0 6px 0 14px;
+  border-radius: var(--cn-radius-xl);
+  font: var(--cn-text-body);
+  color: var(--cn-label);
+  white-space: nowrap;
+}
+.gif-bar__dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #ff3b30;
+  box-shadow: 0 0 0 3px rgba(255, 59, 48, 0.25);
+  animation: gif-pulse 1.2s ease-in-out infinite;
+}
+@keyframes gif-pulse {
+  50% {
+    opacity: 0.35;
+  }
+}
+.gif-bar__label {
+  color: var(--cn-label-secondary);
+}
+.gif-bar__time {
+  min-width: 92px;
+  font: 600 14px/1 var(--cn-font-sans);
+}
+.gif-bar__time small {
+  font-weight: 400;
+  color: var(--cn-label-tertiary);
+}
+.gif-bar__time.is-warn {
+  color: #ff3b30;
+}
+.gif-bar__actions {
+  display: flex;
+  gap: 4px;
+}

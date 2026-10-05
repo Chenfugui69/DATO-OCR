@@ -9,6 +9,7 @@ import {
   Circle,
   Download,
   Grid2x2,
+  ImagePlay,
   Languages,
   Pencil,
   Pin,
@@ -41,13 +42,14 @@ export const TOOL_ICONS: Record<Tool, LucideIcon> = {
 export const TOOL_KEYS: Record<Tool, string> = { rect: 'R', ellipse: 'O', arrow: 'A', pen: 'P', mosaic: 'M', text: 'T' };
 const TOOLS: Tool[] = ['rect', 'ellipse', 'arrow', 'pen', 'mosaic', 'text'];
 
-export type ActionId = 'ocr' | 'translate' | 'ai' | 'longshot' | 'pin' | 'save' | 'cancel' | 'done';
+export type ActionId = 'ocr' | 'translate' | 'ai' | 'longshot' | 'gif' | 'pin' | 'save' | 'cancel' | 'done';
 
 const ACTION_ICONS: Record<ActionId, LucideIcon> = {
   ocr: ScanText,
   translate: Languages,
   ai: Sparkles,
   longshot: ScrollText,
+  gif: ImagePlay,
   pin: Pin,
   save: Download,
   cancel: X,
@@ -59,6 +61,7 @@ const ACTION_KEYS: Record<ActionId, string> = {
   translate: 'Ctrl+T',
   ai: '',
   longshot: 'F2',
+  gif: 'Ctrl+G',
   pin: 'Ctrl+P',
   save: 'Ctrl+S',
   cancel: 'Esc',

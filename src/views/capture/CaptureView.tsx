@@ -15,7 +15,7 @@ import { useTranslation } from 'react-i18next';
 import { broadcast, on } from '@/lib/events';
 import { formatColor } from '@/lib/format';
 import { useElementSize } from '@/lib/hooks';
-import { capture, reportError } from '@/lib/ipc';
+import { capture, gif, reportError } from '@/lib/ipc';
 import { shotUrl, windowLabel } from '@/lib/platform';
 import type { CaptureIntent, FinishAction, FrameStyle } from '@/lib/types';
 import { Spinner } from '@/ui/controls';
@@ -52,6 +52,7 @@ import {
   type Rect,
   type SnapLines,
 } from './geometry';
+import { GifUI } from './GifUI';
 import { LongshotUI } from './LongshotUI';
 import { Magnifier } from './Magnifier';
 import { get, initialOverlay, set, useOverlay } from './store';
@@ -405,9 +406,12 @@ function onPointerDown(e: React.PointerEvent) {
   else if (contains(sel, p)) drag = { kind: 'move', at: p, orig: sel };
 }
 
+/** 遮罩鼠标穿透、露出真实桌面的那几个状态（长截图、GIF 录制） */
+const isLive = (phase: string) => phase === 'longshot' || phase === 'longshot-other' || phase === 'gif' || phase === 'gif-other';
+
 function onPointerMove(e: React.PointerEvent) {
   const st = get();
-  if (!st.session || st.phase === 'idle' || st.phase === 'longshot' || st.phase === 'longshot-other') return;
+  if (!st.session || st.phase === 'idle' || isLive(st.phase)) return;
   const p = toPx(e);
   set({ cursor: p });
 
@@ -550,7 +554,7 @@ function nudge(dx: number, dy: number, resize: boolean) {
 
 function onKeyDown(e: KeyboardEvent) {
   const st = get();
-  if (!st.session || st.phase === 'idle' || st.phase === 'longshot' || st.phase === 'longshot-other') return;
+  if (!st.session || st.phase === 'idle' || isLive(st.phase)) return;
   if (engine.text) return; // 文字输入框自己处理
   const key = e.key;
   const ctrl = e.ctrlKey || e.metaKey;
@@ -595,6 +599,7 @@ function onKeyDown(e: KeyboardEvent) {
   }
   if (ctrl && key.toLowerCase() === 's') return void (e.preventDefault(), finish('save'));
   if (ctrl && key.toLowerCase() === 'p') return void (e.preventDefault(), finish('pin'));
+  if (ctrl && key.toLowerCase() === 'g') return void (e.preventDefault(), finish('gif'));
   if (ctrl && key.toLowerCase() === 't') return void (e.preventDefault(), translateInPlace());
   if (ctrl && key.toLowerCase() === 'c') return void (e.preventDefault(), finish('copy'));
 
@@ -784,7 +789,7 @@ function Toolbars({ rect, s, viewport }: { rect: Rect; s: number; viewport: { wi
         canUndo={engine.canUndo}
         onUndo={() => engine.undo()}
         actions={[
-          ['ocr', 'translate', 'ai', 'longshot', 'pin'],
+          ['ocr', 'translate', 'ai', 'longshot', 'gif', 'pin'],
           ['save', 'cancel', 'done'],
         ]}
         onAction={onAction}
@@ -858,7 +863,20 @@ export default function CaptureView() {
         } else set({ phase: 'longshot-other' });
       }),
       on('longshot-progress', (p) => set({ longshot: p })),
+      on('gif-state', (p) => {
+        if (!p.active) return;
+        if (p.monitorId === MONITOR_ID) {
+          set({ phase: 'gif', selection: p.rect, tool: null, gif: null });
+          engine.reset();
+        } else set({ phase: 'gif-other' });
+      }),
+      on('gif-progress', (p) => set({ gif: p })),
       on('capture-hotkey', (intent) => {
+        // 录 GIF 时再按一次截图热键 = 录完
+        if (get().phase === 'gif') {
+          void gif.finish();
+          return;
+        }
         // 遮罩打开时按 F2/F3：对当前选区直接长截图/识字（全局热键先被系统截走了，由 Rust 转发过来）
         if (intent !== 'normal' && get().phase === 'editing') void finish(intent);
       }),
@@ -879,18 +897,20 @@ export default function CaptureView() {
   const opacity =
     phase === 'longshot'
       ? 0.6
+      : phase === 'gif'
+        ? 0.35
       : isTextIntent(session?.intent)
         ? (session?.settings.ocrMaskOpacity ?? 0)
         : (session?.settings.maskOpacity ?? 0.45);
   const hole =
     phase === 'detect' || phase === 'pressing'
       ? hover
-      : phase === 'selecting' || phase === 'editing' || phase === 'longshot'
+      : phase === 'selecting' || phase === 'editing' || phase === 'longshot' || phase === 'gif'
         ? selection
         : null;
-  const showMask = phase !== 'longshot-other';
+  const showMask = phase !== 'longshot-other' && phase !== 'gif-other';
   const frame = isTextIntent(session?.intent) ? session?.settings.ocrFrame : session?.settings.frame;
-  const radius = phase === 'longshot' ? 0 : (frame?.radius ?? 0);
+  const radius = phase === 'longshot' || phase === 'gif' ? 0 : (frame?.radius ?? 0);
   const showMagnifier =
     !!cursor && pixelsReady && !!pixels && session?.settings.showMagnifier !== false && (phase === 'detect' || phase === 'pressing' || phase === 'selecting');
   const pw = session?.monitor.bounds.width ?? 1;
@@ -939,6 +959,7 @@ export default function CaptureView() {
         </>
       )}
       {phase === 'longshot' && selection && <LongshotUI rect={selection} s={s} viewport={viewport} />}
+      {phase === 'gif' && selection && <GifUI rect={selection} s={s} viewport={viewport} />}
       {showMagnifier && cursor && pixels && session && (
         <Magnifier
           pixels={pixels}

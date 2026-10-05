@@ -71,6 +71,12 @@ export const capture = {
   writeText: (text: string) => call<void>('clipboard_write_text', { text }),
 };
 
+export const gif = {
+  setRegions: (regions: PhysicalRect[]) => call<void>('gif_set_regions', { regions }),
+  finish: () => call<void>('gif_finish'),
+  cancel: () => call<void>('gif_cancel'),
+};
+
 export const longshot = {
   setRegions: (regions: PhysicalRect[]) => call<void>('longshot_set_regions', { regions }),
   finish: () => call<void>('longshot_finish'),

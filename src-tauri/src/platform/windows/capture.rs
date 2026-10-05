@@ -76,6 +76,39 @@ fn enumerate() -> AppResult<Vec<(Monitor, MonitorInfo)>> {
     Ok(monitors)
 }
 
+/// 连续录屏（GIF 用）：xcap 的 WGC 帧池录制，画面有变化才来新帧，不用每帧新建一次抓屏会话
+/// （单次抓屏 4K 要 60～70ms，连续录制只要拷贝一帧的时间）。drop 时停止。
+pub struct ScreenRecorder {
+    recorder: xcap::VideoRecorder,
+    rx: std::sync::mpsc::Receiver<xcap::Frame>,
+}
+
+impl ScreenRecorder {
+    pub fn start(id: MonitorId) -> AppResult<Self> {
+        let (monitor, _) = enumerate()?
+            .into_iter()
+            .find(|(_, info)| info.id == id)
+            .ok_or_else(|| AppError::Capture(format!("显示器 {id} 已不存在")))?;
+        let (recorder, rx) = monitor.video_recorder()?;
+        recorder.start()?;
+        Ok(Self { recorder, rx })
+    }
+
+    /// 取一帧新画面（整块屏，RGBA，alpha 没有语义）。画面没变化时等到超时返回 None。
+    pub fn next(&self, timeout: std::time::Duration) -> Option<RgbaImage> {
+        let frame = self.rx.recv_timeout(timeout).ok()?;
+        RgbaImage::from_raw(frame.width, frame.height, frame.raw)
+    }
+}
+
+impl Drop for ScreenRecorder {
+    fn drop(&mut self) {
+        if let Err(err) = self.recorder.stop() {
+            tracing::debug!("停止录屏失败：{err}");
+        }
+    }
+}
+
 /// 注意：WGC 给回来的 alpha 没有语义（常年是 0）。热路径上不逐像素修它 —— 底图层和
 /// BMP 编码都忽略 alpha；真正要输出的裁剪结果由 `imaging::crop_opaque` 统一补成不透明。
 fn capture_one(monitor: &Monitor) -> AppResult<RgbaImage> {

@@ -7,6 +7,8 @@ import type {
   AiContext,
   ClipChanged,
   EditorDoc,
+  GifProgress,
+  GifStateEvent,
   LongshotProgress,
   LongshotStateEvent,
   OcrJob,
@@ -25,6 +27,8 @@ export interface EventMap {
   'capture-active-monitor': { sessionId: number; monitorId: number | null };
   'longshot-state': LongshotStateEvent;
   'longshot-progress': LongshotProgress;
+  'gif-state': GifStateEvent;
+  'gif-progress': GifProgress;
   'clipboard-changed': ClipChanged;
   'clipboard-panel-show': { style: 'bottom' | 'vertical' };
   'library-changed': null;

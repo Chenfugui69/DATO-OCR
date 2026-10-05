@@ -28,6 +28,16 @@ pub mod capture {
     pub fn capture_all() -> AppResult<Vec<(MonitorInfo, RgbaImage)>> {
         Err(todo("ScreenCaptureKit"))
     }
+    /// SCStream 连续录屏（GIF 用）
+    pub struct ScreenRecorder;
+    impl ScreenRecorder {
+        pub fn start(id: MonitorId) -> AppResult<Self> {
+            Err(todo("SCStream"))
+        }
+        pub fn next(&self, timeout: std::time::Duration) -> Option<RgbaImage> {
+            None
+        }
+    }
     pub fn capture_monitor(id: MonitorId) -> AppResult<RgbaImage> {
         Err(todo("ScreenCaptureKit"))
     }
