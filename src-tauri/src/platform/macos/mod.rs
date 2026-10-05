@@ -115,6 +115,8 @@ pub mod effects {
     pub fn set_no_activate(window: &WebviewWindow) {}
     /// contentView.layer.cornerRadius
     pub fn set_rounded(window: &WebviewWindow, rounded: bool) {}
+    /// contentView.layer.cornerRadius + masksToBounds
+    pub fn set_round_region(window: &WebviewWindow, radius: u32) {}
     /// NSWindow.setFrame(_:display:)
     pub fn set_bounds(
         window: &WebviewWindow,

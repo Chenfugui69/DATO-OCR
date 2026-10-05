@@ -479,6 +479,26 @@ pub fn ids_for_retention(conn: &Connection, days: u32, max_items: u32) -> AppRes
 }
 
 /// 数据库里引用到的全部文件（用于孤儿文件清理）。
+/// 图片条目的 (id, 原图, 缩略图)，升级缩略图用。
+pub fn image_thumbs(conn: &Connection) -> AppResult<Vec<(i64, String, String)>> {
+    let mut stmt = conn.prepare(
+        "SELECT id, file_path, thumb_path FROM clipboard_items
+         WHERE type = 'image' AND file_path IS NOT NULL AND thumb_path IS NOT NULL",
+    )?;
+    let rows = stmt
+        .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?
+        .collect::<Result<_, _>>()?;
+    Ok(rows)
+}
+
+pub fn set_thumb(conn: &Connection, id: i64, thumb: &str) -> AppResult<()> {
+    conn.execute(
+        "UPDATE clipboard_items SET thumb_path = ?1 WHERE id = ?2",
+        params![thumb, id],
+    )?;
+    Ok(())
+}
+
 pub fn referenced_files(conn: &Connection) -> AppResult<Vec<String>> {
     let mut stmt = conn.prepare(
         "SELECT file_path FROM clipboard_items WHERE file_path IS NOT NULL

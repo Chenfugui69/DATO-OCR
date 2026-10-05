@@ -19,6 +19,11 @@ use crate::{events, wm};
 pub const LABEL: &str = "clipboard";
 pub const BOTTOM_HEIGHT: f64 = 320.0;
 pub const VERTICAL_SIZE: (f64, f64) = (380.0, 620.0);
+/// 页面里面板四周留给阴影的透明边（和 panel.css 一致）：底部样式 8，竖版 6
+const BOTTOM_PAD: f64 = 8.0;
+const VERTICAL_PAD: f64 = 6.0;
+/// 悬浮样式的圆角（和 panel.css 的 --cn-radius-2xl 一致）
+const RADIUS: f64 = 16.0;
 
 static PREVIOUS: Mutex<Option<WindowHandle>> = Mutex::new(None);
 
@@ -42,9 +47,24 @@ pub fn prewarm(app: &AppHandle) {
         .inner_size(1200.0, BOTTOM_HEIGHT)
         .build();
     match built {
-        Ok(window) => platform::set_exclude_from_capture(&window, true),
+        Ok(window) => {
+            platform::set_exclude_from_capture(&window, true);
+            wm::track_glass(&window);
+            apply_material(app);
+        }
         Err(err) => tracing::warn!("创建剪贴板面板失败：{err}"),
     }
+}
+
+/// 面板材质：毛玻璃时窗口就是面板本身（不留透明边），悬浮样式裁成圆角，贴边是直角。
+/// 只能在 UI 线程调用。
+pub fn apply_material(app: &AppHandle) {
+    let Some(window) = app.get_webview_window(LABEL) else {
+        return;
+    };
+    let cb = state(app).settings.read().clipboard.clone();
+    let docked = cb.panel_style != "vertical" && cb.panel_docked;
+    wm::set_glass(&window, cb.panel_blur, if docked { 0.0 } else { RADIUS });
 }
 
 pub fn toggle(app: &AppHandle) {
@@ -55,7 +75,7 @@ pub fn toggle(app: &AppHandle) {
             return;
         };
         if window.is_visible().unwrap_or(false) {
-            let _ = window.hide();
+            hide(&app);
         } else if let Err(err) = show(&app) {
             tracing::error!("打开剪贴板面板失败：{err}");
         }
@@ -70,38 +90,72 @@ fn show(app: &AppHandle) -> AppResult<()> {
     let own = platform::native_handle(&window).ok();
     *PREVIOUS.lock() = platform::foreground_window().filter(|h| Some(h.0) != own);
 
-    let style = state(app).settings.read().clipboard.panel_style.clone();
+    let cb = state(app).settings.read().clipboard.clone();
+    let style = cb.panel_style.clone();
     if let Some(monitor) = wm::monitor_under_cursor() {
+        // 毛玻璃时窗口就是面板（材质铺满整个窗口），页面里那圈透明边要从窗口尺寸里扣掉
+        let blur = cb.panel_blur;
         if style == "vertical" {
+            let inset = if blur { VERTICAL_PAD * 2.0 } else { 0.0 };
             wm::place_on_monitor(
                 &window,
                 &monitor,
-                VERTICAL_SIZE.0,
-                VERTICAL_SIZE.1,
+                VERTICAL_SIZE.0 - inset,
+                VERTICAL_SIZE.1 - inset,
                 wm::Anchor::Cursor,
             )?;
         } else {
-            let width = f64::from(monitor.work_area.width) / monitor.scale_factor.max(0.5);
-            wm::place_on_monitor(
-                &window,
-                &monitor,
-                width,
-                BOTTOM_HEIGHT,
-                wm::Anchor::BottomFull,
-            )?;
+            let s = monitor.scale_factor.max(0.5);
+            let width = f64::from(monitor.work_area.width) / s;
+            match (cb.panel_docked, blur) {
+                // 贴边：紧贴工作区底边、整屏宽；不开毛玻璃时页面只在上面留阴影
+                (true, true) => wm::place_on_monitor(
+                    &window,
+                    &monitor,
+                    width,
+                    BOTTOM_HEIGHT - BOTTOM_PAD,
+                    wm::Anchor::BottomFull,
+                )?,
+                // 悬浮 + 毛玻璃：窗口本身四周缩进，和不开毛玻璃时的卡片位置一样
+                (false, true) => {
+                    wm::place_on_monitor(
+                        &window,
+                        &monitor,
+                        width - BOTTOM_PAD * 2.0,
+                        BOTTOM_HEIGHT - BOTTOM_PAD * 2.0,
+                        wm::Anchor::BottomFull,
+                    )?;
+                    let wa = monitor.work_area;
+                    let pad = (BOTTOM_PAD * s).round() as i32;
+                    let h = ((BOTTOM_HEIGHT - BOTTOM_PAD * 2.0) * s).round() as i32;
+                    window.set_position(tauri::PhysicalPosition::new(
+                        wa.x + pad,
+                        wa.bottom() - pad - h,
+                    ))?;
+                }
+                _ => wm::place_on_monitor(
+                    &window,
+                    &monitor,
+                    width,
+                    BOTTOM_HEIGHT,
+                    wm::Anchor::BottomFull,
+                )?,
+            }
         }
     }
     let _ = app.emit_to(LABEL, events::CLIPBOARD_PANEL_SHOW, PanelShow { style });
     window.show()?;
     window.set_focus()?;
-    platform::reveal_for_tests(&window, true);
+    // 面板开着的时候允许被截图（用户就是想截它）；藏起来时再排除 —— 不排除的隐藏窗口会被
+    // WGC 画成一块带标题栏的白块
+    platform::set_exclude_from_capture(&window, false);
     Ok(())
 }
 
 pub fn hide(app: &AppHandle) {
     if let Some(window) = app.get_webview_window(LABEL) {
         let _ = window.hide();
-        platform::reveal_for_tests(&window, false);
+        platform::set_exclude_from_capture(&window, true);
     }
 }
 

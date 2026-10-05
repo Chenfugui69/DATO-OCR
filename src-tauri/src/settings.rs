@@ -538,6 +538,10 @@ pub struct ClipboardSettings {
     pub enabled: bool,
     /// bottom | vertical
     pub panel_style: String,
+    /// 面板毛玻璃
+    pub panel_blur: bool,
+    /// 底部样式贴边：直角、紧贴屏幕底部（不贴边是四周留空的悬浮圆角卡片）
+    pub panel_docked: bool,
     pub max_text_mb: u32,
     pub max_image_mb: u32,
     /// 尊重应用的"不要记录"标记（密码管理器）。默认关闭 = 全量记录（铁律 6）
@@ -558,6 +562,8 @@ impl Default for ClipboardSettings {
         Self {
             enabled: true,
             panel_style: "bottom".into(),
+            panel_blur: false,
+            panel_docked: false,
             max_text_mb: 5,
             max_image_mb: 30,
             respect_privacy_flag: false,

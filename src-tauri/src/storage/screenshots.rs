@@ -228,6 +228,25 @@ fn reindex(conn: &Connection, id: i64) -> AppResult<()> {
     fts_upsert(conn, "screenshots_fts", id, &text)
 }
 
+/// 截图的 (id, 原图, 缩略图)，升级缩略图用。
+pub fn image_thumbs(conn: &Connection) -> AppResult<Vec<(i64, String, String)>> {
+    let mut stmt = conn.prepare(
+        "SELECT id, file_path, thumb_path FROM screenshots WHERE thumb_path IS NOT NULL",
+    )?;
+    let rows = stmt
+        .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?
+        .collect::<Result<_, _>>()?;
+    Ok(rows)
+}
+
+pub fn set_thumb(conn: &Connection, id: i64, thumb: &str) -> AppResult<()> {
+    conn.execute(
+        "UPDATE screenshots SET thumb_path = ?1 WHERE id = ?2",
+        params![thumb, id],
+    )?;
+    Ok(())
+}
+
 pub fn referenced_files(conn: &Connection) -> AppResult<Vec<String>> {
     let mut stmt = conn.prepare(
         "SELECT file_path FROM screenshots UNION ALL SELECT thumb_path FROM screenshots WHERE thumb_path IS NOT NULL",

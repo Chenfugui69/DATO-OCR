@@ -376,7 +376,7 @@ fn classify(
         let rel = st.paths.new_rel_file("clipboard", "png")?;
         std::fs::write(st.paths.abs(&rel), &bytes)?;
         let thumb = thumb_rel(&rel);
-        let thumb = imaging::write_thumbnail(img, 320, &st.paths.abs(&thumb))
+        let thumb = imaging::write_card_thumbnail(img, &st.paths.abs(&thumb))
             .ok()
             .map(|_| thumb);
         return Ok(Some(NewClip {

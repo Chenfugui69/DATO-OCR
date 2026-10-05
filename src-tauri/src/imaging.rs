@@ -111,20 +111,42 @@ pub fn composite_png(base: &mut RgbaImage, png: &[u8], x: i64, y: i64) -> AppRes
     Ok(())
 }
 
-pub fn thumbnail(img: &RgbaImage, max_side: u32) -> RgbaImage {
+/// 卡片缩略图的短边下限、长边上限（物理像素）。
+///
+/// 剪贴板、截图库的卡片都按"铺满裁切"（object-fit: cover）显示，看得清不清楚取决于**短边**：
+/// 以前按长边 320 缩，一张 2335×497 的宽截图缩出来只有 320×68，铺满 4K 屏上二百多像素高的卡片
+/// 要放大三倍多，糊成一片。卡片图片区在 4K@150% 上大约 234×225 物理像素，200% 屏 300 左右，
+/// 短边留 400 够用；超长图再按长边封顶，免得缩略图比原图还占地方。
+pub const CARD_THUMB_SHORT: u32 = 400;
+pub const CARD_THUMB_LONG: u32 = 1600;
+
+/// 按短边缩（至少 `min_short`），长边超过 `max_long` 再按长边缩。原图本来就小就不放大。
+pub fn card_thumbnail(img: &RgbaImage, min_short: u32, max_long: u32) -> RgbaImage {
     let (w, h) = img.dimensions();
-    if w <= max_side && h <= max_side {
+    let (short, long) = (w.min(h).max(1), w.max(h).max(1));
+    let mut scale = f64::from(min_short) / f64::from(short);
+    if f64::from(long) * scale > f64::from(max_long) {
+        scale = f64::from(max_long) / f64::from(long);
+    }
+    if scale >= 1.0 {
         return img.clone();
     }
-    let scale = f64::from(max_side) / f64::from(w.max(h));
     let tw = ((f64::from(w) * scale).round() as u32).max(1);
     let th = ((f64::from(h) * scale).round() as u32).max(1);
     image::imageops::thumbnail(img, tw, th)
 }
 
-/// 缩略图：最长边 `max_side`，JPEG 质量 80。透明处垫白底。
-pub fn write_thumbnail(img: &RgbaImage, max_side: u32, path: &Path) -> AppResult<()> {
-    let mut thumb = thumbnail(img, max_side);
+/// 卡片缩略图（见 `card_thumbnail`），JPEG 质量 90（截图里的字压得太狠会起毛边）。
+pub fn write_card_thumbnail(img: &RgbaImage, path: &Path) -> AppResult<()> {
+    write_jpeg_flat(
+        card_thumbnail(img, CARD_THUMB_SHORT, CARD_THUMB_LONG),
+        path,
+        90,
+    )
+}
+
+/// 透明处垫白底后存 JPEG。
+fn write_jpeg_flat(mut thumb: RgbaImage, path: &Path, quality: u8) -> AppResult<()> {
     for p in thumb.pixels_mut() {
         if p[3] != 255 {
             let a = u32::from(p[3]);
@@ -134,7 +156,7 @@ pub fn write_thumbnail(img: &RgbaImage, max_side: u32, path: &Path) -> AppResult
             p[3] = 255;
         }
     }
-    std::fs::write(path, encode_jpeg(&thumb, 80)?)?;
+    std::fs::write(path, encode_jpeg(&thumb, quality)?)?;
     Ok(())
 }
 
@@ -169,5 +191,22 @@ mod tests {
         let c = crop(&img, PhysicalRect::new(90, 40, 50, 50)).unwrap();
         assert_eq!(c.dimensions(), (10, 10));
         assert!(crop(&img, PhysicalRect::new(200, 0, 10, 10)).is_err());
+    }
+}
+
+#[cfg(test)]
+mod card_thumb_tests {
+    use super::*;
+
+    #[test]
+    fn wide_screenshot_keeps_enough_height() {
+        let img = RgbaImage::new(2335, 497);
+        let t = card_thumbnail(&img, CARD_THUMB_SHORT, CARD_THUMB_LONG);
+        // 按长边封顶：1600 × 341（以前按长边 320 缩只剩 68 像素高）
+        assert_eq!(t.dimensions(), (1600, 341));
+        let img = RgbaImage::new(1600, 900);
+        assert_eq!(card_thumbnail(&img, 400, 1600).dimensions(), (711, 400));
+        let small = RgbaImage::new(300, 200);
+        assert_eq!(card_thumbnail(&small, 400, 1600).dimensions(), (300, 200));
     }
 }

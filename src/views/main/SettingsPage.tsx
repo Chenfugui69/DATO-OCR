@@ -299,6 +299,14 @@ export function SettingsPage({ section }: { section: string | null }) {
                 onChange={(v) => set((d) => void (d.clipboard.panelStyle = v))}
               />
             </Row>
+            {cb.panelStyle === 'bottom' && (
+              <Row title={t('settings.clipboard.docked')} desc={t('settings.clipboard.dockedDesc')}>
+                <Switch checked={cb.panelDocked} onChange={(v) => set((d) => void (d.clipboard.panelDocked = v))} />
+              </Row>
+            )}
+            <Row title={t('settings.clipboard.blur')} desc={t('settings.clipboard.blurDesc')}>
+              <Switch checked={cb.panelBlur} onChange={(v) => set((d) => void (d.clipboard.panelBlur = v))} />
+            </Row>
             <Row title={t('settings.clipboard.respectPrivacy')} desc={t('settings.clipboard.respectPrivacyDesc')}>
               <Switch checked={cb.respectPrivacyFlag} onChange={(v) => set((d) => void (d.clipboard.respectPrivacyFlag = v))} />
             </Row>

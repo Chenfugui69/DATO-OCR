@@ -14,6 +14,7 @@ import { useTranslation } from 'react-i18next';
 
 import { useEvent } from '@/lib/events';
 import { clipboard, system, translate } from '@/lib/ipc';
+import { useSettings } from '@/lib/settings';
 import { assetUrl } from '@/lib/platform';
 import { useClipItems, useLiveInvalidation } from '@/lib/queries';
 import type { ClipDetail, ClipItem, ClipType } from '@/lib/types';
@@ -51,6 +52,11 @@ export default function PanelView() {
   const qc = useQueryClient();
   useLiveInvalidation();
   const [style, setStyle] = useState<'bottom' | 'vertical'>('bottom');
+  const settings = useSettings();
+  const blur = !!settings?.clipboard.panelBlur;
+  const docked = style === 'bottom' && !!settings?.clipboard.panelDocked;
+  const blurRef = useRef(blur);
+  blurRef.current = blur;
   const [visible, setVisible] = useState(false);
   const [keyword, setKeyword] = useState('');
   const [debounced, setDebounced] = useState('');
@@ -133,11 +139,14 @@ export default function PanelView() {
     if (hiding.current) return;
     hiding.current = true;
     setVisible(false);
-    // 退出比进入快（规格 06 §2.6），从哪来回哪去
-    window.setTimeout(() => {
-      void clipboard.hidePanel();
-      hiding.current = false;
-    }, 200);
+    // 退出比进入快（规格 06 §2.6），从哪来回哪去。毛玻璃时窗口本身就是面板，没法滑，直接藏
+    window.setTimeout(
+      () => {
+        void clipboard.hidePanel();
+        hiding.current = false;
+      },
+      blurRef.current ? 0 : 200,
+    );
   }, []);
 
   useEvent('clipboard-panel-show', (p) => {
@@ -269,7 +278,7 @@ export default function PanelView() {
   }, [visible, items, selected, horizontal, preview, filter, hide, paste, openPreview, qc, t]);
 
   return (
-    <div className={clsx('panel-root', `panel-root--${style}`)} data-visible={visible}>
+    <div className={clsx('panel-root', `panel-root--${style}`, docked && 'panel-root--docked', blur && 'panel-root--blur')} data-visible={visible}>
       <div className="panel cn-glass-chrome">
         <header className="panel__bar">
           <SearchField

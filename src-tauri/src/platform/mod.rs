@@ -151,6 +151,11 @@ pub fn set_bounds(
     sys::effects::set_bounds(window, x, y, width, height)
 }
 
+/// 把窗口裁成圆角矩形（物理像素半径，0 = 不裁）。
+pub fn set_round_region(window: &WebviewWindow, radius: u32) {
+    sys::effects::set_round_region(window, radius);
+}
+
 /// 系统圆角（Win11）。
 pub fn set_rounded(window: &WebviewWindow, rounded: bool) {
     sys::effects::set_rounded(window, rounded);

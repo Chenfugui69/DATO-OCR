@@ -503,7 +503,10 @@ html[data-view='translate'], html[data-view='translate'] body { background: tran
              --r: min(var(--pop-radius), 16px); }
 [data-theme='dark'] .pop-shell { --pop-hi: rgba(46,46,48,var(--pop-alpha)); --pop-lo: rgba(30,30,32,var(--pop-alpha)); }
 /* 毛玻璃：系统亚克力在窗口背后，圆角和阴影都是系统的，这里只铺一层半透明的色调 */
-.pop-shell.is-blur { border-radius: 0; box-shadow: none; animation: none; --r: 12px; }
+/* 毛玻璃：系统亚克力在窗口背后，窗口已经被 Rust 裁成同样的圆角（裁出来的边没有抗锯齿），
+   这里不画阴影，只在边上描一圈细线，把圆角的边缘描顺 */
+.pop-shell.is-blur { box-shadow: inset 0 0 0 0.5px rgba(255,255,255,0.16); animation: none; }
+[data-theme='light'] .pop-shell.is-blur { box-shadow: inset 0 0 0 0.5px rgba(0,0,0,0.14); }
 .pop-shell.is-drawer { flex-direction: column; }
 
 .pop-pane { position: relative; min-width: 0; min-height: 0; display: flex; flex-direction: column; }

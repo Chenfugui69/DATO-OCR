@@ -22,7 +22,7 @@ pub fn add(
     let size = bytes.len() as u64;
     std::fs::write(st.paths.abs(&rel), &bytes)?;
     let thumb = thumb_rel(&rel);
-    let thumb = match imaging::write_thumbnail(image, 480, &st.paths.abs(&thumb)) {
+    let thumb = match imaging::write_card_thumbnail(image, &st.paths.abs(&thumb)) {
         Ok(()) => Some(thumb),
         Err(err) => {
             tracing::warn!("生成截图缩略图失败：{err}");

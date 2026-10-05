@@ -164,6 +164,58 @@ pub fn apply_window_effects(app: &AppHandle, window: &WebviewWindow) {
     }
 }
 
+/// 毛玻璃面板的圆角半径（逻辑像素），按窗口标签存；窗口大小一变就按它重新裁。
+static GLASS: parking_lot::Mutex<Option<std::collections::HashMap<String, f64>>> =
+    parking_lot::Mutex::new(None);
+
+/// 浮动面板的材质：
+/// - 毛玻璃：系统亚克力（背后内容实时模糊）。系统圆角只有 8px 一档，所以关掉系统圆角、自己把窗口
+///   裁成用户要的半径（`radius`，0 = 直角）。裁出来的边没有抗锯齿，页面在边上画一圈细线盖一盖
+/// - 不开毛玻璃：窗口全透明，圆角和阴影由页面自己画（四周留了透明边）
+///
+/// 实测（Win11 24H2）不能用 Blur（老的 ACCENT_ENABLE_BLURBEHIND，配 WebView2 背后是黑的），
+/// 也不能开系统阴影（会把窗框延伸进来、窗口变大）。亚克力自带色调，页面色调要淡；窗口失去焦点时
+/// 系统会把亚克力换成纯色，这是系统行为。只能在 UI 线程调用。
+pub fn set_glass(window: &WebviewWindow, blur: bool, radius: f64) {
+    let effects = blur.then(|| EffectsBuilder::new().effect(Effect::Acrylic).build());
+    if let Err(err) = window.set_effects(effects) {
+        tracing::warn!(label = window.label(), "设置面板材质失败：{err}");
+    }
+    platform::set_rounded(window, false);
+    let r = if blur { radius.max(0.0) } else { 0.0 };
+    GLASS
+        .lock()
+        .get_or_insert_with(Default::default)
+        .insert(window.label().to_string(), r);
+    apply_region(window, r);
+}
+
+fn apply_region(window: &WebviewWindow, radius: f64) {
+    let s = window.scale_factor().unwrap_or(1.0);
+    platform::set_round_region(window, (radius * s).round() as u32);
+}
+
+/// 面板窗口创建时调一次：窗口大小、缩放一变就按记下的半径重新裁圆角。
+pub fn track_glass(window: &WebviewWindow) {
+    let w = window.clone();
+    window.on_window_event(move |event| {
+        if matches!(
+            event,
+            tauri::WindowEvent::Resized(_) | tauri::WindowEvent::ScaleFactorChanged { .. }
+        ) {
+            // 先把半径取出来再裁：裁的时候系统可能同步发回窗口消息
+            let r = GLASS
+                .lock()
+                .as_ref()
+                .and_then(|m| m.get(w.label()).copied())
+                .unwrap_or(0.0);
+            if r > 0.0 {
+                apply_region(&w, r);
+            }
+        }
+    });
+}
+
 /// 带系统材质的窗口标签。
 const GLASS_WINDOWS: &[&str] = &[MAIN, "ocr", "editor"];
 

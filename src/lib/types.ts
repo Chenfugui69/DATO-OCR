@@ -83,6 +83,10 @@ export interface Settings {
   clipboard: {
     enabled: boolean;
     panelStyle: 'bottom' | 'vertical';
+    /** 面板毛玻璃 */
+    panelBlur: boolean;
+    /** 底部样式贴边：直角、紧贴屏幕底部 */
+    panelDocked: boolean;
     maxTextMb: number;
     maxImageMb: number;
     respectPrivacyFlag: boolean;

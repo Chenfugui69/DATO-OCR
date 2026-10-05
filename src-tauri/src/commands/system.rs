@@ -53,10 +53,19 @@ pub async fn settings_set(app: AppHandle, settings: Settings) -> AppResult<Setti
             tracing::warn!("设置开机自启失败：{err}");
         }
     }
+    if before.clipboard.panel_blur != next.clipboard.panel_blur
+        || before.clipboard.panel_docked != next.clipboard.panel_docked
+        || before.clipboard.panel_style != next.clipboard.panel_style
+    {
+        let ui = app.clone();
+        app.run_on_main_thread(move || crate::clipboard::panel::apply_material(&ui))?;
+    }
     if before.translate.selection != next.translate.selection {
         translate::selection::reconfigure(&app);
     }
-    if before.translate.popup.blur != next.translate.popup.blur {
+    if before.translate.popup.blur != next.translate.popup.blur
+        || before.translate.popup.radius != next.translate.popup.radius
+    {
         let ui = app.clone();
         app.run_on_main_thread(move || translate::selection::apply_popup_material(&ui))?;
     }

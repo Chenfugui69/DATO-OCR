@@ -220,7 +220,7 @@ export function TranslateSettingsGroups({ settings, set }: { settings: Settings;
             onChange={(v) => set((d) => void (d.translate.popup.opacity = v / 100))}
           />
         </Row>
-        <Row title={t('settings.popup.radius')} desc={pop.blur ? t('settings.popup.radiusDesc') : undefined}>
+        <Row title={t('settings.popup.radius')}>
           <span className="set-row__value cn-numeric">{pop.radius}px</span>
           <Slider value={pop.radius} min={0} max={24} onChange={(v) => set((d) => void (d.translate.popup.radius = v))} />
         </Row>

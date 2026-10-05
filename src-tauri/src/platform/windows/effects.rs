@@ -7,10 +7,13 @@ use windows::Win32::UI::WindowsAndMessaging::{
     SWP_SHOWWINDOW, SW_HIDE, SW_SHOWNOACTIVATE, WDA_EXCLUDEFROMCAPTURE, WDA_NONE, WS_EX_NOACTIVATE,
 };
 
+use windows::Win32::Foundation::RECT;
 use windows::Win32::Graphics::Dwm::{
     DwmSetWindowAttribute, DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_DONOTROUND, DWMWCP_ROUND,
     DWM_WINDOW_CORNER_PREFERENCE,
 };
+use windows::Win32::Graphics::Gdi::{CreateRoundRectRgn, DeleteObject, SetWindowRgn};
+use windows::Win32::UI::WindowsAndMessaging::GetWindowRect;
 
 use super::util::{handle_of, hwnd};
 use crate::error::AppResult;
@@ -65,6 +68,28 @@ pub fn set_rounded(window: &WebviewWindow, rounded: bool) {
     };
     if let Err(err) = result {
         tracing::debug!(label = window.label(), "设置窗口圆角失败：{err}");
+    }
+}
+
+/// 把窗口裁成圆角矩形（`radius` 物理像素，0 = 不裁）。毛玻璃面板用：系统圆角只有 8px 一档，
+/// 用户要别的半径只能自己裁。窗口大小变了要重新裁（`wm::track_glass`）。
+pub fn set_round_region(window: &WebviewWindow, radius: u32) {
+    let Ok(h) = window.hwnd() else { return };
+    // SAFETY: h 是存活的 Tauri 窗口。SetWindowRgn 成功后区域归系统所有，失败才由我们释放。
+    unsafe {
+        if radius == 0 {
+            let _ = SetWindowRgn(h, None, true);
+            return;
+        }
+        let mut rc = RECT::default();
+        if GetWindowRect(h, &mut rc).is_err() {
+            return;
+        }
+        let d = (radius * 2) as i32;
+        let rgn = CreateRoundRectRgn(0, 0, rc.right - rc.left + 1, rc.bottom - rc.top + 1, d, d);
+        if SetWindowRgn(h, Some(rgn), true) == 0 {
+            let _ = DeleteObject(rgn.into());
+        }
     }
 }
 

@@ -15,7 +15,6 @@ use std::time::{Duration, Instant};
 
 use parking_lot::Mutex;
 use serde::Serialize;
-use tauri::window::{Effect, EffectsBuilder};
 use tauri::{AppHandle, Emitter, Manager};
 
 use crate::error::AppResult;
@@ -140,36 +139,22 @@ pub fn prewarm(app: &AppHandle) {
             .inner_size(460.0, 300.0)
             .build();
         match built {
-            Ok(_) => apply_popup_material(app),
+            Ok(window) => {
+                wm::track_glass(&window);
+                apply_popup_material(app);
+            }
             Err(err) => tracing::warn!("创建翻译气泡失败：{err}"),
         }
     }
 }
 
-/// 面板材质：毛玻璃用系统的亚克力（背后内容实时模糊），圆角交给系统（Win11 固定 8px）；
-/// 不开毛玻璃时窗口全透明，圆角和阴影由页面自己画（四周留了透明边）。
-///
-/// 实测（Win11 24H2）：
-/// - 不能用 Blur（老的 ACCENT_ENABLE_BLURBEHIND）：配 WebView2 的窗口背后是一片黑
-/// - 不能开系统阴影（`set_shadow`）：会把窗框延伸进来，窗口尺寸多出二十来像素
-/// - 亚克力自带一层不浅的色调，页面上再铺的色调要淡（不透明度 30%～50% 才看得出模糊）；
-///   窗口失去焦点时系统会把亚克力换成纯色，这是系统行为
-///
-/// 只能在 UI 线程调用。
+/// 面板材质（毛玻璃、圆角），见 `wm::set_glass`。只能在 UI 线程调用。
 pub fn apply_popup_material(app: &AppHandle) {
     let Some(window) = app.get_webview_window(WINDOW) else {
         return;
     };
-    let blur = state(app).settings.read().translate.popup.blur;
-    let effects = if blur {
-        Some(EffectsBuilder::new().effect(Effect::Acrylic).build())
-    } else {
-        None
-    };
-    if let Err(err) = window.set_effects(effects) {
-        tracing::warn!("设置翻译面板材质失败：{err}");
-    }
-    platform::set_rounded(&window, blur);
+    let popup = state(app).settings.read().translate.popup.clone();
+    wm::set_glass(&window, popup.blur, f64::from(popup.radius));
 }
 
 fn prewarm_button(app: &AppHandle) {
