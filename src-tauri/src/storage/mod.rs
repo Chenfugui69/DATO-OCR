@@ -7,6 +7,7 @@ pub mod clipboard;
 pub mod ocr;
 pub mod screenshots;
 pub mod secrets;
+pub mod sync;
 pub mod tokenize;
 
 use std::path::Path;
@@ -16,7 +17,10 @@ use rusqlite::{params, Connection, OptionalExtension};
 
 use crate::error::AppResult;
 
-const MIGRATIONS: &[(i64, &str)] = &[(1, include_str!("../../migrations/001_init.sql"))];
+const MIGRATIONS: &[(i64, &str)] = &[
+    (1, include_str!("../../migrations/001_init.sql")),
+    (2, include_str!("../../migrations/002_sync.sql")),
+];
 
 pub struct Db {
     conn: Mutex<Connection>,

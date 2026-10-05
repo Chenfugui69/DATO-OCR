@@ -2,7 +2,7 @@
 
 import { Channel, invoke } from '@tauri-apps/api/core';
 
-import type { AiContext, AppInfo, CaptureIntent, ChatEvent, ChatRequest, ClipDetail, ClipGroup, ClipPage, ClipQuery, ClipStats, EditorAction, EditorDoc, EngineStatus, FinishAction, HotkeyStatus, OcrJob, OcrPage, PhysicalRect, PinInfo, ProviderInfo, RegionTranslation, SecretsStatus, SessionInfo, Settings, ShotPage, ShotQuery, TranslateRequest, TranslateResult, VisualCapabilities } from './types';
+import type { AiContext, AppInfo, CaptureIntent, ChatEvent, ChatRequest, ClipDetail, ClipGroup, ClipPage, ClipQuery, ClipStats, DavDevice, EditorAction, EditorDoc, EngineStatus, FinishAction, HotkeyStatus, OcrJob, OcrPage, PhysicalRect, PinInfo, ProviderInfo, RegionTranslation, SecretsStatus, SessionInfo, Settings, ShotPage, SyncStatus, ShotQuery, TranslateRequest, TranslateResult, VisualCapabilities } from './types';
 
 /** Rust 侧 AppError 的结构化形态。 */
 export class AppError extends Error {
@@ -121,6 +121,24 @@ export const clipboard = {
   clear: (scope: 'unpinned' | 'everything') => call<number>('clipboard_clear', { scope }),
   hidePanel: () => call<void>('clipboard_panel_hide'),
   open: (id: number) => call<void>('clipboard_open', { id }),
+};
+
+// ───────────────────────── 多端同步 ─────────────────────────
+
+export const sync = {
+  status: () => call<SyncStatus>('sync_status'),
+  approve: (id: string, approve: boolean) => call<void>('sync_approve', { id, approve }),
+  removePeer: (deviceId: string) => call<void>('sync_remove_peer', { deviceId }),
+  join: (code: string, address?: string) => call<void>('sync_join', { code, address: address || null }),
+  cancelJoin: () => call<void>('sync_cancel_join'),
+  leave: () => call<void>('sync_leave'),
+  regenerateCode: () => call<string>('sync_regenerate_code'),
+  qr: (text: string) => call<string>('sync_qr', { text }),
+  webdavConnect: (a: { url: string; user: string; password: string; folder: string; syncPassword: string }) =>
+    call<void>('sync_webdav_connect', a),
+  webdavDisconnect: () => call<void>('sync_webdav_disconnect'),
+  webdavNow: () => call<void>('sync_webdav_now'),
+  webdavDevices: () => call<DavDevice[]>('sync_webdav_devices'),
 };
 
 // ───────────────────────── 截图库 / 识字 ─────────────────────────

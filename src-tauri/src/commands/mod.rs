@@ -8,6 +8,7 @@ pub mod ai;
 pub mod capture;
 pub mod clipboard;
 pub mod library;
+pub mod sync;
 pub mod system;
 pub mod tools;
 

@@ -3,7 +3,7 @@
 import './main.css';
 
 import { useQuery } from '@tanstack/react-query';
-import { ClipboardList, Crop, Images, Keyboard, ScanText, ScrollText, Settings as SettingsIcon, type LucideIcon } from 'lucide-react';
+import { ClipboardList, Crop, Images, Keyboard, MonitorSmartphone, ScanText, ScrollText, Settings as SettingsIcon, type LucideIcon } from 'lucide-react';
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
@@ -17,13 +17,15 @@ import { ClipboardPage } from './ClipboardPage';
 import { LibraryPage } from './LibraryPage';
 import { OcrHistoryPage } from './OcrHistoryPage';
 import { SettingsPage } from './SettingsPage';
+import { SyncPage } from './SyncPage';
 
-export type Page = 'library' | 'clipboard' | 'ocr' | 'settings';
+export type Page = 'library' | 'clipboard' | 'ocr' | 'sync' | 'settings';
 
 const NAV: { id: Page; icon: LucideIcon }[] = [
   { id: 'library', icon: Images },
   { id: 'clipboard', icon: ClipboardList },
   { id: 'ocr', icon: ScanText },
+  { id: 'sync', icon: MonitorSmartphone },
   { id: 'settings', icon: SettingsIcon },
 ];
 
@@ -37,7 +39,7 @@ export default function MainView() {
   // Rust 侧（托盘、剪贴板面板的齿轮按钮）可以指定打开哪一页：`settings` / `settings:translate`
   useEvent('navigate', (target) => {
     const [p, s] = target.split(':');
-    if (p === 'library' || p === 'clipboard' || p === 'ocr' || p === 'settings') {
+    if (p === 'library' || p === 'clipboard' || p === 'ocr' || p === 'sync' || p === 'settings') {
       setPage(p);
       setSection(s ?? null);
     }
@@ -99,11 +101,12 @@ export default function MainView() {
           {t('nav.hotkeys')}
         </button>
       </aside>
-      <main className={page === 'settings' ? 'content content--grouped' : 'content'}>
+      <main className={page === 'settings' || page === 'sync' ? 'content content--grouped' : 'content'}>
         <TitleBar />
         {page === 'library' && <LibraryPage />}
         {page === 'clipboard' && <ClipboardPage />}
         {page === 'ocr' && <OcrHistoryPage />}
+        {page === 'sync' && <SyncPage />}
         {page === 'settings' && <SettingsPage section={section} />}
       </main>
     </div>

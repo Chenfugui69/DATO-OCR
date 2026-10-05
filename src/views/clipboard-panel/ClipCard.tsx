@@ -4,7 +4,7 @@
 // - 竖版小面板（row）：内容 + 底部一行来源和时间
 
 import clsx from 'clsx';
-import { File, Globe, Image, Link2, Palette, Pin, Star, Type } from 'lucide-react';
+import { File, Globe, Image, Link2, MonitorSmartphone, Palette, Pin, Star, Type } from 'lucide-react';
 import { memo } from 'react';
 import { useTranslation } from 'react-i18next';
 
@@ -102,7 +102,8 @@ export const ClipCard = memo(function ClipCard({
   );
   const time = <span className="clip-card__time">{relativeTime(item.lastUsedAt)}</span>;
   const appName = item.sourceApp ?? t('clip.unknownApp');
-  const TypeIcon = TYPE_ICON[item.type] ?? Type;
+  // 从别的设备同步来的：右上角是设备图标，底栏的来源是那台设备的名字
+  const TypeIcon = item.remote ? MonitorSmartphone : (TYPE_ICON[item.type] ?? Type);
 
   return (
     <div

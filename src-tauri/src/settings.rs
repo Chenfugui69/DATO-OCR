@@ -25,6 +25,7 @@ pub struct Settings {
     pub ocr: OcrSettings,
     pub translate: TranslateSettings,
     pub clipboard: ClipboardSettings,
+    pub sync: SyncSettings,
     pub network: NetworkSettings,
     pub ai: AiSettings,
     #[serde(flatten)]
@@ -43,6 +44,7 @@ impl Default for Settings {
             ocr: Default::default(),
             translate: Default::default(),
             clipboard: Default::default(),
+            sync: Default::default(),
             network: Default::default(),
             ai: Default::default(),
             extra: Map::new(),
@@ -557,6 +559,55 @@ pub struct ClipboardSettings {
     pub extra: Map<String, Value>,
 }
 
+/// 多端同步（规格 09）。账号密码、同步密码不在这里（在数据库 `secrets` 表）。
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase", default)]
+pub struct SyncSettings {
+    /// 本机在其他设备上显示的名字；空 = 计算机名
+    pub device_name: String,
+    /// 局域网同步：本机开一个服务，其他设备输入本机的设备码、本机同意后加入
+    pub lan_enabled: bool,
+    pub lan_port: u16,
+    /// 允许手机浏览器 / 快捷指令连接（不用装 App）
+    pub web_enabled: bool,
+    /// WebDAV 网盘同步（坚果云，或者用 Alist 等挂成 WebDAV 的 115 之类）
+    pub webdav_enabled: bool,
+    pub webdav_url: String,
+    pub webdav_user: String,
+    /// 网盘上放同步数据的文件夹
+    pub webdav_folder: String,
+    /// 多久查一次网盘（秒）。坚果云免费账号半小时限 600 次请求，别太勤
+    pub webdav_interval: u32,
+    /// 图片也同步
+    pub send_images: bool,
+    /// 单张图片上限（MB），超过的不同步
+    pub max_image_mb: u32,
+    /// 收到其他设备刚复制的内容，直接放进本机剪贴板（Ctrl+V 就能粘）
+    pub auto_write: bool,
+    #[serde(flatten)]
+    pub extra: Map<String, Value>,
+}
+
+impl Default for SyncSettings {
+    fn default() -> Self {
+        Self {
+            device_name: String::new(),
+            lan_enabled: false,
+            lan_port: 47380,
+            web_enabled: true,
+            webdav_enabled: false,
+            webdav_url: "https://dav.jianguoyun.com/dav/".into(),
+            webdav_user: String::new(),
+            webdav_folder: "DATO-COR".into(),
+            webdav_interval: 15,
+            send_images: true,
+            max_image_mb: 10,
+            auto_write: true,
+            extra: Map::new(),
+        }
+    }
+}
+
 impl Default for ClipboardSettings {
     fn default() -> Self {
         Self {
@@ -692,6 +743,23 @@ impl Settings {
             *item = item.trim().to_lowercase();
         }
         cb.blacklist.retain(|s| !s.is_empty());
+        let sy = &mut self.sync;
+        sy.device_name = sy.device_name.trim().chars().take(40).collect();
+        if sy.lan_port < 1024 {
+            sy.lan_port = 47380;
+        }
+        sy.webdav_url = sy.webdav_url.trim().to_string();
+        sy.webdav_user = sy.webdav_user.trim().to_string();
+        sy.webdav_folder = sy
+            .webdav_folder
+            .trim()
+            .trim_matches(['/', '\\'])
+            .to_string();
+        if sy.webdav_folder.is_empty() {
+            sy.webdav_folder = "DATO-COR".into();
+        }
+        sy.webdav_interval = sy.webdav_interval.clamp(5, 300);
+        sy.max_image_mb = sy.max_image_mb.clamp(1, 50);
         self
     }
 }

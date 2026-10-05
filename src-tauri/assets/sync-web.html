@@ -1,0 +1,403 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<meta name="color-scheme" content="light dark" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-title" content="DATO COR" />
+<title>DATO COR 同步</title>
+<style>
+  :root {
+    --bg: #f2f2f7; --card: #fff; --label: #000; --label2: rgba(60,60,67,.62); --label3: rgba(60,60,67,.32);
+    --sep: rgba(60,60,67,.18); --fill: rgba(118,118,128,.12); --accent: #0a84ff; --red: #ff3b30; --green: #34c759;
+    --shadow: 0 1px 2px rgba(0,0,0,.05), 0 0 0 .5px var(--sep);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #000; --card: #1c1c1e; --label: #fff; --label2: rgba(235,235,245,.62); --label3: rgba(235,235,245,.3);
+      --sep: rgba(84,84,88,.6); --fill: rgba(118,118,128,.24); --shadow: 0 0 0 .5px var(--sep); }
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; background: var(--bg); color: var(--label);
+    font: 16px/1.4 -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Segoe UI", "Microsoft YaHei", sans-serif; }
+  body { padding: env(safe-area-inset-top) 0 calc(env(safe-area-inset-bottom) + 24px); }
+  main { max-width: 640px; margin: 0 auto; padding: 0 16px; }
+  h1 { font-size: 30px; font-weight: 700; letter-spacing: -.02em; margin: 28px 4px 4px; }
+  .sub { color: var(--label2); margin: 0 4px 20px; font-size: 15px; }
+  .sub b { color: var(--label); font-weight: 600; }
+  .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--green); margin-right: 6px; vertical-align: 1px; }
+  .dot.off { background: var(--label3); }
+  .group { background: var(--card); border-radius: 14px; box-shadow: var(--shadow); overflow: hidden; margin-bottom: 22px; }
+  .group-title { font-size: 13px; color: var(--label2); text-transform: uppercase; margin: 0 16px 7px; letter-spacing: .02em; }
+  .row { padding: 12px 16px; }
+  .row + .row { border-top: .5px solid var(--sep); }
+  label.field { display: block; font-size: 13px; color: var(--label2); margin-bottom: 6px; }
+  input, textarea { width: 100%; font: inherit; color: inherit; background: var(--fill); border: 0; border-radius: 10px;
+    padding: 11px 12px; outline: none; }
+  input:focus, textarea:focus { box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 55%, transparent); }
+  input.code { font: 600 26px/1.2 ui-monospace, "SF Mono", Menlo, Consolas, monospace; letter-spacing: .18em; text-align: center; }
+  textarea { min-height: 96px; resize: vertical; }
+  button { font-family: inherit; font-size: 16px; font-weight: 600; line-height: 1; border: 0; border-radius: 12px; padding: 13px 16px; cursor: pointer;
+    background: var(--accent); color: #fff; transition: opacity .15s, transform .1s; }
+  button:active { transform: scale(.98); opacity: .85; }
+  button:disabled { opacity: .45; }
+  button.plain { background: var(--fill); color: var(--accent); }
+  button.danger { background: transparent; color: var(--red); padding: 10px 0; font-weight: 500; }
+  button.block { width: 100%; }
+  .actions { display: flex; gap: 10px; margin-top: 10px; }
+  .actions button { flex: 1; }
+  .hint { color: var(--label2); font-size: 13px; margin: 8px 4px 0; }
+  .error { color: var(--red); font-size: 14px; margin-top: 10px; }
+  .waiting { text-align: center; padding: 26px 16px; }
+  .spinner { width: 28px; height: 28px; border-radius: 50%; border: 3px solid var(--fill); border-top-color: var(--accent);
+    animation: spin .8s linear infinite; margin: 0 auto 14px; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .items { display: grid; gap: 10px; }
+  .item { background: var(--card); border-radius: 14px; box-shadow: var(--shadow); padding: 12px 14px; cursor: pointer;
+    position: relative; overflow: hidden; transition: transform .1s; }
+  .item:active { transform: scale(.985); }
+  .item .meta { display: flex; gap: 8px; align-items: center; font-size: 12px; color: var(--label2); margin-bottom: 6px; }
+  .item .tag { font-weight: 600; color: #fff; border-radius: 6px; padding: 2px 7px; font-size: 11px; }
+  .tag.text { background: #e08600; } .tag.link { background: #0a7cf0; } .tag.image { background: #e5484d; } .tag.color { background: #34c759; }
+  .item .body { white-space: pre-wrap; word-break: break-word; display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; }
+  .item .body::first-line { font-weight: 600; }
+  .item img { display: block; width: 100%; max-height: 240px; object-fit: cover; border-radius: 10px; background: var(--fill); }
+  .item .swatch { width: 100%; height: 56px; border-radius: 10px; display: grid; place-items: center; font: 600 16px ui-monospace, Menlo, monospace; }
+  .item.copied::after { content: attr(data-copied); position: absolute; inset: 0; display: grid; place-items: center;
+    background: color-mix(in srgb, var(--accent) 88%, transparent); color: #fff; font-weight: 600; animation: fade 1.2s forwards; }
+  @keyframes fade { 0%, 70% { opacity: 1; } 100% { opacity: 0; } }
+  .empty { text-align: center; color: var(--label2); padding: 30px 0; }
+  .toast { position: fixed; left: 50%; bottom: calc(env(safe-area-inset-bottom) + 24px); transform: translateX(-50%);
+    background: rgba(30,30,32,.92); color: #fff; padding: 10px 16px; border-radius: 12px; font-size: 14px; opacity: 0;
+    transition: opacity .2s; pointer-events: none; max-width: 90vw; text-align: center; }
+  .toast.show { opacity: 1; }
+  .viewer { position: fixed; inset: 0; background: rgba(0,0,0,.92); display: none; flex-direction: column; align-items: center;
+    justify-content: center; padding: 16px; z-index: 10; }
+  .viewer.show { display: flex; }
+  .viewer img { max-width: 100%; max-height: 80vh; border-radius: 8px; -webkit-touch-callout: default; }
+  .viewer p { color: rgba(255,255,255,.75); font-size: 14px; }
+  details { background: var(--card); border-radius: 14px; box-shadow: var(--shadow); margin-bottom: 22px; }
+  summary { padding: 14px 16px; font-weight: 600; cursor: pointer; list-style: none; }
+  summary::-webkit-details-marker { display: none; }
+  summary::after { content: "›"; float: right; color: var(--label3); transition: transform .2s; }
+  details[open] summary::after { transform: rotate(90deg); }
+  .guide { padding: 0 16px 14px; font-size: 14px; color: var(--label2); }
+  .guide ol { padding-left: 20px; margin: 6px 0 12px; }
+  .guide li { margin: 3px 0; }
+  .kv { display: flex; align-items: center; gap: 8px; background: var(--fill); border-radius: 10px; padding: 8px 10px; margin: 6px 0; }
+  .kv code { flex: 1; font: 13px ui-monospace, Menlo, Consolas, monospace; color: var(--label); word-break: break-all; }
+  .kv button { padding: 7px 10px; font-size: 13px; border-radius: 8px; }
+  .hidden { display: none !important; }
+  .file { position: absolute; width: 1px; height: 1px; opacity: 0; }
+</style>
+</head>
+<body>
+<main>
+  <!-- 配对 -->
+  <section id="pair" class="hidden">
+    <h1>DATO COR</h1>
+    <p class="sub" id="pair-sub">连接电脑上的剪贴板</p>
+    <div id="pair-form">
+      <div class="group">
+        <div class="row">
+          <label class="field" for="code" data-t="code">电脑上显示的设备码</label>
+          <input id="code" class="code" inputmode="numeric" maxlength="9" autocomplete="off" placeholder="0000 0000" />
+        </div>
+        <div class="row">
+          <label class="field" for="name" data-t="name">这台设备的名字</label>
+          <input id="name" maxlength="40" autocomplete="off" />
+        </div>
+      </div>
+      <button id="pair-btn" class="block" data-t="connect">连接</button>
+      <div id="pair-error" class="error hidden"></div>
+      <p class="hint" data-t="pairHint">电脑上会弹出申请，点「同意」就连好了。只在同一个 Wi-Fi 下可用。</p>
+    </div>
+    <div id="pair-wait" class="group waiting hidden">
+      <div class="spinner"></div>
+      <div data-t="waitApprove">请在电脑上点「同意」</div>
+      <button class="plain" id="pair-cancel" style="margin-top:16px" data-t="cancel">取消</button>
+    </div>
+  </section>
+
+  <!-- 已连接 -->
+  <section id="home" class="hidden">
+    <h1 data-t="clipboard">剪贴板</h1>
+    <p class="sub"><span class="dot" id="live-dot"></span><span id="home-sub"></span></p>
+
+    <div class="group-title" data-t="sendTitle">发到电脑</div>
+    <div class="group">
+      <div class="row">
+        <textarea id="send-text" placeholder="在这里粘贴或输入…"></textarea>
+        <div class="actions">
+          <button class="plain" id="send-image" data-t="sendImage">发图片</button>
+          <button id="send-btn" data-t="send">发送</button>
+        </div>
+        <input type="file" id="file" class="file" accept="image/*" />
+      </div>
+    </div>
+
+    <div class="group-title" data-t="recent">电脑上的剪贴板 · 点一下复制</div>
+    <div id="items" class="items"></div>
+    <div id="empty" class="empty hidden" data-t="empty">还没有记录</div>
+
+    <div style="height:22px"></div>
+    <details id="shortcut">
+      <summary data-t="shortcutTitle">一键收发（快捷指令）</summary>
+      <div class="guide" id="guide"></div>
+    </details>
+
+    <button class="danger block" id="forget" data-t="disconnect">断开这台设备</button>
+  </section>
+</main>
+
+<div class="viewer" id="viewer"><img id="viewer-img" alt="" /><p data-t="longPress">长按图片可以拷贝或存储，点空白处关闭</p></div>
+<div class="toast" id="toast"></div>
+<textarea id="copy-buf" style="position:fixed;top:-1000px;opacity:0" readonly></textarea>
+
+<script>
+(() => {
+  const zh = /^zh/i.test(navigator.language || '');
+  const T = zh ? {} : {
+    code: 'Device code shown on the computer', name: 'Name of this device', connect: 'Connect',
+    pairHint: 'The computer will ask you to approve. Works on the same Wi-Fi only.', waitApprove: 'Tap "Approve" on the computer',
+    cancel: 'Cancel', clipboard: 'Clipboard', sendTitle: 'Send to computer', sendImage: 'Image', send: 'Send',
+    recent: 'Computer clipboard · tap to copy', empty: 'Nothing yet', shortcutTitle: 'One-tap send / receive (Shortcuts)',
+    disconnect: 'Disconnect this device', longPress: 'Long-press the image to copy or save. Tap outside to close.',
+  };
+  const L = (zh ? {
+    connected: (h) => `已连接 <b>${h}</b>`, offline: '连接断了，正在重连…', copied: '已复制', sent: '已发送，电脑上可以直接粘贴',
+    sending: '发送中…', denied: '电脑拒绝了连接', expired: '申请过期了，请重新连接', badCode: '设备码是 8 位数字',
+    loadMore: '内容较长，正在加载，稍后再点一次', copyFail: '复制失败，长按文字手动复制', tooBig: '图片太大了',
+    image: '图片', text: '文字', link: '链接', color: '颜色', fromHere: '来自', forgetAsk: '断开后要重新输入设备码才能连接，确定吗？',
+    copy: '复制',
+  } : {
+    connected: (h) => `Connected to <b>${h}</b>`, offline: 'Connection lost, reconnecting…', copied: 'Copied', sent: 'Sent. Paste it on the computer.',
+    sending: 'Sending…', denied: 'The computer declined', expired: 'Request expired, try again', badCode: 'The code has 8 digits',
+    loadMore: 'Loading the full text, tap again in a moment', copyFail: 'Copy failed, long-press to copy manually', tooBig: 'Image too large',
+    image: 'Image', text: 'Text', link: 'Link', color: 'Color', fromHere: 'from', forgetAsk: 'You will need the device code to reconnect. Disconnect?',
+    copy: 'Copy',
+  });
+  document.querySelectorAll('[data-t]').forEach((el) => { const k = el.dataset.t; if (T[k]) el.textContent = T[k]; });
+  if (!zh) document.documentElement.lang = 'en';
+
+  const $ = (id) => document.getElementById(id);
+  const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+  let toastTimer;
+  const toast = (msg) => { const t = $('toast'); t.textContent = msg; t.classList.add('show'); clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove('show'), 1800); };
+  const show = (id) => { ['pair', 'home'].forEach((s) => $(s).classList.toggle('hidden', s !== id)); };
+
+  function guessName() {
+    const ua = navigator.userAgent;
+    if (/iPhone/.test(ua)) return 'iPhone';
+    if (/iPad|Macintosh.*Mobile/.test(ua)) return 'iPad';
+    if (/Android/.test(ua)) return zh ? '安卓手机' : 'Android';
+    if (/Mac OS X/.test(ua)) return 'Mac';
+    return zh ? '浏览器' : 'Browser';
+  }
+
+  // ── 配对 ──
+  let pairing = null;
+  async function startPair() {
+    const code = $('code').value.replace(/\D/g, '');
+    $('pair-error').classList.add('hidden');
+    if (code.length !== 8) return showPairError(L.badCode);
+    const name = $('name').value.trim() || guessName();
+    try { localStorage.setItem('dato_name', name); } catch {}
+    $('pair-btn').disabled = true;
+    try {
+      const r = await fetch('/api/pair/request', { method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ code, name, platform: /iPhone|iPad/.test(navigator.userAgent) ? 'ios' : /Android/.test(navigator.userAgent) ? 'android' : 'web', kind: 'web' }) });
+      if (!r.ok) throw new Error(await r.text());
+      const { id } = await r.json();
+      pairing = id;
+      $('pair-form').classList.add('hidden');
+      $('pair-wait').classList.remove('hidden');
+      while (pairing === id) {
+        const w = await (await fetch('/api/pair/wait?id=' + encodeURIComponent(id))).json();
+        if (pairing !== id) return;
+        if (w.status === 'pending') continue;
+        if (w.status === 'approved') {
+          try { localStorage.setItem('dato_token', w.token); } catch {}
+          pairing = null;
+          return enterHome();
+        }
+        throw new Error(w.status === 'denied' ? L.denied : L.expired);
+      }
+    } catch (e) {
+      showPairError(e.message || String(e));
+    } finally {
+      $('pair-btn').disabled = false;
+    }
+  }
+  function showPairError(msg) {
+    pairing = null;
+    $('pair-wait').classList.add('hidden');
+    $('pair-form').classList.remove('hidden');
+    $('pair-error').textContent = msg;
+    $('pair-error').classList.remove('hidden');
+  }
+  $('pair-btn').onclick = startPair;
+  $('code').addEventListener('keydown', (e) => { if (e.key === 'Enter') startPair(); });
+  $('pair-cancel').onclick = () => { pairing = null; $('pair-wait').classList.add('hidden'); $('pair-form').classList.remove('hidden'); };
+
+  // ── 已连接 ──
+  let me = null;
+  const fullText = new Map();
+  async function enterHome() {
+    const r = await fetch('/api/me');
+    if (!r.ok) { show('pair'); return; }
+    me = await r.json();
+    $('home-sub').innerHTML = L.connected(esc(me.hostName));
+    show('home');
+    renderGuide();
+    await loadItems();
+    listen();
+  }
+
+  async function loadItems() {
+    const r = await fetch('/api/items?limit=60');
+    if (r.status === 401) { show('pair'); return; }
+    const items = await r.json();
+    $('empty').classList.toggle('hidden', items.length > 0);
+    $('items').innerHTML = items.map((it) => {
+      const tag = `<span class="tag ${it.type}">${L[it.type] || it.type}</span>`;
+      const src = it.source ? `<span>${esc(it.source)}</span>` : '';
+      let body;
+      if (it.type === 'image') body = `<img loading="lazy" src="/api/items/${it.id}/image?thumb=1" alt="" />`;
+      else if (it.type === 'color') body = `<div class="swatch" style="background:${esc(it.preview)};color:#fff;text-shadow:0 1px 2px rgba(0,0,0,.4)">${esc(it.preview)}</div>`;
+      else body = `<div class="body">${esc(it.preview)}</div>`;
+      return `<div class="item" data-id="${it.id}" data-type="${it.type}" data-copied="${L.copied}"><div class="meta">${tag}${src}<span style="margin-left:auto">${ago(it.at)}</span></div>${body}</div>`;
+    }).join('');
+    // http 页面上只能在点击的同一刻同步复制：长文字先在后台取好
+    for (const it of items.slice(0, 30)) {
+      if (it.type !== 'image' && (it.preview || '').length >= 290 && !fullText.has(it.id)) {
+        fetch(`/api/items/${it.id}/text`).then((r) => r.ok && r.text()).then((t) => t && fullText.set(it.id, t));
+      }
+    }
+    itemsCache = new Map(items.map((it) => [String(it.id), it]));
+  }
+  let itemsCache = new Map();
+
+  function ago(ms) {
+    const s = Math.max(0, (Date.now() - ms) / 1000);
+    if (s < 60) return zh ? '刚刚' : 'now';
+    if (s < 3600) return zh ? `${Math.floor(s / 60)} 分钟前` : `${Math.floor(s / 60)}m`;
+    if (s < 86400) return zh ? `${Math.floor(s / 3600)} 小时前` : `${Math.floor(s / 3600)}h`;
+    return zh ? `${Math.floor(s / 86400)} 天前` : `${Math.floor(s / 86400)}d`;
+  }
+
+  function copyText(text) {
+    const buf = $('copy-buf');
+    buf.value = text;
+    buf.removeAttribute('readonly');
+    buf.select();
+    buf.setSelectionRange(0, text.length);
+    let ok = false;
+    try { ok = document.execCommand('copy'); } catch {}
+    buf.setAttribute('readonly', '');
+    buf.blur();
+    if (!ok && navigator.clipboard && window.isSecureContext) { navigator.clipboard.writeText(text).then(() => {}, () => {}); ok = true; }
+    return ok;
+  }
+
+  $('items').addEventListener('click', (e) => {
+    const card = e.target.closest('.item');
+    if (!card) return;
+    const it = itemsCache.get(card.dataset.id);
+    if (!it) return;
+    if (it.type === 'image') {
+      $('viewer-img').src = `/api/items/${it.id}/image`;
+      $('viewer').classList.add('show');
+      return;
+    }
+    let text = fullText.get(it.id) ?? it.preview ?? '';
+    if ((it.preview || '').length >= 290 && !fullText.has(it.id)) {
+      fetch(`/api/items/${it.id}/text`).then((r) => r.text()).then((t) => fullText.set(it.id, t));
+      toast(L.loadMore);
+      return;
+    }
+    if (copyText(text)) {
+      card.classList.remove('copied');
+      void card.offsetWidth;
+      card.classList.add('copied');
+    } else toast(L.copyFail);
+  });
+  $('viewer').onclick = (e) => { if (e.target !== $('viewer-img')) $('viewer').classList.remove('show'); };
+
+  async function push(body, type) {
+    toast(L.sending);
+    const r = await fetch('/api/push', { method: 'POST', headers: { 'content-type': type }, body });
+    if (r.ok) { toast(L.sent); return true; }
+    toast(r.status === 413 ? L.tooBig : (await r.text()) || String(r.status));
+    return false;
+  }
+  $('send-btn').onclick = async () => {
+    const text = $('send-text').value;
+    if (!text.trim()) { $('send-text').focus(); return; }
+    if (await push(text, 'text/plain; charset=utf-8')) $('send-text').value = '';
+  };
+  $('send-image').onclick = () => $('file').click();
+  $('file').onchange = async () => {
+    const f = $('file').files[0];
+    $('file').value = '';
+    if (f) await push(f, f.type || 'application/octet-stream');
+  };
+  $('forget').onclick = async () => {
+    if (!confirm(L.forgetAsk)) return;
+    await fetch('/api/forget', { method: 'POST' });
+    try { localStorage.removeItem('dato_token'); } catch {}
+    if (es) es.close();
+    location.reload();
+  };
+
+  // 电脑上的历史变了就刷新
+  let es = null, reloadTimer;
+  function listen() {
+    if (es) es.close();
+    es = new EventSource('/api/events');
+    es.addEventListener('hello', () => $('live-dot').classList.remove('off'));
+    es.addEventListener('changed', () => { clearTimeout(reloadTimer); reloadTimer = setTimeout(loadItems, 250); });
+    es.onerror = () => { $('live-dot').classList.add('off'); };
+  }
+  document.addEventListener('visibilitychange', () => { if (!document.hidden && me) { loadItems(); if (!es || es.readyState === 2) listen(); } });
+
+  function renderGuide() {
+    let token = '';
+    try { token = localStorage.getItem('dato_token') || ''; } catch {}
+    const base = location.origin;
+    const kv = (v) => `<div class="kv"><code>${esc(v)}</code><button class="plain" data-copy="${esc(v)}">${L.copy}</button></div>`;
+    const tokenRow = token ? kv('Bearer ' + token) : `<p>${zh ? '令牌只在连接时的那个浏览器里显示。' : 'The token is only shown in the browser that paired.'}</p>`;
+    $('guide').innerHTML = zh ? `
+      <p>用 iPhone 的「快捷指令」App 做两个快捷指令，再绑到「设置 → 辅助功能 → 触控 → 轻点背面」，敲两下手机背面就能收发。安卓可以用 HTTP Shortcuts 之类的 App 照着配。</p>
+      <p><b>发送剪贴板到电脑</b></p>
+      <ol><li>动作「获取剪贴板」</li><li>（图片可选）动作「转换图像」为 JPEG</li>
+      <li>动作「获取 URL 内容」：URL 填下面第一行，方法 POST，请求体选「文件」并选剪贴板，头部加 <code>Authorization</code> = 下面第三行</li></ol>
+      <p><b>从电脑取剪贴板</b></p>
+      <ol><li>动作「获取 URL 内容」：URL 填下面第二行，方法 GET，头部同上</li><li>动作「拷贝至剪贴板」</li></ol>
+      ${kv(base + '/api/push')}${kv(base + '/api/latest')}${tokenRow}
+      <p>令牌等于这台设备的钥匙，别发给别人；在电脑上移除这台设备后令牌就失效了。</p>` : `
+      <p>Create two shortcuts in the Shortcuts app and bind them to Back Tap (Settings → Accessibility → Touch). On Android, apps like HTTP Shortcuts work the same way.</p>
+      <p><b>Send clipboard to computer</b>: Get Clipboard → Get Contents of URL (first URL below, POST, body: File = Clipboard, header <code>Authorization</code> = the token line).</p>
+      <p><b>Get computer clipboard</b>: Get Contents of URL (second URL, GET, same header) → Copy to Clipboard.</p>
+      ${kv(base + '/api/push')}${kv(base + '/api/latest')}${tokenRow}
+      <p>The token is this device's key. Removing the device on the computer revokes it.</p>`;
+  }
+  $('guide').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-copy]');
+    if (b && copyText(b.dataset.copy)) toast(L.copied);
+  });
+
+  // ── 启动 ──
+  const m = /[#&]c=(\d{8})/.exec(location.hash);
+  if (m) $('code').value = m[1].slice(0, 4) + ' ' + m[1].slice(4);
+  let saved = '';
+  try { saved = localStorage.getItem('dato_name') || ''; } catch {}
+  $('name').value = saved || guessName();
+  fetch('/api/me').then((r) => {
+    if (r.ok) enterHome();
+    else show('pair');
+  }, () => show('pair'));
+})();
+</script>
+</body>
+</html>

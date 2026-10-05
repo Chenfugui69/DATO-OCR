@@ -31,6 +31,8 @@ export interface EventMap {
   'gif-progress': GifProgress;
   'clipboard-changed': ClipChanged;
   'clipboard-panel-show': { style: 'bottom' | 'vertical' };
+  /** 多端同步的状态变了，重新拉一次 */
+  'sync-changed': null;
   'library-changed': null;
   'ocr-job': OcrJob;
   'ocr-history-changed': null;

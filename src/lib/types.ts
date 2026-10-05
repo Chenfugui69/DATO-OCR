@@ -95,6 +95,72 @@ export interface Settings {
     retentionDays: number;
     retentionMaxItems: number;
   };
+  sync: SyncSettings;
+}
+
+/** 多端同步（规格 09）。密码不在这里（在 Rust 那边加密保存）。 */
+export interface SyncSettings {
+  /** 空 = 计算机名 */
+  deviceName: string;
+  lanEnabled: boolean;
+  lanPort: number;
+  webEnabled: boolean;
+  webdavEnabled: boolean;
+  webdavUrl: string;
+  webdavUser: string;
+  webdavFolder: string;
+  webdavInterval: number;
+  sendImages: boolean;
+  maxImageMb: number;
+  autoWrite: boolean;
+}
+
+export interface SyncPeer {
+  deviceId: string;
+  name: string;
+  platform: string;
+  kind: 'desktop' | 'web';
+  role: 'member' | 'host';
+  address: string | null;
+  code: string | null;
+  lastSeen: number | null;
+  createdAt: number;
+  online: boolean;
+}
+
+export interface SyncPairRequest {
+  id: string;
+  name: string;
+  platform: string;
+  kind: 'desktop' | 'web';
+  /** 电脑之间配对的 4 位核对数字 */
+  sas: string | null;
+  address: string;
+}
+
+export interface SyncStatus {
+  deviceId: string;
+  deviceName: string;
+  defaultName: string;
+  platform: string;
+  code: string;
+  lanMode: 'off' | 'host' | 'member';
+  lanError: string | null;
+  port: number | null;
+  urls: string[];
+  members: SyncPeer[];
+  host: SyncPeer | null;
+  hostStatus: { online: boolean; address: string | null; error: string | null } | null;
+  pending: SyncPairRequest[];
+  join: { phase: '' | 'idle' | 'searching' | 'waiting' | 'done' | 'error'; sas: string | null; hostName: string | null; error: string | null };
+  webdav: { configured: boolean; running: boolean; lastSync: number | null; error: string | null };
+}
+
+export interface DavDevice {
+  deviceId: string;
+  name: string;
+  platform: string;
+  lastSeen: number;
 }
 
 export interface PopupStyle {
@@ -266,6 +332,8 @@ export interface ClipItem {
   sourceApp: string | null;
   sourceIcon: string | null;
   truncated: boolean;
+  /** 从别的设备同步来的 */
+  remote: boolean;
   pinned: boolean;
   favorite: boolean;
   note: string | null;

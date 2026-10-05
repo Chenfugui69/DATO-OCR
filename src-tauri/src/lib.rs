@@ -33,6 +33,7 @@ mod platform;
 mod settings;
 mod state;
 mod storage;
+mod sync;
 mod translate;
 mod tray;
 mod wm;
@@ -118,6 +119,18 @@ pub fn run() {
             commands::clipboard::clipboard_clear,
             commands::clipboard::clipboard_panel_hide,
             commands::clipboard::clipboard_open,
+            commands::sync::sync_status,
+            commands::sync::sync_approve,
+            commands::sync::sync_remove_peer,
+            commands::sync::sync_join,
+            commands::sync::sync_cancel_join,
+            commands::sync::sync_leave,
+            commands::sync::sync_regenerate_code,
+            commands::sync::sync_qr,
+            commands::sync::sync_webdav_connect,
+            commands::sync::sync_webdav_disconnect,
+            commands::sync::sync_webdav_now,
+            commands::sync::sync_webdav_devices,
             commands::library::library_query,
             commands::library::library_delete,
             commands::library::library_set_favorite,
@@ -241,6 +254,7 @@ fn on_ready(app: &AppHandle) {
     translate::selection::prewarm(app);
     translate::selection::reconfigure(app);
     clipboard::start(app);
+    sync::start(app);
     platform::watch_system_events(on_system_event);
     std::thread::spawn(platform::warm_up_capture);
     maintenance::spawn(app);

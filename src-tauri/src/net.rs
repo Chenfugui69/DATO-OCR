@@ -15,6 +15,8 @@ pub enum Purpose {
     Translate,
     /// AI 对话：流式输出可能持续几分钟，不设总超时，由用户随时停止
     Ai,
+    /// WebDAV 网盘同步：传图片可能要一会儿
+    Sync,
 }
 
 pub fn client(app: &AppHandle, purpose: Purpose) -> reqwest::Client {
@@ -27,14 +29,15 @@ pub fn client(app: &AppHandle, purpose: Purpose) -> reqwest::Client {
     }
     let mut builder = reqwest::Client::builder()
         .user_agent(USER_AGENT)
-        .connect_timeout(Duration::from_secs(if purpose == Purpose::Ai {
-            15
-        } else {
+        .connect_timeout(Duration::from_secs(if purpose == Purpose::Translate {
             5
+        } else {
+            15
         }));
     builder = match purpose {
         Purpose::Translate => builder.timeout(Duration::from_secs(5)),
         Purpose::Ai => builder.read_timeout(Duration::from_secs(120)),
+        Purpose::Sync => builder.timeout(Duration::from_secs(90)),
     };
     builder = match net.proxy_mode.as_str() {
         "none" => builder.no_proxy(),

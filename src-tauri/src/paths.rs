@@ -54,10 +54,14 @@ fn data_root(base: &Path) -> (PathBuf, Option<PathBuf>) {
 
 impl AppPaths {
     pub fn resolve(app: &AppHandle) -> AppResult<Self> {
-        let base = app
-            .path()
-            .data_dir()
-            .map_err(|err| AppError::msg(format!("找不到用户数据目录：{err}")))?;
+        // 测试开关：`CHENOCR_TEST_DATA_DIR=某个目录` 时数据放那里，不碰用户真正的历史和设置
+        let base = match std::env::var_os("CHENOCR_TEST_DATA_DIR") {
+            Some(dir) if !dir.is_empty() => PathBuf::from(dir),
+            _ => app
+                .path()
+                .data_dir()
+                .map_err(|err| AppError::msg(format!("找不到用户数据目录：{err}")))?,
+        };
         let (root, migrated_from) = data_root(&base);
         let paths = Self {
             root,

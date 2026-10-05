@@ -28,6 +28,9 @@ pub struct NewClip {
     pub source_app_path: Option<String>,
     pub source_icon: Option<String>,
     pub truncated: bool,
+    /// 从别的设备同步来的：记录的全局 ID 和来源设备（本机复制的两个都是 None）
+    pub sync_id: Option<String>,
+    pub device_id: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -48,6 +51,8 @@ pub struct ClipItem {
     pub source_app: Option<String>,
     pub source_icon: Option<String>,
     pub truncated: bool,
+    /// 从别的设备同步来的
+    pub remote: bool,
     pub pinned: bool,
     pub favorite: bool,
     pub note: Option<String>,
@@ -107,7 +112,7 @@ pub struct ClipGroup {
 const ITEM_COLUMNS: &str =
     "id, type, preview, content_html IS NOT NULL, file_path, thumb_path, file_list,
     char_count, size_bytes, width, height, source_app, source_icon, truncated, pinned, favorite,
-    note, group_id, created_at, last_used_at";
+    note, group_id, created_at, last_used_at, device_id IS NOT NULL";
 
 fn map_item(row: &Row<'_>) -> rusqlite::Result<ClipItem> {
     let files: Option<String> = row.get(6)?;
@@ -128,6 +133,7 @@ fn map_item(row: &Row<'_>) -> rusqlite::Result<ClipItem> {
         source_app: row.get(11)?,
         source_icon: row.get(12)?,
         truncated: row.get(13)?,
+        remote: row.get(20)?,
         pinned: row.get(14)?,
         favorite: row.get(15)?,
         note: row.get(16)?,
@@ -180,8 +186,9 @@ pub fn insert(conn: &mut Connection, item: &NewClip) -> AppResult<i64> {
     tx.execute(
         "INSERT INTO clipboard_items (type, content_text, content_html, content_rtf, file_path, thumb_path,
             file_list, preview, hash, char_count, size_bytes, width, height, source_app, source_app_path,
-            source_icon, truncated, created_at, last_used_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?18)",
+            source_icon, truncated, created_at, last_used_at, sync_id, device_id, sync_state)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?18,
+            ?19, ?20, ?21)",
         params![
             item.kind,
             item.content_text,
@@ -201,6 +208,10 @@ pub fn insert(conn: &mut Connection, item: &NewClip) -> AppResult<i64> {
             item.source_icon,
             item.truncated,
             now,
+            item.sync_id,
+            item.device_id,
+            // 2 = 已同步（收到的）；本机的是 0
+            if item.device_id.is_some() { 2 } else { 0 },
         ],
     )?;
     let id = tx.last_insert_rowid();
@@ -479,6 +490,63 @@ pub fn ids_for_retention(conn: &Connection, days: u32, max_items: u32) -> AppRes
 }
 
 /// 数据库里引用到的全部文件（用于孤儿文件清理）。
+/// 按全局 ID 找记录（收到同步记录时去重）。
+pub fn find_by_sync_id(conn: &Connection, sync_id: &str) -> AppResult<Option<i64>> {
+    Ok(conn
+        .query_row(
+            "SELECT id FROM clipboard_items WHERE sync_id = ?1",
+            [sync_id],
+            |r| r.get(0),
+        )
+        .optional()?)
+}
+
+/// 发给别的设备要用到的字段。
+#[derive(Clone, Debug)]
+pub struct SyncSource {
+    pub sync_id: Option<String>,
+    pub device_id: Option<String>,
+    pub kind: String,
+    pub text: Option<String>,
+    pub file_path: Option<String>,
+    pub width: Option<i64>,
+    pub height: Option<i64>,
+    pub source_app: Option<String>,
+    pub created_at: i64,
+}
+
+pub fn sync_source(conn: &Connection, id: i64) -> AppResult<SyncSource> {
+    conn.query_row(
+        "SELECT sync_id, device_id, type, content_text, file_path, width, height, source_app, created_at
+         FROM clipboard_items WHERE id = ?1",
+        [id],
+        |r| {
+            Ok(SyncSource {
+                sync_id: r.get(0)?,
+                device_id: r.get(1)?,
+                kind: r.get(2)?,
+                text: r.get(3)?,
+                file_path: r.get(4)?,
+                width: r.get(5)?,
+                height: r.get(6)?,
+                source_app: r.get(7)?,
+                created_at: r.get(8)?,
+            })
+        },
+    )
+    .optional()?
+    .ok_or_else(|| AppError::NotFound(format!("剪贴板记录 {id}")))
+}
+
+/// 第一次发出去时给本机的记录分配全局 ID。
+pub fn set_sync_id(conn: &Connection, id: i64, sync_id: &str) -> AppResult<()> {
+    conn.execute(
+        "UPDATE clipboard_items SET sync_id = ?1, sync_state = 2 WHERE id = ?2 AND sync_id IS NULL",
+        params![sync_id, id],
+    )?;
+    Ok(())
+}
+
 /// 图片条目的 (id, 原图, 缩略图)，升级缩略图用。
 pub fn image_thumbs(conn: &Connection) -> AppResult<Vec<(i64, String, String)>> {
     let mut stmt = conn.prepare(

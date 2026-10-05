@@ -39,8 +39,8 @@ gif = "0.14"
 rusqlite = { version = "0.32", features = ["bundled"] }
 
 # 翻译联网。Windows 上 native-tls 走系统 SChannel，不链接 OpenSSL，体积最小。
-reqwest = { version = "0.12", default-features = false, features = ["json", "native-tls", "gzip", "socks"] }
-tokio = { version = "1", features = ["time", "sync"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "native-tls", "gzip", "socks", "stream"] }
+tokio = { version = "1", features = ["time", "sync", "net", "rt", "macros", "io-util"] }
 
 parking_lot = "0.12"
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
@@ -48,6 +48,18 @@ uuid = { version = "1", features = ["v4"] }
 sha2 = "0.10"
 base64 = "0.22"
 url = "2"
+# 多端同步（规格 09）：加密（XChaCha20-Poly1305、X25519 配对、Argon2id 同步密码）、
+# 局域网主机（axum）、设备发现（mDNS）、手机网页的二维码。全是 MIT / Apache-2.0 / BSD
+chacha20poly1305 = "0.10"
+x25519-dalek = "2"
+hkdf = "0.12"
+argon2 = "0.5"
+rand_core = { version = "0.6", features = ["getrandom"] }
+axum = { version = "0.8", default-features = false, features = ["tokio", "http1", "json", "query"] }
+mdns-sd = { version = "0.21.5", default-features = false }
+if-addrs = "0.15.0"
+futures-util = "0.3.34"
+qrcode = { version = "0.14.1", default-features = false, features = ["svg"] }
 
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.62", features = [

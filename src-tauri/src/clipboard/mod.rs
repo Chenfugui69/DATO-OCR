@@ -282,6 +282,8 @@ fn ingest(app: &AppHandle, snap: ClipboardSnapshot) -> AppResult<()> {
         st.db.with(|c| repo::touch(c, id))?;
         let _ = app.emit(events::CLIPBOARD_CHANGED, ClipChanged { id, is_new: false });
         cleanup_unused_files(app, &item);
+        // 用户又复制了一遍：其他设备的剪贴板也跟上
+        crate::sync::on_local(app, id);
         return Ok(());
     }
     if let Some(source) = &snap.source {
@@ -294,11 +296,151 @@ fn ingest(app: &AppHandle, snap: ClipboardSnapshot) -> AppResult<()> {
     let id = st.db.with(|c| repo::insert(c, &item))?;
     tracing::debug!(id, kind = %item.kind, chars = item.char_count, "剪贴板新记录");
     let _ = app.emit(events::CLIPBOARD_CHANGED, ClipChanged { id, is_new: true });
+    crate::sync::on_local(app, id);
 
     if st.clipboard.inserts.fetch_add(1, Ordering::Relaxed) % 50 == 0 {
         apply_retention(app);
     }
     Ok(())
+}
+
+fn image_hash(img: &image::RgbaImage) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(img.width().to_le_bytes());
+    hasher.update(img.height().to_le_bytes());
+    hasher.update(img.as_raw());
+    hasher
+        .finalize()
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect()
+}
+
+fn text_kind(text: &str) -> &'static str {
+    if is_url(text) {
+        "link"
+    } else if is_color(text) {
+        "color"
+    } else {
+        "text"
+    }
+}
+
+/// 收到其他设备的一条记录：入库（按全局 ID、再按内容去重），返回记录 ID 和写剪贴板用的内容。
+/// 和本机复制走同一套分类、哈希、存图逻辑，之后本机再复制同样的内容会去重到这条上。
+pub(crate) fn store_remote(
+    app: &AppHandle,
+    record: &crate::sync::record::SyncRecord,
+) -> AppResult<(i64, Option<ClipboardPayload>)> {
+    let st = state(app);
+    let settings = st.settings.read().clipboard.clone();
+    let existing = st.db.with(|c| repo::find_by_sync_id(c, &record.id))?;
+    let bubble = |id: i64| -> AppResult<i64> {
+        st.db.with(|c| {
+            repo::touch(c, id)?;
+            repo::set_sync_id(c, id, &record.id)
+        })?;
+        let _ = app.emit(events::CLIPBOARD_CHANGED, ClipChanged { id, is_new: false });
+        Ok(id)
+    };
+    let source = Some(record.origin_name.clone()).filter(|n| !n.is_empty());
+
+    let (mut item, payload) = if record.kind == "image" {
+        let bytes = record
+            .image
+            .as_deref()
+            .ok_or_else(|| crate::error::AppError::msg("图片是空的"))?;
+        let img = image::load_from_memory(bytes)?.to_rgba8();
+        let is_png = bytes.starts_with(&[0x89, b'P', b'N', b'G']);
+        let payload = ClipboardPayload::Image {
+            png: is_png.then(|| bytes.to_vec()),
+            image: img.clone(),
+        };
+        let hash = image_hash(&img);
+        let dup = match existing {
+            Some(id) => Some(id),
+            None => st.db.with(|c| repo::find_duplicate(c, &hash))?,
+        };
+        if let Some(id) = dup {
+            return Ok((bubble(id)?, Some(payload)));
+        }
+        let is_jpeg = bytes.starts_with(&[0xFF, 0xD8, 0xFF]);
+        let (ext, data) = if is_png {
+            ("png", bytes.to_vec())
+        } else if is_jpeg {
+            ("jpg", bytes.to_vec())
+        } else {
+            ("png", imaging::encode_png(&img)?)
+        };
+        if data.len() as u64 > u64::from(settings.max_image_mb) * 1024 * 1024 {
+            return Err(crate::error::AppError::msg("图片超过剪贴板历史的大小上限"));
+        }
+        let rel = st.paths.new_rel_file("clipboard", ext)?;
+        std::fs::write(st.paths.abs(&rel), &data)?;
+        let thumb = thumb_rel(&rel);
+        let thumb = imaging::write_card_thumbnail(&img, &st.paths.abs(&thumb))
+            .ok()
+            .map(|_| thumb);
+        (
+            NewClip {
+                kind: "image".into(),
+                file_path: Some(rel),
+                thumb_path: thumb,
+                hash,
+                size_bytes: Some(data.len() as i64),
+                width: Some(i64::from(img.width())),
+                height: Some(i64::from(img.height())),
+                ..Default::default()
+            },
+            payload,
+        )
+    } else {
+        let mut text = record.text.clone().unwrap_or_default();
+        if text.trim().is_empty() {
+            return Err(crate::error::AppError::msg("文字是空的"));
+        }
+        let limit = settings.max_text_mb as usize * 1024 * 1024;
+        let truncated = text.len() > limit;
+        if truncated {
+            let mut cut = limit;
+            while !text.is_char_boundary(cut) {
+                cut -= 1;
+            }
+            text.truncate(cut);
+        }
+        let hash = sha(text.replace("\r\n", "\n").as_bytes());
+        let payload = ClipboardPayload::Text {
+            text: text.clone(),
+            html: None,
+            rtf: None,
+        };
+        let dup = match existing {
+            Some(id) => Some(id),
+            None => st.db.with(|c| repo::find_duplicate(c, &hash))?,
+        };
+        if let Some(id) = dup {
+            return Ok((bubble(id)?, Some(payload)));
+        }
+        (
+            NewClip {
+                kind: text_kind(&text).into(),
+                preview: Some(preview(&text)),
+                hash,
+                char_count: Some(text.chars().count() as i64),
+                size_bytes: Some(text.len() as i64),
+                content_text: Some(text),
+                truncated,
+                ..Default::default()
+            },
+            payload,
+        )
+    };
+    item.source_app = source;
+    item.sync_id = Some(record.id.clone());
+    item.device_id = Some(record.origin.clone());
+    let id = st.db.with(|c| repo::insert(c, &item))?;
+    let _ = app.emit(events::CLIPBOARD_CHANGED, ClipChanged { id, is_new: true });
+    Ok((id, Some(payload)))
 }
 
 /// 去重命中时，classify 里已经写盘的图片要删掉。
@@ -348,15 +490,7 @@ fn classify(
         .map(str::to_string)
         .filter(|t| !t.trim().is_empty());
     if let (Some(img), None) = (&snap.image, &text) {
-        let mut hasher = Sha256::new();
-        hasher.update(img.width().to_le_bytes());
-        hasher.update(img.height().to_le_bytes());
-        hasher.update(img.as_raw());
-        let hash: String = hasher
-            .finalize()
-            .iter()
-            .map(|b| format!("{b:02x}"))
-            .collect();
+        let hash = image_hash(img);
         // 去重先查，命中就不必编码写盘
         if st.db.with(|c| repo::find_duplicate(c, &hash))?.is_some() {
             return Ok(Some(NewClip {
@@ -404,13 +538,7 @@ fn classify(
         text.truncate(cut);
         truncated = true;
     }
-    let kind = if is_url(&text) {
-        "link"
-    } else if is_color(&text) {
-        "color"
-    } else {
-        "text"
-    };
+    let kind = text_kind(&text);
     let html = snap
         .html
         .clone()

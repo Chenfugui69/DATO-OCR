@@ -16,6 +16,7 @@ use crate::pin::PinRegistry;
 use crate::platform::SystemVisuals;
 use crate::settings::Settings;
 use crate::storage::Db;
+use crate::sync::SyncService;
 use crate::translate::TranslateService;
 use crate::{events, platform};
 
@@ -27,6 +28,7 @@ pub struct AppState {
     pub capture: CaptureState,
     pub longshot: LongshotState,
     pub clipboard: ClipboardService,
+    pub sync: SyncService,
     pub ocr: OcrService,
     pub translate: TranslateService,
     pub pins: PinRegistry,
@@ -50,6 +52,7 @@ impl AppState {
             capture: CaptureState::default(),
             longshot: LongshotState::default(),
             clipboard: ClipboardService::default(),
+            sync: SyncService::default(),
             ocr: OcrService::default(),
             translate: TranslateService::default(),
             pins: PinRegistry::default(),

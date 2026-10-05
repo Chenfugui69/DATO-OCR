@@ -25,6 +25,18 @@ pub async fn settings_get(app: AppHandle) -> AppResult<Settings> {
 /// 踩掉（"系统找不到指定的文件"），前后比较也会错乱。
 static SETTINGS_LOCK: parking_lot::Mutex<()> = parking_lot::Mutex::new(());
 
+/// Rust 这边改设置（和界面保存走同一把锁，不会互相覆盖）。
+pub(crate) fn update_settings_with(
+    app: &AppHandle,
+    f: impl FnOnce(&mut Settings),
+) -> AppResult<Settings> {
+    let st = state(app);
+    let _guard = SETTINGS_LOCK.lock();
+    let mut next = st.settings();
+    f(&mut next);
+    st.update_settings(app, next)
+}
+
 #[tauri::command]
 pub async fn settings_set(app: AppHandle, settings: Settings) -> AppResult<Settings> {
     let st = state(&app);
@@ -62,6 +74,11 @@ pub async fn settings_set(app: AppHandle, settings: Settings) -> AppResult<Setti
     }
     if before.translate.selection != next.translate.selection {
         translate::selection::reconfigure(&app);
+    }
+    if before.sync != next.sync {
+        // 开关局域网、换端口、改设备名、网盘间隔…：按新设置重开（起服务、mDNS 都可能慢一点，别卡住保存）
+        let ui = app.clone();
+        std::thread::spawn(move || crate::sync::reconfigure(&ui));
     }
     if before.translate.popup.blur != next.translate.popup.blur
         || before.translate.popup.radius != next.translate.popup.radius
