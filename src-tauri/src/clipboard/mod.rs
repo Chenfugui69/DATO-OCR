@@ -435,11 +435,12 @@ fn classify(
     }))
 }
 
-/// 来源应用图标缓存在 `app-icons/{路径哈希}.png`，每个应用只提取一次。
-fn app_icon(app: &AppHandle, exe: &Path) -> Option<String> {
+/// 来源应用图标缓存在 `app-icons/{路径哈希}-96.png`，每个应用只提取一次。
+/// （旧版按 48 提取、不带后缀，已有记录还指着它们，新复制的换成 96 的。）
+pub(crate) fn app_icon(app: &AppHandle, exe: &Path) -> Option<String> {
     let st = state(app);
     let key = sha(exe.to_string_lossy().to_lowercase().as_bytes());
-    let rel = format!("app-icons/{}.png", &key[..16]);
+    let rel = format!("app-icons/{}-96.png", &key[..16]);
     let abs = st.paths.abs(&rel);
     if abs.exists() {
         return Some(rel);

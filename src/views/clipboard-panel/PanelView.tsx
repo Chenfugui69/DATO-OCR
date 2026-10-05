@@ -27,9 +27,9 @@ import { ClipCard } from './ClipCard';
 import { HScrollbar } from './HScrollbar';
 
 type Filter = 'all' | ClipType | 'pinned' | 'favorite';
-/** 底部卡片条：卡片宽度和间距 */
-const CARD_W = 172;
-const CARD_GAP = 12;
+/** 底部卡片条：卡片宽度和间距（高度见 panel.css 的 .panel__cell） */
+const CARD_W = 200;
+const CARD_GAP = 14;
 const FILTERS: Filter[] = ['all', 'text', 'image', 'link', 'files', 'pinned', 'favorite'];
 
 function queryOf(filter: Filter, keyword: string) {
@@ -63,6 +63,8 @@ export default function PanelView() {
   const [filter, setFilter] = useState<Filter>('all');
   const [selected, setSelected] = useState(0);
   const [preview, setPreview] = useState<Preview | null>(null);
+  // 按住 Ctrl 一小会儿才亮出卡片上的 Ctrl+1–9（Ctrl+P / Ctrl+D 这种一按就松的不闪一下）
+  const [showKeys, setShowKeys] = useState(false);
   const searchRef = useRef<HTMLInputElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const hiding = useRef(false);
@@ -204,6 +206,38 @@ export default function PanelView() {
   );
 
   useEffect(() => {
+    if (!visible) {
+      setShowKeys(false);
+      return;
+    }
+    let timer: number | undefined;
+    const sync = (e: KeyboardEvent) => {
+      const held = e.ctrlKey && !e.altKey && !e.shiftKey && !e.metaKey;
+      if (!held) {
+        window.clearTimeout(timer);
+        timer = undefined;
+        setShowKeys(false);
+      } else if (timer === undefined) {
+        timer = window.setTimeout(() => setShowKeys(true), 160);
+      }
+    };
+    const reset = () => {
+      window.clearTimeout(timer);
+      timer = undefined;
+      setShowKeys(false);
+    };
+    window.addEventListener('keydown', sync);
+    window.addEventListener('keyup', sync);
+    window.addEventListener('blur', reset);
+    return () => {
+      window.removeEventListener('keydown', sync);
+      window.removeEventListener('keyup', sync);
+      window.removeEventListener('blur', reset);
+      window.clearTimeout(timer);
+    };
+  }, [visible]);
+
+  useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (!visible) return;
       const searching = document.activeElement === searchRef.current;
@@ -239,6 +273,12 @@ export default function PanelView() {
         const i = FILTERS.indexOf(filter);
         setFilter(FILTERS[(i + (e.shiftKey ? FILTERS.length - 1 : 1)) % FILTERS.length]!);
         setSelected(0);
+        return;
+      }
+      // Ctrl+1–9：搜索框里打着字也能直接粘贴
+      if (/^[1-9]$/.test(e.key) && e.ctrlKey && !e.altKey && !e.shiftKey) {
+        e.preventDefault();
+        paste(items[Number(e.key) - 1]);
         return;
       }
       if (searching) return;
@@ -278,7 +318,10 @@ export default function PanelView() {
   }, [visible, items, selected, horizontal, preview, filter, hide, paste, openPreview, qc, t]);
 
   return (
-    <div className={clsx('panel-root', `panel-root--${style}`, docked && 'panel-root--docked', blur && 'panel-root--blur')} data-visible={visible}>
+    <div
+      className={clsx('panel-root', `panel-root--${style}`, docked && 'panel-root--docked', blur && 'panel-root--blur', showKeys && 'panel-root--keys')}
+      data-visible={visible}
+    >
       <div className="panel cn-glass-chrome">
         <header className="panel__bar">
           <SearchField

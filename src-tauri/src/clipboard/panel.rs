@@ -17,7 +17,7 @@ use crate::state::state;
 use crate::{events, wm};
 
 pub const LABEL: &str = "clipboard";
-pub const BOTTOM_HEIGHT: f64 = 320.0;
+pub const BOTTOM_HEIGHT: f64 = 346.0;
 pub const VERTICAL_SIZE: (f64, f64) = (380.0, 620.0);
 /// 页面里面板四周留给阴影的透明边（和 panel.css 一致）：底部样式 8，竖版 6
 const BOTTOM_PAD: f64 = 8.0;

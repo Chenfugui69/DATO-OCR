@@ -1,4 +1,4 @@
-//! 启动后的后台维护（规格 07 §7.4）：孤儿文件清理、定期 VACUUM、一次性升级旧缩略图。不阻塞 UI。
+//! 启动后的后台维护（规格 07 §7.4）：孤儿文件清理、定期 VACUUM、一次性升级旧缩略图和来源图标。不阻塞 UI。
 
 use std::collections::HashSet;
 use std::path::Path;
@@ -26,6 +26,9 @@ pub fn spawn(app: &AppHandle) {
 fn run(app: &AppHandle) -> AppResult<()> {
     if let Err(err) = upgrade_thumbnails(app) {
         tracing::warn!("升级缩略图失败：{err}");
+    }
+    if let Err(err) = upgrade_app_icons(app) {
+        tracing::warn!("升级来源图标失败：{err}");
     }
     let st = state(app);
     let mut referenced: HashSet<String> = HashSet::new();
@@ -125,6 +128,31 @@ fn upgrade_thumbnails(app: &AppHandle) -> AppResult<()> {
     st.db.kv_set(KEY, "1")?;
     if upgraded > 0 {
         tracing::info!(upgraded, "重新生成了旧的卡片缩略图");
+    }
+    Ok(())
+}
+
+/// 旧版来源图标按 48 像素提取，放大到卡片标题栏里发虚。按记录里的 exe 路径重新提取 96 的
+/// （`clipboard::app_icon`），换掉引用。旧文件很小，留着：已经打开的面板可能还在显示它。
+/// exe 已经不在了的提不出来，继续用旧的。只做一次。
+fn upgrade_app_icons(app: &AppHandle) -> AppResult<()> {
+    const KEY: &str = "app_icons_96";
+    let st = state(app);
+    if st.db.kv_get(KEY)?.is_some() {
+        return Ok(());
+    }
+    let rows = st.db.with(|c| clipboard::legacy_icons(c))?;
+    let mut upgraded = 0usize;
+    for (exe, old) in rows {
+        let Some(new) = crate::clipboard::app_icon(app, Path::new(&exe)) else {
+            continue;
+        };
+        st.db.with(|c| clipboard::replace_icon(c, &old, &new))?;
+        upgraded += 1;
+    }
+    st.db.kv_set(KEY, "1")?;
+    if upgraded > 0 {
+        tracing::info!(upgraded, "重新提取了来源应用图标");
     }
     Ok(())
 }

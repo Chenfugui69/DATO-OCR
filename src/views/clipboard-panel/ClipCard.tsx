@@ -1,9 +1,10 @@
 // 剪贴板卡片（规格 05 §3.2）。
-// - 底部卡片条：顶上一行来源（应用图标 + 名称 + 置顶 / 收藏），中间内容，底下一行细节（字数 / 尺寸 / 域名）和时间
+// - 底部卡片条：顶上一条按类型着色的标题栏（类型 + 时间，右边一个大号来源应用图标），中间内容铺满，
+//   底下居中一行细节（字数 / 尺寸 / 来源）；按住 Ctrl 时细节换成粘贴快捷键
 // - 竖版小面板（row）：内容 + 底部一行来源和时间
 
 import clsx from 'clsx';
-import { File, Globe, Pin, Star } from 'lucide-react';
+import { File, Globe, Image, Link2, Palette, Pin, Star, Type } from 'lucide-react';
 import { memo } from 'react';
 import { useTranslation } from 'react-i18next';
 
@@ -22,6 +23,9 @@ function domainOf(url: string): string {
 function fileName(path: string): string {
   return path.split(/[\\/]/).pop() ?? path;
 }
+
+/** 没有来源应用图标时，标题栏右边用类型图标顶上 */
+const TYPE_ICON = { text: Type, image: Image, link: Link2, files: File, color: Palette } as const;
 
 export const ClipCard = memo(function ClipCard({
   item,
@@ -69,7 +73,6 @@ export const ClipCard = memo(function ClipCard({
           <div className="clip-card__url">{text}</div>
         </div>
       );
-      detail = t('clip.type.link');
       break;
     case 'files':
       body = (
@@ -79,7 +82,6 @@ export const ClipCard = memo(function ClipCard({
           {item.files.length > 1 && <div className="clip-card__more">{t('clip.moreFiles', { count: item.files.length - 1 })}</div>}
         </div>
       );
-      detail = t('clip.type.files');
       break;
     default:
       body = <div className="clip-card__text">{text}</div>;
@@ -99,6 +101,8 @@ export const ClipCard = memo(function ClipCard({
     </span>
   );
   const time = <span className="clip-card__time">{relativeTime(item.lastUsedAt)}</span>;
+  const appName = item.sourceApp ?? t('clip.unknownApp');
+  const TypeIcon = TYPE_ICON[item.type] ?? Type;
 
   return (
     <div
@@ -113,14 +117,23 @@ export const ClipCard = memo(function ClipCard({
       {layout === 'card' ? (
         <>
           <div className="clip-card__head">
-            {app}
-            {marks}
+            <div className="clip-card__title">
+              <span className="clip-card__type">
+                {t(`clip.type.${item.type}`)}
+                {marks}
+              </span>
+              {time}
+            </div>
+            {item.sourceIcon ? (
+              <img className="clip-card__appicon" src={assetUrl(item.sourceIcon)} alt="" title={appName} draggable={false} />
+            ) : (
+              <TypeIcon className="clip-card__appicon clip-card__appicon--type" strokeWidth={1.6} />
+            )}
           </div>
           <div className="clip-card__body">{body}</div>
           <div className="clip-card__foot">
-            {index < 9 && <span className="clip-card__index">{index + 1}</span>}
-            <span className="clip-card__detail cn-truncate cn-numeric">{detail}</span>
-            {time}
+            <span className="clip-card__detail cn-truncate cn-numeric">{detail ?? appName}</span>
+            {index < 9 && <span className="clip-card__index">Ctrl {index + 1}</span>}
           </div>
         </>
       ) : (

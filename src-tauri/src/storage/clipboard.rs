@@ -499,6 +499,28 @@ pub fn set_thumb(conn: &Connection, id: i64, thumb: &str) -> AppResult<()> {
     Ok(())
 }
 
+/// 还指着旧版（48 像素、文件名不带 -96）来源图标的记录：(exe 路径, 图标)，每个图标一行。
+pub fn legacy_icons(conn: &Connection) -> AppResult<Vec<(String, String)>> {
+    let mut stmt = conn.prepare(
+        "SELECT MIN(source_app_path), source_icon FROM clipboard_items
+         WHERE source_icon IS NOT NULL AND source_app_path IS NOT NULL
+           AND source_icon NOT LIKE '%-96.png'
+         GROUP BY source_icon",
+    )?;
+    let rows = stmt
+        .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?
+        .collect::<Result<_, _>>()?;
+    Ok(rows)
+}
+
+pub fn replace_icon(conn: &Connection, old: &str, new: &str) -> AppResult<()> {
+    conn.execute(
+        "UPDATE clipboard_items SET source_icon = ?1 WHERE source_icon = ?2",
+        params![new, old],
+    )?;
+    Ok(())
+}
+
 pub fn referenced_files(conn: &Connection) -> AppResult<Vec<String>> {
     let mut stmt = conn.prepare(
         "SELECT file_path FROM clipboard_items WHERE file_path IS NOT NULL
@@ -621,5 +643,30 @@ mod tests {
             })
             .unwrap();
         assert!(found.items.is_empty());
+    }
+
+    #[test]
+    fn legacy_icons_are_listed_once_and_replaced() {
+        let db = Db::open_in_memory().unwrap();
+        let clip = |text: &str, icon: &str| NewClip {
+            source_app_path: Some("C:/app.exe".into()),
+            source_icon: Some(icon.into()),
+            ..text_clip(text)
+        };
+        db.with(|c| {
+            insert(c, &clip("a", "app-icons/old.png"))?;
+            insert(c, &clip("b", "app-icons/old.png"))?;
+            insert(c, &clip("c", "app-icons/new-96.png"))?;
+            Ok(())
+        })
+        .unwrap();
+        let legacy = db.with(|c| legacy_icons(c)).unwrap();
+        assert_eq!(
+            legacy,
+            vec![("C:/app.exe".to_string(), "app-icons/old.png".to_string())]
+        );
+        db.with(|c| replace_icon(c, "app-icons/old.png", "app-icons/old-96.png"))
+            .unwrap();
+        assert!(db.with(|c| legacy_icons(c)).unwrap().is_empty());
     }
 }

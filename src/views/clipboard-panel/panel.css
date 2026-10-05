@@ -167,7 +167,7 @@ html[data-view='clipboard'] body {
   position: absolute;
   top: 0;
   left: 0;
-  height: 216px;
+  height: 240px;
   padding: 0;
 }
 .panel-root--bottom .panel__cell {
@@ -186,9 +186,6 @@ html[data-view='clipboard'] body {
   opacity: 0;
   transition: opacity 240ms var(--cn-ease-out);
   cursor: default;
-}
-.panel:hover .hbar {
-  opacity: 0.55;
 }
 .hbar.is-active,
 .panel .hbar:hover {
@@ -210,8 +207,10 @@ html[data-view='clipboard'] body {
   background: var(--cn-label-secondary);
 }
 
-/* ── 卡片：172×216，圆角 14 ── */
+/* ── 卡片：200×240，圆角 14 ── */
 .clip-card {
+  /* 标题栏的颜色，按类型取（颜色类卡片整张就是那个颜色） */
+  --clip-tint: #e08600;
   position: relative;
   width: 100%;
   height: 100%;
@@ -238,16 +237,86 @@ html[data-view='clipboard'] body {
     0 0 0 2px var(--cn-accent),
     0 6px 16px color-mix(in srgb, var(--cn-accent) 22%, transparent);
 }
+.clip-card--card.clip-card--selected,
+.clip-card--card.clip-card--selected:hover {
+  box-shadow:
+    0 0 0 3px var(--cn-accent),
+    0 8px 20px color-mix(in srgb, var(--cn-accent) 26%, transparent);
+}
+.clip-card--image {
+  --clip-tint: #e5484d;
+}
+.clip-card--link {
+  --clip-tint: #0a7cf0;
+}
+.clip-card--files {
+  --clip-tint: #9a55d8;
+}
 
-/* 卡片顶：来源应用 */
+/* 卡片顶：按类型着色的标题栏。左边类型 + 时间，右边一个大号来源应用图标，往右上角溢出一点被裁掉 */
 .clip-card__head {
+  position: relative;
+  display: flex;
+  align-items: center;
+  height: 52px;
+  padding: 0 64px 0 12px;
+  flex: none;
+  overflow: hidden;
+  color: #fff;
+  background: linear-gradient(
+    135deg,
+    color-mix(in srgb, var(--clip-tint) 86%, #fff),
+    var(--clip-tint) 55%,
+    color-mix(in srgb, var(--clip-tint) 88%, #000)
+  );
+}
+.clip-card--color .clip-card__head {
+  color: inherit;
+  background: rgba(0, 0, 0, 0.1);
+  box-shadow: inset 0 -0.5px 0 rgba(0, 0, 0, 0.12);
+}
+.clip-card__title {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+.clip-card__type {
   display: flex;
   align-items: center;
   gap: 6px;
-  height: 32px;
-  padding: 0 10px;
-  flex: none;
+  font: 700 15px/1.1 var(--cn-font-sans);
+  letter-spacing: 0.01em;
+  white-space: nowrap;
 }
+.clip-card__head .clip-card__time {
+  font: 500 11px/1.2 var(--cn-font-sans);
+  color: inherit;
+  opacity: 0.82;
+}
+.clip-card__head .clip-card__marks {
+  color: inherit;
+  opacity: 0.92;
+}
+.clip-card__appicon {
+  position: absolute;
+  top: 50%;
+  right: -8px;
+  width: 58px;
+  height: 58px;
+  transform: translateY(-50%);
+  filter: drop-shadow(0 2px 6px rgba(0, 0, 0, 0.22));
+}
+.clip-card__appicon--type {
+  right: -6px;
+  width: 52px;
+  height: 52px;
+  color: inherit;
+  opacity: 0.32;
+  filter: none;
+}
+
+/* 竖版小面板底行的小图标 */
 .clip-card__app {
   width: 16px;
   height: 16px;
@@ -289,6 +358,16 @@ html[data-view='clipboard'] body {
   -webkit-mask-image: linear-gradient(180deg, #000 72%, transparent);
   mask-image: linear-gradient(180deg, #000 72%, transparent);
 }
+/* 卡片条：字大一号，第一行加粗当标题 */
+.clip-card--card .clip-card__text {
+  padding: 10px 14px 0;
+  font-size: 13.5px;
+  line-height: 19px;
+}
+.clip-card--card .clip-card__text::first-line {
+  font-weight: 650;
+  font-size: 14.5px;
+}
 .clip-card--row .clip-card__text {
   display: -webkit-box;
   -webkit-line-clamp: 2;
@@ -298,7 +377,7 @@ html[data-view='clipboard'] body {
   -webkit-mask-image: none;
   mask-image: none;
 }
-/* 图片：嵌在卡片里的一张小相片 */
+/* 图片：竖版里是嵌着的一张小相片，卡片条里铺满标题栏和底栏之间 */
 .clip-card__image {
   position: absolute;
   inset: 0 8px;
@@ -309,6 +388,11 @@ html[data-view='clipboard'] body {
 }
 .clip-card--row .clip-card__image {
   inset: 6px 8px 0;
+}
+.clip-card--card .clip-card__image {
+  inset: 0;
+  border-radius: 0;
+  box-shadow: inset 0 -0.5px 0 var(--cn-separator);
 }
 .clip-card__image img {
   width: 100%;
@@ -322,6 +406,9 @@ html[data-view='clipboard'] body {
   place-items: center;
   font: 600 16px/1 var(--cn-font-mono);
   letter-spacing: 0.02em;
+}
+.clip-card--card .clip-card__color {
+  font-size: 20px;
 }
 .clip-card--color .clip-card__appname,
 .clip-card--color .clip-card__time,
@@ -343,6 +430,12 @@ html[data-view='clipboard'] body {
   padding: 0 12px 8px;
   color: var(--cn-label-secondary);
 }
+.clip-card--card .clip-card__link,
+.clip-card--card .clip-card__files {
+  justify-content: flex-start;
+  gap: 8px;
+  padding: 16px 14px 0;
+}
 .clip-card--row .clip-card__link,
 .clip-card--row .clip-card__files {
   flex-direction: row;
@@ -352,6 +445,11 @@ html[data-view='clipboard'] body {
 }
 .clip-card__link svg,
 .clip-card__files svg {
+  flex: none;
+  color: var(--clip-tint);
+}
+.clip-card--row .clip-card__link svg,
+.clip-card--row .clip-card__files svg {
   color: var(--cn-accent);
 }
 .clip-card__domain,
@@ -378,7 +476,7 @@ html[data-view='clipboard'] body {
   font: var(--cn-text-footnote);
 }
 
-/* 卡片底：细节 + 时间 */
+/* 卡片底：竖版是来源 + 时间；卡片条居中一行细节，按住 Ctrl 时换成粘贴快捷键 */
 .clip-card__foot {
   display: flex;
   align-items: center;
@@ -386,6 +484,17 @@ html[data-view='clipboard'] body {
   height: 30px;
   padding: 0 10px 0 12px;
   flex: none;
+}
+.clip-card--card .clip-card__foot {
+  position: relative;
+  justify-content: center;
+  height: 32px;
+  padding: 0 12px;
+}
+.clip-card--card .clip-card__detail {
+  flex: 0 1 auto;
+  text-align: center;
+  transition: opacity var(--cn-duration-fast);
 }
 .clip-card--row .clip-card__foot {
   height: 28px;
@@ -401,23 +510,32 @@ html[data-view='clipboard'] body {
   white-space: nowrap;
 }
 .clip-card__index {
-  width: 16px;
-  height: 16px;
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  height: 20px;
+  padding: 0 8px;
   display: grid;
   place-items: center;
-  flex: none;
-  margin-left: -2px;
-  border-radius: 4px;
+  border-radius: 6px;
   background: var(--cn-fill-tertiary);
-  font: 600 10px/1 var(--cn-font-sans);
-  color: var(--cn-label-secondary);
+  font: 600 11px/1 var(--cn-font-sans);
+  color: var(--cn-label);
+  white-space: nowrap;
   opacity: 0;
-  transition: opacity var(--cn-duration-fast);
+  transform: translate(-50%, -50%) scale(0.9);
+  transition:
+    opacity var(--cn-duration-fast),
+    transform var(--cn-duration-fast) var(--cn-ease-out);
+  pointer-events: none;
 }
-/* 数字键 1–9 直接粘贴：面板没在打字时显示编号 */
-.panel:not(:focus-within) .clip-card__index,
-.clip-card--selected .clip-card__index {
+/* Ctrl+1–9 粘贴：平时不显示编号，按住 Ctrl 才亮出来 */
+.panel-root--keys .clip-card__index {
   opacity: 1;
+  transform: translate(-50%, -50%);
+}
+.panel-root--keys .clip-card--card .clip-card__detail {
+  opacity: 0;
 }
 
 /* ── 空格快速预览 ── */
