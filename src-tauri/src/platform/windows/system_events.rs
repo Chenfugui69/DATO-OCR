@@ -48,7 +48,7 @@ pub fn install(handler: fn(SystemEvent)) {
                 if CreateWindowExW(
                     WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
                     class_name,
-                    w!("DATO COR System Events"),
+                    w!("DATO OCR System Events"),
                     WS_POPUP,
                     0,
                     0,

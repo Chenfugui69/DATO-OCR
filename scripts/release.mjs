@@ -11,7 +11,7 @@
 //   3. 私钥在 ~/.tauri/dato-cor-updater.key（或者用环境变量 TAURI_SIGNING_PRIVATE_KEY_PATH 指过去）
 //
 // 生成的东西：
-//   release/<版本>/DATO-COR_<版本>_x64-setup.exe(.sig)   上传到 GitHub 和 Gitee 的发行版（标签 v<版本>）
+//   release/<版本>/DATO-OCR_<版本>_x64-setup.exe(.sig)   上传到 GitHub 和 Gitee 的发行版（标签 v<版本>）
 //   update/latest.json      国外渠道的清单（下载地址指向 GitHub）
 //   update/latest-cn.json   国内渠道的清单（下载地址指向 Gitee）
 //
@@ -61,11 +61,11 @@ if (!process.argv.includes('--skip-build')) {
   run(['build']);
 }
 
-const built = join(ROOT, `src-tauri/target/release/bundle/nsis/DATO COR_${version}_x64-setup.exe`);
+const built = join(ROOT, `src-tauri/target/release/bundle/nsis/DATO OCR_${version}_x64-setup.exe`);
 if (!existsSync(built)) fail(`找不到安装包 ${built}`);
 
 // 文件名不带空格（GitHub 会把空格换成点，Gitee 的处理不确定），签名里的文件名也就带着版本号
-const name = `DATO-COR_${version}_x64-setup.exe`;
+const name = `DATO-OCR_${version}_x64-setup.exe`;
 const outDir = join(ROOT, 'release', version);
 mkdirSync(outDir, { recursive: true });
 const installer = join(outDir, name);

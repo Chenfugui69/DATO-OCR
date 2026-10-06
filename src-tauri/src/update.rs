@@ -300,7 +300,7 @@ fn notify_once(app: &AppHandle, version: &str) {
     wm::toast(
         app,
         "info",
-        format!("DATO COR 有新版本 {version}，可以在「设置 → 更新」里查看"),
+        format!("DATO OCR 有新版本 {version}，可以在「设置 → 更新」里查看"),
     );
 }
 
@@ -314,7 +314,7 @@ pub fn skip(app: &AppHandle, version: &str) -> AppResult<()> {
     Ok(())
 }
 
-/// 签名可信注释里的文件名要带着这个版本号（`DATO-COR_0.3.0_x64-setup.exe`）。
+/// 签名可信注释里的文件名要带着这个版本号（`DATO-OCR_0.3.1_x64-setup.exe`）。
 fn signed_for_version(trusted_comment: &str, version: &str) -> bool {
     trusted_comment
         .split('\t')
@@ -419,9 +419,9 @@ async fn install_inner(app: &AppHandle) -> AppResult<()> {
         s.progress = Some(1.0);
     });
 
-    let dir = std::env::temp_dir().join("DATO-COR-update");
+    let dir = std::env::temp_dir().join("DATO-OCR-update");
     std::fs::create_dir_all(&dir)?;
-    let file = dir.join(format!("DATO-COR_{version}_setup.exe"));
+    let file = dir.join(format!("DATO-OCR_{version}_setup.exe"));
     std::fs::write(&file, &data)?;
     tracing::info!(version, path = %file.display(), "更新包已下载并校验");
 
@@ -507,7 +507,8 @@ mod tests {
         assert!(!signed_for_version("timestamp:1791270708", "0.3.0"));
     }
 
-    /// 用发版私钥签过的一个小文件（文件名 `DATO-COR_9.9.9_x64-setup.exe`）：
+    /// 用发版私钥签过的一个小文件（文件名 `DATO-COR_9.9.9_x64-setup.exe`，品牌改名前签的；
+    /// 内容和文件名都在签名里，不能跟着改名）：
     /// 证明内置公钥和发版私钥是一对、验签和版本号检查都走得通。
     const FIXTURE: &[u8] = b"DATO COR updater test fixture\n";
     const FIXTURE_SIG: &str = "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVRK3F5ZUpBMEtwdVNEaEhyblhwYkRuZkhRUXNDWGhDQUxXTjJqcVVRNXl3aUVIU0NBWndldlZtOEp5S3NrNTVnV0pDZXdSaERNZmFkanZEdkR5OFh2bHNpcS9YWmgvQndzPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkxMjcwODE1CWZpbGU6REFUTy1DT1JfOS45LjlfeDY0LXNldHVwLmV4ZQpRYUltcmIvU3NXUllqR0EwTEZMY0EwTlJ6NHc3enJlR2pkYW5ObTN0Z2VRZjgwNFI5OUhFLzEzaldNVmhIVTlvZ3BBeUNlcVluaURLdFJmMEU3NHlCQT09Cg==";

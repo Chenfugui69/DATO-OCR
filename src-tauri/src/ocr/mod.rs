@@ -136,7 +136,7 @@ fn run_rapid(app: &AppHandle, image: &RgbaImage) -> AppResult<Vec<OcrBlock>> {
         rapid::engine_dir(&st.paths).ok_or_else(|| AppError::msg("没有找到 RapidOCR 引擎"))?;
     if st.ocr.failures.load(Ordering::SeqCst) >= MAX_CONSECUTIVE_FAILURES {
         return Err(AppError::msg(
-            "识字引擎连续启动失败，已停用（重启 DATO COR 可重试）",
+            "识字引擎连续启动失败，已停用（重启 DATO OCR 可重试）",
         ));
     }
     let mut guard = st.ocr.rapid.lock();
@@ -263,7 +263,7 @@ pub fn ensure_window(app: &AppHandle) -> AppResult<tauri::WebviewWindow> {
         return Ok(w);
     }
     let window = wm::builder(app, WINDOW)
-        .title("文字识别 - DATO COR")
+        .title("文字识别 - DATO OCR")
         .inner_size(960.0, 640.0)
         .min_inner_size(680.0, 440.0)
         .resizable(true)

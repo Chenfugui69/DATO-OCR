@@ -530,7 +530,7 @@ fn save(app: &AppHandle, tmp: &Path, stats: &Stats) -> AppResult<()> {
     let stem = Path::new(&capture::file_name(&settings))
         .file_stem()
         .map(|s| s.to_string_lossy().into_owned())
-        .unwrap_or_else(|| "DATO COR".into());
+        .unwrap_or_else(|| "DATO OCR".into());
     let mut path = dir.join(format!("{stem}.gif"));
     let mut n = 1;
     while path.exists() {

@@ -1,6 +1,6 @@
 # 更新清单
 
-DATO COR 的"检查更新"从这里读：
+DATO OCR 的"检查更新"从这里读：
 
 | 文件 | 谁读 | 下载地址指向 |
 |---|---|---|
@@ -33,7 +33,7 @@ DATO COR 的"检查更新"从这里读：
 
 1. 改三处版本号，写 `notes/<版本>.json`
 2. `node scripts/release.mjs`
-3. GitHub、Gitee 各建一个发行版，标签 `v<版本>`，上传 `release/<版本>/DATO-COR_<版本>_x64-setup.exe`
+3. GitHub、Gitee 各建一个发行版，标签 `v<版本>`，上传 `release/<版本>/DATO-OCR_<版本>_x64-setup.exe`
 4. 提交并推送 `update/latest.json`、`update/latest-cn.json`，Gitee 仓库同步
 
 **第 3 步要在第 4 步之前**：清单一推上去，开着自动检查的用户就会去下载安装包。

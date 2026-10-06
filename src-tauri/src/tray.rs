@@ -50,7 +50,7 @@ pub fn build(app: &AppHandle) -> AppResult<()> {
     let ai = MenuItem::with_id(app, "ai", label("AI 对话", &hk.ai), true, None::<&str>)?;
     let show = MenuItem::with_id(app, "show", "打开主窗口", true, None::<&str>)?;
     let settings = MenuItem::with_id(app, "settings", "设置…", true, None::<&str>)?;
-    let quit = MenuItem::with_id(app, "quit", "退出 DATO COR", true, None::<&str>)?;
+    let quit = MenuItem::with_id(app, "quit", "退出 DATO OCR", true, None::<&str>)?;
     let sep1 = PredefinedMenuItem::separator(app)?;
     let sep2 = PredefinedMenuItem::separator(app)?;
     let menu = Menu::with_items(
@@ -61,7 +61,7 @@ pub fn build(app: &AppHandle) -> AppResult<()> {
     )?;
 
     let mut builder = TrayIconBuilder::with_id("main-tray")
-        .tooltip("DATO COR")
+        .tooltip("DATO OCR")
         .menu(&menu)
         .show_menu_on_left_click(false)
         .on_menu_event(|app, event| match event.id.as_ref() {

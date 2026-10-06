@@ -158,7 +158,7 @@ pub fn start(
         // 焦点必须交给被滚动的窗口：遮罩虽然鼠标穿透了，但还握着键盘焦点的话，"滚动非活动
         // 窗口"关闭的系统上滚轮会发给遮罩，页面纹丝不动。Enter/Esc/Backspace 由全局钩子
         // 截获，遮罩用不着焦点。目标用 WindowFromPoint 现取（遮罩此时已穿透、底图已隐藏），
-        // 这样选区落在 DATO COR 自己的窗口上也能找对。
+        // 这样选区落在 DATO OCR 自己的窗口上也能找对。
         let target = platform::window_at(cx, cy).or(fallback);
         if let Some(target) = target {
             if let Err(err) = platform::focus_window(target) {

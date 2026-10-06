@@ -1,7 +1,7 @@
 //! 数据目录布局（规格 07 §6）。
 //!
 //! ```text
-//! %APPDATA%\DATO COR\
+//! %APPDATA%\DATO OCR\
 //! ├── chenocr.db          主数据库（文件名是内部代号，没跟着品牌改）
 //! ├── settings.json       配置（不含密钥）
 //! ├── clipboard/YYYY/MM/  剪贴板图片与缩略图
@@ -14,7 +14,7 @@
 //!
 //! 数据库里只存**相对路径**（相对 root），换数据目录时不用改库。
 //!
-//! 品牌从 CHENOCR 改名为 DATO COR（2026-10）：旧目录 `%APPDATA%\CHENOCR` 在启动时整个改名过去。
+//! 品牌改过两次名（2026-10）：CHENOCR → DATO COR → DATO OCR。旧目录在启动时整个改名过去。
 
 use std::path::{Path, PathBuf};
 
@@ -23,9 +23,9 @@ use tauri::{AppHandle, Manager};
 use crate::error::{AppError, AppResult};
 
 /// 数据目录名（= 品牌名）
-const DIR_NAME: &str = "DATO COR";
-/// 改名前的数据目录名
-const LEGACY_DIR_NAME: &str = "CHENOCR";
+const DIR_NAME: &str = "DATO OCR";
+/// 改名前的数据目录名，新的在前
+const LEGACY_DIR_NAMES: &[&str] = &["DATO COR", "CHENOCR"];
 
 #[derive(Clone, Debug)]
 pub struct AppPaths {
@@ -39,10 +39,13 @@ pub struct AppPaths {
 /// 旧目录，下次启动再搬 —— 绝不能新建一个空目录，那样用户看起来像是数据全丢了。
 fn data_root(base: &Path) -> (PathBuf, Option<PathBuf>) {
     let root = base.join(DIR_NAME);
-    let legacy = base.join(LEGACY_DIR_NAME);
-    if root.exists() || !legacy.exists() {
+    let legacy = LEGACY_DIR_NAMES
+        .iter()
+        .map(|n| base.join(n))
+        .find(|p| p.exists());
+    let Some(legacy) = legacy.filter(|_| !root.exists()) else {
         return (root, None);
-    }
+    };
     match std::fs::rename(&legacy, &root) {
         Ok(()) => (root, Some(legacy)),
         Err(err) => {
@@ -210,15 +213,17 @@ mod tests {
     fn legacy_data_dir_is_moved_once() {
         let base = std::env::temp_dir().join(format!("datocor-paths-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&base);
-        std::fs::create_dir_all(base.join(LEGACY_DIR_NAME).join("screenshots")).unwrap();
-        std::fs::write(base.join(LEGACY_DIR_NAME).join("settings.json"), "{}").unwrap();
+        // 两个旧名字都在时搬最近的那个（DATO COR）
+        std::fs::create_dir_all(base.join("CHENOCR")).unwrap();
+        std::fs::create_dir_all(base.join("DATO COR").join("screenshots")).unwrap();
+        std::fs::write(base.join("DATO COR").join("settings.json"), "{}").unwrap();
 
         let (root, moved) = data_root(&base);
         assert_eq!(root, base.join(DIR_NAME));
-        assert_eq!(moved, Some(base.join(LEGACY_DIR_NAME)));
+        assert_eq!(moved, Some(base.join("DATO COR")));
         assert!(root.join("settings.json").exists());
         assert!(root.join("screenshots").is_dir());
-        assert!(!base.join(LEGACY_DIR_NAME).exists());
+        assert!(!base.join("DATO COR").exists());
 
         // 第二次启动：新目录已在，什么都不做
         let (again, moved) = data_root(&base);

@@ -24,7 +24,7 @@ pub fn builder<'a>(
     label: &'a str,
 ) -> WebviewWindowBuilder<'a, tauri::Wry, AppHandle> {
     WebviewWindowBuilder::new(app, label, WebviewUrl::App("index.html".into()))
-        .title("DATO COR")
+        .title("DATO OCR")
         .decorations(false)
         .visible(false)
 }

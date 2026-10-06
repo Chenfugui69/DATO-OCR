@@ -6,7 +6,8 @@ use windows::core::w;
 use windows::Win32::System::Com::CoTaskMemFree;
 use windows::Win32::System::Power::{GetSystemPowerStatus, SYSTEM_POWER_STATUS};
 use windows::Win32::System::Registry::{
-    RegGetValueW, HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE, RRF_RT_REG_DWORD, RRF_RT_REG_SZ,
+    RegDeleteKeyValueW, RegGetValueW, HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE, RRF_RT_REG_DWORD,
+    RRF_RT_REG_SZ,
 };
 use windows::Win32::UI::Shell::{FOLDERID_Pictures, SHGetKnownFolderPath, KF_FLAG_DEFAULT};
 use windows::Win32::UI::WindowsAndMessaging::{
@@ -35,6 +36,20 @@ fn reg_dword(
         )
     };
     status.is_ok().then_some(data)
+}
+
+/// 删掉当前用户"开机自启"里叫 `name` 的那一项。删掉了返回 true（本来就没有返回 false）。
+pub fn remove_autostart_entry(name: &str) -> bool {
+    let name = super::util::wide(name);
+    // SAFETY: 两个字符串都以 NUL 结尾，调用期间有效。
+    let status = unsafe {
+        RegDeleteKeyValueW(
+            HKEY_CURRENT_USER,
+            w!("Software\\Microsoft\\Windows\\CurrentVersion\\Run"),
+            windows::core::PCWSTR(name.as_ptr()),
+        )
+    };
+    status.is_ok()
 }
 
 fn windows_build() -> u32 {

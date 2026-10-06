@@ -270,7 +270,7 @@ fn on_selected(app: &AppHandle, anchor: PhysicalRect, end: (i32, i32), alt: bool
     if offline || st.capture.is_busy() || st.longshot.is_active() {
         return;
     }
-    // 在 DATO COR 自己的窗口里选字（识字结果、翻译气泡）不弹
+    // 在 DATO OCR 自己的窗口里选字（识字结果、翻译气泡）不弹
     if platform::foreground_window().is_some_and(platform::is_own_window) {
         return;
     }

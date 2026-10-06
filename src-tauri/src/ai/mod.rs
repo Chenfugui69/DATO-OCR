@@ -508,7 +508,7 @@ pub fn open_window(app: &AppHandle, mut context: AiContext) {
         let window = match ui.get_webview_window(WINDOW) {
             Some(w) => w,
             None => match wm::builder(&ui, WINDOW)
-                .title("AI 对话 - DATO COR")
+                .title("AI 对话 - DATO OCR")
                 .resizable(true)
                 .transparent(true)
                 .shadow(true)

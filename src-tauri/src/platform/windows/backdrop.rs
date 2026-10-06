@@ -246,7 +246,7 @@ fn create_window() -> AppResult<HWND> {
         CreateWindowExW(
             WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW | WS_EX_TOPMOST,
             CLASS_NAME,
-            w!("DATO COR Backdrop"),
+            w!("DATO OCR Backdrop"),
             WS_POPUP,
             0,
             0,

@@ -1,7 +1,7 @@
-﻿# 按标题截 DATO COR 的某个窗口（PrintWindow），或 -List 列出它的所有顶层窗口。
-# 用法：winshot.ps1 -Title "文字识别 - DATO COR" -Out a.png   |   winshot.ps1 -List
+﻿# 按标题截 DATO OCR 的某个窗口（PrintWindow），或 -List 列出它的所有顶层窗口。
+# 用法：winshot.ps1 -Title "文字识别 - DATO OCR" -Out a.png   |   winshot.ps1 -List
 param(
-  [string]$Title = "DATO COR",
+  [string]$Title = "DATO OCR",
   [string]$Out = "$PSScriptRoot\win.png",
   [double]$Scale = 0.6,
   [switch]$List
@@ -27,7 +27,7 @@ public static class W {
 }
 "@
 [void][W]::SetProcessDpiAwarenessContext([IntPtr](-4))
-$procs = Get-Process -Name chenocr, 'DATO COR' -ErrorAction SilentlyContinue | ForEach-Object { $_.Id }
+$procs = Get-Process -Name chenocr, 'DATO OCR' -ErrorAction SilentlyContinue | ForEach-Object { $_.Id }
 $wins = [W]::All() | Where-Object {
   $pid0 = 0; [void][W]::GetWindowThreadProcessId($_, [ref]$pid0); $procs -contains $pid0
 }

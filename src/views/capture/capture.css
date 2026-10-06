@@ -17,11 +17,13 @@ html[data-view='capture'] #root {
 }
 
 /* 用 clip-path 挖洞而不是四个 div 拼四周（规格 02 §4）。没有过渡动画：截图要瞬间响应 */
+/* 压暗遮罩的一块（见 CaptureView 的 Mask）：位置用 transform，各自一层，拖动时不重绘 */
 .cap-mask {
   position: absolute;
-  inset: 0;
+  left: 0;
+  top: 0;
   pointer-events: none;
-  will-change: clip-path;
+  will-change: transform;
 }
 
 .cap-canvas {
@@ -39,8 +41,11 @@ html[data-view='capture'] #root {
   box-sizing: border-box;
   border: calc(var(--cap-frame-width) + 0.5px) var(--cap-frame-style) var(--cap-frame-color);
   border-radius: var(--cap-frame-radius);
-  /* 一圈很淡的阴影：白框压在白色内容上也看得清 */
-  filter: drop-shadow(0 0 1px rgba(0, 0, 0, 0.45));
+  /* 内外各一圈很淡的深色细边：白框压在白色内容上也看得清。
+     不用 filter: drop-shadow —— 滤镜要离屏再模糊一遍，框一变大小就整块重做，拖起来很费 */
+  box-shadow:
+    0 0 0 0.75px rgba(0, 0, 0, 0.32),
+    inset 0 0 0 0.75px rgba(0, 0, 0, 0.32);
   pointer-events: none;
 }
 
@@ -49,7 +54,10 @@ html[data-view='capture'] #root {
   position: absolute;
   outline: var(--cap-frame-width) var(--cap-frame-style) var(--cap-frame-color);
   border-radius: var(--cap-frame-radius);
-  filter: drop-shadow(0 0 1px rgba(0, 0, 0, 0.45));
+  /* 同 .cap-hover：外圈比描边多出一点点（垫在描边下面），内圈贴着里边 */
+  box-shadow:
+    0 0 0 calc(var(--cap-frame-width) + 0.75px) rgba(0, 0, 0, 0.32),
+    inset 0 0 0 0.75px rgba(0, 0, 0, 0.32);
   pointer-events: none;
 }
 

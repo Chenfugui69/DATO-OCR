@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "DATO COR",
+  "productName": "DATO OCR",
   "version": "0.3.0",
   "identifier": "com.datocor.app",
   "build": {
@@ -14,7 +14,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "DATO COR",
+        "title": "DATO OCR",
         "url": "index.html",
         "width": 1120,
         "height": 720,
@@ -32,7 +32,7 @@
       "csp": "default-src 'self'; img-src 'self' asset: http://asset.localhost shot: http://shot.localhost data: blob:; style-src 'self' 'unsafe-inline'; font-src 'self' data:; connect-src 'self' ipc: http://ipc.localhost shot: http://shot.localhost asset: http://asset.localhost",
       "assetProtocol": {
         "enable": true,
-        "scope": ["$DATA/DATO COR/**", "$DATA/CHENOCR/**", "$TEMP/**"]
+        "scope": ["$DATA/DATO OCR/**", "$DATA/DATO COR/**", "$DATA/CHENOCR/**", "$TEMP/**"]
       }
     }
   },
@@ -52,6 +52,7 @@
     "windows": {
       "nsis": {
         "installMode": "currentUser",
+        "installerHooks": "./windows/hooks.nsh",
         "languages": ["SimpChinese", "English"],
         "compression": "lzma"
       }

@@ -251,6 +251,10 @@ pub mod system_info {
     pub fn pictures_dir() -> Option<PathBuf> {
         std::env::var_os("HOME").map(|h| PathBuf::from(h).join("Pictures"))
     }
+    /// 登录项（SMAppService）。改名前的旧登录项，Mac 版还没发过，没有要清的
+    pub fn remove_autostart_entry(_name: &str) -> bool {
+        false
+    }
 }
 
 pub mod app_icon {

@@ -151,7 +151,7 @@ impl Default for HotkeySettings {
     }
 }
 
-const DEFAULT_FILE_NAME: &str = "DATO COR_{yyyy}{MM}{dd}_{HH}{mm}{ss}";
+const DEFAULT_FILE_NAME: &str = "DATO OCR_{yyyy}{MM}{dd}_{HH}{mm}{ss}";
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase", default)]
@@ -185,7 +185,7 @@ pub struct CaptureSettings {
     /// copy | copyAndSave
     pub finish_action: String,
     pub save_to_library: bool,
-    /// None = 图片\DATO COR
+    /// None = 图片\DATO OCR
     pub save_directory: Option<String>,
     pub file_name_template: String,
     /// png | jpg
@@ -403,7 +403,7 @@ impl Default for AiSettings {
         Self {
             providers: Vec::new(),
             default_model: String::new(),
-            system_prompt: "你是 DATO COR 里的助手。回答简洁、准确，默认用简体中文；用户给的内容是什么语言、要求用什么语言，就照做。".into(),
+            system_prompt: "你是 DATO OCR 里的助手。回答简洁、准确，默认用简体中文；用户给的内容是什么语言、要求用什么语言，就照做。".into(),
             temperature: 0.7,
             max_tokens: 0,
             thinking: "auto".into(),
@@ -625,7 +625,7 @@ impl Default for SyncSettings {
             webdav_enabled: false,
             webdav_url: "https://dav.jianguoyun.com/dav/".into(),
             webdav_user: String::new(),
-            webdav_folder: "DATO-COR".into(),
+            webdav_folder: "DATO-OCR".into(),
             webdav_interval: 15,
             send_images: true,
             max_image_mb: 10,
@@ -691,7 +691,10 @@ impl Settings {
     pub fn sanitized(mut self) -> Self {
         let c = &mut self.capture;
         // 品牌改名：还是旧默认值的跟着换成新名字，用户自己改过的不动
-        if c.file_name_template == "CHENOCR_{yyyy}{MM}{dd}_{HH}{mm}{ss}" {
+        if matches!(
+            c.file_name_template.as_str(),
+            "CHENOCR_{yyyy}{MM}{dd}_{HH}{mm}{ss}" | "DATO COR_{yyyy}{MM}{dd}_{HH}{mm}{ss}"
+        ) {
             c.file_name_template = DEFAULT_FILE_NAME.into();
         }
         c.mask_opacity = c.mask_opacity.clamp(0.0, 0.9);
@@ -734,8 +737,10 @@ impl Settings {
         }
         pop.drawer_height = pop.drawer_height.clamp(200, 1000);
         let ai = &mut self.ai;
-        if ai.system_prompt.starts_with("你是 CHENOCR 里的助手。") {
-            ai.system_prompt = ai.system_prompt.replacen("CHENOCR", "DATO COR", 1);
+        for old in ["你是 CHENOCR 里的助手。", "你是 DATO COR 里的助手。"] {
+            if let Some(rest) = ai.system_prompt.strip_prefix(old) {
+                ai.system_prompt = format!("你是 DATO OCR 里的助手。{rest}");
+            }
         }
         ai.temperature = ai.temperature.clamp(0.0, 2.0);
         ai.max_tokens = ai.max_tokens.min(200_000);
@@ -783,7 +788,7 @@ impl Settings {
             .trim_matches(['/', '\\'])
             .to_string();
         if sy.webdav_folder.is_empty() {
-            sy.webdav_folder = "DATO-COR".into();
+            sy.webdav_folder = "DATO-OCR".into();
         }
         sy.webdav_interval = sy.webdav_interval.clamp(5, 300);
         sy.max_image_mb = sy.max_image_mb.clamp(1, 50);
@@ -902,10 +907,20 @@ mod tests {
         let s: Settings = serde_json::from_str(old).unwrap();
         let s = s.sanitized();
         assert_eq!(s.capture.file_name_template, DEFAULT_FILE_NAME);
-        assert_eq!(s.ai.system_prompt, "你是 DATO COR 里的助手。别的话");
+        assert_eq!(s.ai.system_prompt, "你是 DATO OCR 里的助手。别的话");
         let custom = r#"{"capture":{"fileNameTemplate":"CHENOCR-{yyyy}"}}"#;
         let s: Settings = serde_json::from_str(custom).unwrap();
         assert_eq!(s.sanitized().capture.file_name_template, "CHENOCR-{yyyy}");
+
+        // 第二次改名：DATO COR 时期的默认值也跟着换
+        let cor = r#"{"capture":{"fileNameTemplate":"DATO COR_{yyyy}{MM}{dd}_{HH}{mm}{ss}"},"ai":{"systemPrompt":"你是 DATO COR 里的助手。回答简洁"}}"#;
+        let s: Settings = serde_json::from_str(cor).unwrap();
+        let s = s.sanitized();
+        assert_eq!(
+            s.capture.file_name_template,
+            "DATO OCR_{yyyy}{MM}{dd}_{HH}{mm}{ss}"
+        );
+        assert_eq!(s.ai.system_prompt, "你是 DATO OCR 里的助手。回答简洁");
     }
 
     #[test]

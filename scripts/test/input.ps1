@@ -10,7 +10,7 @@
 #   input.ps1 type 你好
 #
 # 安全保护：点击 / 拖拽 / 滚轮之前检查鼠标下面那个窗口属于哪个进程，不在允许列表里就报错不执行，
-# 免得测试时点到别人正在用的程序。默认只允许 DATO COR 自己和测试窗口（pwsh / powershell）；
+# 免得测试时点到别人正在用的程序。默认只允许 DATO OCR 自己和测试窗口（pwsh / powershell）；
 # 要放宽就设环境变量 CHENOCR_TEST_ALLOW，例如 $env:CHENOCR_TEST_ALLOW = 'chenocr,pwsh,msedge'。
 # 再设 CHENOCR_TEST_TITLE 的话，还要求窗口标题包含这段文字（区分测试用的浏览器窗口和你自己的）。
 param([string]$Action, [string]$A, [string]$B, [string]$C, [string]$D)

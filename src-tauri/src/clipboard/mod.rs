@@ -137,7 +137,7 @@ pub fn start(app: &AppHandle) {
         });
 }
 
-/// DATO COR 自己写剪贴板（粘贴回填、划词翻译恢复…）。这次变化不进历史；
+/// DATO OCR 自己写剪贴板（粘贴回填、划词翻译恢复…）。这次变化不进历史；
 /// `touch` 给了的话让那条已有记录冒泡到最前（规格 05 §3.4 决定）。
 pub fn write_own(app: &AppHandle, payload: &ClipboardPayload, touch: Option<i64>) -> AppResult<()> {
     begin_ignore(app);

@@ -523,7 +523,7 @@ export function SettingsPage({ section }: { section: string | null }) {
                 <Crop size={26} strokeWidth={2} />
               </span>
               <div>
-                <div style={{ font: 'var(--cn-text-title-2)' }}>DATO COR</div>
+                <div style={{ font: 'var(--cn-text-title-2)' }}>DATO OCR</div>
                 <div className="set-row__desc">
                   {t('settings.about.version', { version: info.data?.version ?? '' })} · {t('settings.about.tagline')}
                 </div>

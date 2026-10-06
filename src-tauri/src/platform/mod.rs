@@ -96,7 +96,7 @@ pub fn foreground_window() -> Option<WindowHandle> {
     sys::window_enum::foreground_window()
 }
 
-/// 这个窗口是不是 DATO COR 自己的。
+/// 这个窗口是不是 DATO OCR 自己的。
 pub fn is_own_window(window: WindowHandle) -> bool {
     sys::window_enum::is_own_window(window)
 }
@@ -306,6 +306,11 @@ pub fn extract_app_icon(exe: &Path) -> Option<RgbaImage> {
 /// 默认的"图片"文件夹。
 pub fn pictures_dir() -> Option<std::path::PathBuf> {
     sys::system_info::pictures_dir()
+}
+
+/// 删掉当前用户"开机自启"里叫 `name` 的那一项（品牌改名后清旧名字用）。删掉了返回 true。
+pub fn remove_autostart_entry(name: &str) -> bool {
+    sys::system_info::remove_autostart_entry(name)
 }
 
 /// 启动子进程时不弹控制台窗口（Windows 的 CREATE_NO_WINDOW）。

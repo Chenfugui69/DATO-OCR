@@ -13,7 +13,7 @@ pub struct Peer {
     pub name: String,
     /// windows | macos | ios | android | web
     pub platform: String,
-    /// desktop：跑着 DATO COR 的电脑；web：浏览器 / 快捷指令
+    /// desktop：跑着 DATO OCR 的电脑；web：浏览器 / 快捷指令
     pub kind: String,
     /// member：加入了本机；host：本机加入的主机
     pub role: String,

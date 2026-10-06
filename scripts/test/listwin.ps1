@@ -1,5 +1,5 @@
 ﻿# 列出某进程的所有有标题的顶层窗口：句柄、可见性、显示亲和性（17 = 不让截屏拍到）、位置。
-param([string[]]$Process = @('chenocr', 'DATO COR'))
+param([string[]]$Process = @('chenocr', 'DATO OCR'))
 Add-Type @"
 using System; using System.Text; using System.Runtime.InteropServices;
 public static class LW {

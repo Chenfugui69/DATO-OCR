@@ -58,7 +58,7 @@ export default function MainView() {
             <Crop size={13} strokeWidth={2.2} />
           </span>
           <span className="sidebar__name" data-tauri-drag-region>
-            DATO COR
+            DATO OCR
           </span>
         </div>
         <div className="sidebar__quick">

@@ -135,7 +135,7 @@ pub fn default_device_name() -> String {
         .and_then(|o| String::from_utf8(o.stdout).ok())
         .map(|s| s.trim().to_string());
     name.filter(|n| !n.is_empty())
-        .unwrap_or_else(|| "DATO COR".into())
+        .unwrap_or_else(|| "DATO OCR".into())
 }
 
 pub fn device_name(app: &AppHandle) -> String {
@@ -765,7 +765,7 @@ pub async fn webdav_connect(
     let st = state(app);
     let folder = folder.trim().trim_matches(['/', '\\']).to_string();
     let folder = if folder.is_empty() {
-        "DATO-COR".to_string()
+        "DATO-OCR".to_string()
     } else {
         folder
     };

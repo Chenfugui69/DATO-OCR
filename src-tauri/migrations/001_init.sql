@@ -1,4 +1,4 @@
--- DATO COR 初始 schema（规格 07 §7.2）
+-- DATO OCR 初始 schema（规格 07 §7.2）
 --
 -- 全文索引统一用 contentless FTS5 + 应用层 bigram 分词：
 --   unicode61 不切中文，整段中文会被当成一个词。Rust 侧在写入前把 CJK 字符拆成

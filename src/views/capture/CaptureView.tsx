@@ -237,6 +237,9 @@ async function loadPixels(sessionId: number, imageId: string) {
 }
 
 function endSession() {
+  pendingMove = null;
+  if (moveFrame) cancelAnimationFrame(moveFrame);
+  moveFrame = 0;
   pixels = null;
   bitmap?.close();
   bitmap = null;
@@ -345,6 +348,7 @@ function copyColor() {
 // ───────────────────────── 指针 ─────────────────────────
 
 function onPointerDown(e: React.PointerEvent) {
+  flushMove();
   const st = get();
   if (!st.session || st.busy) return;
   if (e.button === 2) {
@@ -409,7 +413,44 @@ function onPointerDown(e: React.PointerEvent) {
 /** 遮罩鼠标穿透、露出真实桌面的那几个状态（长截图、GIF 录制） */
 const isLive = (phase: string) => phase === 'longshot' || phase === 'longshot-other' || phase === 'gif' || phase === 'gif-other';
 
+/** 处理鼠标移动要用到的那几个字段（合并时只留最后一个事件的） */
+interface MoveInput {
+  clientX: number;
+  clientY: number;
+  shiftKey: boolean;
+  altKey: boolean;
+}
+
+let pendingMove: MoveInput | null = null;
+let moveFrame = 0;
+
+/**
+ * 鼠标移动合并到每帧处理一次。高回报率鼠标一秒能来 500–1000 个移动事件，每个都重算选区、重画整个
+ * 遮罩的话，低配机的主线程跟不上，拖起来一顿一顿的。画笔 / 手绘马赛克要每一个点（不然线条变成折线），不合并。
+ */
 function onPointerMove(e: React.PointerEvent) {
+  const input = { clientX: e.clientX, clientY: e.clientY, shiftKey: e.shiftKey, altKey: e.altKey };
+  if (get().phase === 'editing' && engine.drawing) {
+    flushMove();
+    handleMove(input);
+    return;
+  }
+  pendingMove = input;
+  if (!moveFrame) moveFrame = requestAnimationFrame(flushMove);
+}
+
+/** 把还没处理的那次移动立刻处理掉（按下、松开前调用，保证用的是最新位置）。 */
+function flushMove() {
+  if (moveFrame) {
+    cancelAnimationFrame(moveFrame);
+    moveFrame = 0;
+  }
+  const m = pendingMove;
+  pendingMove = null;
+  if (m) handleMove(m);
+}
+
+function handleMove(e: MoveInput) {
   const st = get();
   if (!st.session || st.phase === 'idle' || isLive(st.phase)) return;
   const p = toPx(e);
@@ -479,6 +520,7 @@ function onPointerMove(e: React.PointerEvent) {
 }
 
 function onPointerUp() {
+  flushMove();
   const st = get();
   if (st.phase === 'pressing') {
     // 单击（移动 < 4px）= 采纳当前高亮区域
@@ -624,22 +666,62 @@ function onKeyDown(e: KeyboardEvent) {
 
 // ───────────────────────── 渲染 ─────────────────────────
 
-function holeClip(r: Rect | null, s: number, radius: number, viewport: { width: number; height: number }): string | undefined {
-  if (!r) return undefined;
-  const x1 = r.x / s;
-  const y1 = r.y / s;
-  const x2 = right(r) / s;
-  const y2 = bottom(r) / s;
-  // evenodd：外框一圈 + 内框一圈 = 挖洞。比四个 div 拼四周重绘便宜得多
-  const rr = Math.min(radius, (x2 - x1) / 2, (y2 - y1) / 2);
-  if (rr <= 0) {
-    return `polygon(evenodd, 0 0, 100% 0, 100% 100%, 0 100%, 0 0, ${x1}px ${y1}px, ${x1}px ${y2}px, ${x2}px ${y2}px, ${x2}px ${y1}px, ${x1}px ${y1}px)`;
-  }
+/**
+ * 压暗遮罩：选区四周四块纯色矩形，圆角框再在洞的四个角各补一小块（径向渐变挖出圆弧）。
+ *
+ * 以前是一整屏的元素用 clip-path 挖洞：洞一动就得把整屏（4K 屏就是 800 多万像素）重新光栅化一遍，
+ * 低配机拖选区时明显跟不上。现在每块都是纯色、各自一层，拖动只改位置和大小，合成器直接画，不用重绘。
+ * 坐标都是物理像素换算过来的，正好落在设备像素上，四块拼缝处不会有亮线。
+ */
+function Mask({
+  hole,
+  s,
+  radius,
+  viewport,
+  color,
+}: {
+  hole: Rect | null;
+  s: number;
+  radius: number;
+  viewport: { width: number; height: number };
+  color: string;
+}) {
+  const { width: W, height: H } = viewport;
+  const part = (x: number, y: number, w: number, h: number): React.CSSProperties => ({
+    background: color,
+    width: Math.max(0, w),
+    height: Math.max(0, h),
+    transform: `translate(${x}px, ${y}px)`,
+  });
+  if (!hole) return <div className="cap-mask" style={part(0, 0, W, H)} />;
+  const x1 = hole.x / s;
+  const y1 = hole.y / s;
+  const x2 = right(hole) / s;
+  const y2 = bottom(hole) / s;
   // 圆角框配圆角洞，不然四个角会露出一小块没压暗的直角
-  const { width: w, height: h } = viewport;
-  const arc = (x: number, y: number) => `A ${rr} ${rr} 0 0 1 ${x} ${y}`;
-  const hole = `M ${x1 + rr} ${y1} H ${x2 - rr} ${arc(x2, y1 + rr)} V ${y2 - rr} ${arc(x2 - rr, y2)} H ${x1 + rr} ${arc(x1, y2 - rr)} V ${y1 + rr} ${arc(x1 + rr, y1)} Z`;
-  return `path(evenodd, 'M 0 0 H ${w} V ${h} H 0 Z ${hole}')`;
+  const rr = Math.max(0, Math.min(radius, (x2 - x1) / 2, (y2 - y1) / 2));
+  const corner = (x: number, y: number, at: string): React.CSSProperties => ({
+    width: rr,
+    height: rr,
+    transform: `translate(${x}px, ${y}px)`,
+    background: `radial-gradient(circle at ${at}, transparent ${rr - 0.5}px, ${color} ${rr + 0.5}px)`,
+  });
+  return (
+    <>
+      <div className="cap-mask" style={part(0, 0, W, y1)} />
+      <div className="cap-mask" style={part(0, y2, W, H - y2)} />
+      <div className="cap-mask" style={part(0, y1, x1, y2 - y1)} />
+      <div className="cap-mask" style={part(x2, y1, W - x2, y2 - y1)} />
+      {rr > 0 && (
+        <>
+          <div className="cap-mask" style={corner(x1, y1, '100% 100%')} />
+          <div className="cap-mask" style={corner(x2 - rr, y1, '0 100%')} />
+          <div className="cap-mask" style={corner(x1, y2 - rr, '100% 0')} />
+          <div className="cap-mask" style={corner(x2 - rr, y2 - rr, '0 0')} />
+        </>
+      )}
+    </>
+  );
 }
 
 /** 选区框样式 → CSS 变量（选区框、悬停框、拖柄共用）。 */
@@ -932,7 +1014,7 @@ export default function CaptureView() {
       onDoubleClick={onDoubleClick}
       onContextMenu={onContextMenu}
     >
-      {showMask && <div className="cap-mask" style={{ background: `rgba(0,0,0,${opacity})`, clipPath: holeClip(hole, s, radius, viewport) }} />}
+      {showMask && <Mask hole={hole} s={s} radius={radius} viewport={viewport} color={`rgba(0,0,0,${opacity})`} />}
       <canvas ref={committed} className="cap-canvas" width={pw} height={ph} />
       <canvas ref={drafting} className="cap-canvas" width={pw} height={ph} />
 

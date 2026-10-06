@@ -557,8 +557,35 @@ pub fn save_directory(settings: &CaptureSettings) -> std::path::PathBuf {
         .as_ref()
         .filter(|d| !d.trim().is_empty())
         .map(std::path::PathBuf::from)
-        .or_else(|| platform::pictures_dir().map(|p| p.join("DATO COR")))
-        .unwrap_or_else(|| std::env::temp_dir().join("DATO COR"))
+        .or_else(|| platform::pictures_dir().map(|p| p.join(SAVE_DIR_NAME)))
+        .unwrap_or_else(|| std::env::temp_dir().join(SAVE_DIR_NAME))
+}
+
+/// 默认保存位置：图片\DATO OCR
+const SAVE_DIR_NAME: &str = "DATO OCR";
+
+/// 品牌改名后，用默认保存位置的用户：把旧的"图片\DATO COR"文件夹改名过去，截图还在原来那些文件旁边。
+/// 改不了名（文件被占用之类）就算了，新截图存到新文件夹，旧的不动。启动时调一次。
+pub fn migrate_save_directory(settings: &CaptureSettings) {
+    if settings
+        .save_directory
+        .as_ref()
+        .is_some_and(|d| !d.trim().is_empty())
+    {
+        return;
+    }
+    let Some(pictures) = platform::pictures_dir() else {
+        return;
+    };
+    let (old, new) = (pictures.join("DATO COR"), pictures.join(SAVE_DIR_NAME));
+    if old.is_dir() && !new.exists() {
+        match std::fs::rename(&old, &new) {
+            Ok(()) => {
+                tracing::info!(from = %old.display(), to = %new.display(), "默认保存文件夹跟着品牌改名")
+            }
+            Err(err) => tracing::warn!("默认保存文件夹改名失败，旧截图留在原处：{err}"),
+        }
+    }
 }
 
 pub fn file_name(settings: &CaptureSettings) -> String {

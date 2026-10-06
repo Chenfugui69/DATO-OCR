@@ -1,4 +1,4 @@
-//! DATO COR —— 截图 · 识字 · 翻译 · 剪贴板 · AI。（内部代号 chenocr）
+//! DATO OCR —— 截图 · 识字 · 翻译 · 剪贴板 · AI。（内部代号 chenocr）
 //!
 //! 启动顺序：
 //! 1. `platform::init_process()`：声明 PMv2 DPI 感知（必须在任何窗口之前）
@@ -61,6 +61,10 @@ pub fn run() {
         // `--page=settings:translate` 这样的参数可以直接跳到某一页（快捷方式、测试用）；
         // `--translate=文字` 在鼠标旁边弹出划词面板翻译这段文字（脚本、快捷指令、测试用）
         .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
+            // 开机自启 / 静默启动撞上已经在跑的实例：什么都不做（不能把主窗口弹出来）
+            if args.iter().any(|a| a == "--autostart" || a == "--hidden") {
+                return;
+            }
             if let Some(text) = args.iter().find_map(|a| a.strip_prefix("--translate=")) {
                 if !text.trim().is_empty() {
                     translate::selection::show_popup(app, text.to_string(), None);
@@ -199,7 +203,7 @@ pub fn run() {
         Ok(app) => app,
         Err(err) => {
             tracing::error!("应用初始化失败：{err}");
-            eprintln!("DATO COR 初始化失败：{err}");
+            eprintln!("DATO OCR 初始化失败：{err}");
             std::process::exit(1);
         }
     };
@@ -220,7 +224,7 @@ fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     let paths = AppPaths::resolve(&handle)?;
     let settings = Settings::load(&paths.settings_file());
     let log_guard = logging::init(&paths.logs(), false);
-    tracing::info!(version = %app.package_info().version, data = %paths.root().display(), "DATO COR 启动");
+    tracing::info!(version = %app.package_info().version, data = %paths.root().display(), "DATO OCR 启动");
     if let Some(old) = &paths.migrated_from {
         tracing::info!(from = %old.display(), "已把旧数据目录搬到新位置");
     }
@@ -271,6 +275,8 @@ fn on_ready(app: &AppHandle) {
     platform::watch_system_events(on_system_event);
     std::thread::spawn(platform::warm_up_capture);
     maintenance::spawn(app);
+    let ui = app.clone();
+    std::thread::spawn(move || after_rename(&ui));
 
     if let Some(main) = app.get_webview_window(wm::MAIN) {
         wm::apply_window_effects(app, &main);
@@ -279,6 +285,24 @@ fn on_ready(app: &AppHandle) {
         if !silent {
             let _ = main.show();
             let _ = main.set_focus();
+        }
+    }
+}
+
+/// 品牌从 DATO COR 改名为 DATO OCR 之后要补的事（每次启动都检查，做过了就什么都不动）：
+/// - 用默认保存位置的：图片\DATO COR 改名成 图片\DATO OCR
+/// - 开机自启项按产品名登记，旧名字那一项删掉；设置里开着自启的，用新名字重新登记
+fn after_rename(app: &AppHandle) {
+    use tauri_plugin_autostart::ManagerExt;
+    // 测试实例（数据放在别处）不碰用户真正的图片文件夹和开机自启项
+    if std::env::var_os("CHENOCR_TEST_DATA_DIR").is_some() {
+        return;
+    }
+    let settings = state(app).settings();
+    capture::migrate_save_directory(&settings.capture);
+    if platform::remove_autostart_entry("DATO COR") && settings.general.auto_start {
+        if let Err(err) = app.autolaunch().enable() {
+            tracing::warn!("改名后重新登记开机自启失败：{err}");
         }
     }
 }
@@ -359,5 +383,5 @@ fn shutdown(app: &AppHandle) {
         // 退出时必须杀掉识字子进程，防止残留
         st.ocr.shutdown();
     }
-    tracing::info!("DATO COR 退出");
+    tracing::info!("DATO OCR 退出");
 }

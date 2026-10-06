@@ -162,12 +162,16 @@ export class AnnotationEngine {
     this.transform = null;
     this.history = [];
     this.clearCanvas(this.committed);
+    this.committedEmpty = true;
     this.clearCanvas(this.drafting);
     this.changed();
   }
 
   setClip(clip: Rect | null) {
     this.clip = clip;
+    // 拖选区时每帧都会走到这里。没有标注时画布本来就是空的，不用再整块清一遍
+    // （4K 画布清一次就要几毫秒，还得把整张画布重新上传给合成器）
+    if (this.annotations.length === 0 && this.committedEmpty) return;
     this.renderCommitted();
   }
 
@@ -620,12 +624,16 @@ export class AnnotationEngine {
     this.renderCommitted();
   }
 
+  /** 已提交画布上现在什么都没画（setClip 据此跳过重画） */
+  private committedEmpty = true;
+
   renderCommitted() {
     const c = this.committed;
     const ctx = c?.getContext('2d');
     if (!c || !ctx) return;
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.clearRect(0, 0, c.width, c.height);
+    this.committedEmpty = this.annotations.length === 0;
     ctx.setTransform(1, 0, 0, 1, -this.origin.x, -this.origin.y);
     this.withClip(ctx, () => {
       for (const a of this.annotations) drawAnnotation(ctx, a, this.backdrop);

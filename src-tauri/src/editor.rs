@@ -62,7 +62,7 @@ pub fn open(app: &AppHandle, image: RgbaImage, screenshot_id: Option<i64>) -> Ap
         let window = match ui_app.get_webview_window(WINDOW) {
             Some(w) => w,
             None => match wm::builder(&ui_app, WINDOW)
-                .title("编辑图片 - DATO COR")
+                .title("编辑图片 - DATO OCR")
                 .resizable(true)
                 .transparent(true)
                 .shadow(true)

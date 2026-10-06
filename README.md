@@ -1,4 +1,4 @@
-# DATO COR
+# DATO OCR
 
 一款体积小巧、以体验为先的桌面截图工具：截图标注、贴图、长截图、文字识别、翻译、剪贴板历史。
 
@@ -39,7 +39,7 @@ Windows 优先（Windows 10 2004+），macOS 已留好平台抽象层，后续�
 
 交接给 AI 时把这句话丢给它：
 
-> 请先阅读 `docs/实现交接.md`，特别是第 3 节"不能删的东西"，再阅读 `docs/spec/00-项目总纲.md`，然后继续完善 DATO COR。改动某个模块前，先读对应的规格文档。
+> 请先阅读 `docs/实现交接.md`，特别是第 3 节"不能删的东西"，再阅读 `docs/spec/00-项目总纲.md`，然后继续完善 DATO OCR。改动某个模块前，先读对应的规格文档。
 
 ---
 
@@ -96,7 +96,7 @@ cargo test --manifest-path src-tauri/Cargo.toml -- --ignored --nocapture
 
 ### 调试开关
 
-- `CHENOCR_ALLOW_SELF_CAPTURE=1`：让 DATO COR 自己的窗口（遮罩、面板、气泡、贴图）能被截图工具拍到。
+- `CHENOCR_ALLOW_SELF_CAPTURE=1`：让 DATO OCR 自己的窗口（遮罩、面板、气泡、贴图）能被截图工具拍到。
   正常情况下它们都设了 `WDA_EXCLUDEFROMCAPTURE`，外部截图只能拍到一片空白，自动化测试时要开这个。
 - `CHENOCR_TEST_NO_CLIPBOARD=1`：录 GIF 后不把文件放进剪贴板（自动化测试时用）。
 - `CHENOCR_TEST_DATA_DIR=目录`：数据（设置、数据库、图片）放到这个目录下，不碰真正的历史。
@@ -104,7 +104,7 @@ cargo test --manifest-path src-tauri/Cargo.toml -- --ignored --nocapture
   只绑回环时只有本机程序连得上，所以自动同意不会放外人进来。
 - `CHENOCR_TEST_UPDATE_URL=http://127.0.0.1:端口/latest.json`：检查更新只查这个地址（允许 http），启动 3 秒后就查。
 - `CHENOCR_TEST_UPDATE_NO_INSTALL=1`：点"更新"只下载、验签，不运行安装包、不退出。
-- 日志在 `%APPDATA%\DATO COR\logs\`，开发模式同时打到终端。前端未捕获的错误也会转进日志。
+- 日志在 `%APPDATA%\DATO OCR\logs\`，开发模式同时打到终端。前端未捕获的错误也会转进日志。
 
 ## 代码结构
 
@@ -122,7 +122,7 @@ scripts/fetch-ocr.mjs         下载识字引擎
 scripts/test/                 真机测试用的 PowerShell 小工具（模拟键鼠、截屏、测试目标窗口），见交接文档第 7 节
 ```
 
-数据都在 `%APPDATA%\DATO COR\`：`chenocr.db`、`screenshots/`、`clipboard/`、`ocr/`、`logs/`、`settings.json`。
+数据都在 `%APPDATA%\DATO OCR\`：`chenocr.db`、`screenshots/`、`clipboard/`、`ocr/`、`logs/`、`settings.json`。
 
 ## 核心决策速查
 

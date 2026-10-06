@@ -1,7 +1,7 @@
-﻿# 把 DATO COR 的某个窗口切到前台（AttachThreadInput 绕过前台锁）。
+﻿# 把 DATO OCR 的某个窗口切到前台（AttachThreadInput 绕过前台锁）。
 # 发热键前先用它：有的程序（远程控制、游戏）在前台时会吞掉全局热键。
 # 同名窗口多时用 -Handle 指定句柄（winshot.ps1 -List 打出来的第一列）
-param([string]$Title = "DATO COR", [long]$Handle = 0)
+param([string]$Title = "DATO OCR", [long]$Handle = 0)
 Add-Type @"
 using System; using System.Text; using System.Collections.Generic; using System.Runtime.InteropServices;
 public static class Fz {
@@ -18,7 +18,7 @@ public static class Fz {
   public static List<IntPtr> All() { var l = new List<IntPtr>(); EnumWindows((h, p) => { l.Add(h); return true; }, IntPtr.Zero); return l; }
 }
 "@
-$procs = Get-Process -Name chenocr, 'DATO COR' -ErrorAction SilentlyContinue | % { $_.Id }
+$procs = Get-Process -Name chenocr, 'DATO OCR' -ErrorAction SilentlyContinue | % { $_.Id }
 foreach ($h in [Fz]::All()) {
   $p = 0; [void][Fz]::GetWindowThreadProcessId($h, [ref]$p)
   if ($procs -notcontains $p -or -not [Fz]::IsWindowVisible($h)) { continue }
