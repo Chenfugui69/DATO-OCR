@@ -23,7 +23,7 @@ import {
   X,
   type LucideIcon,
 } from 'lucide-react';
-import { forwardRef, type ReactNode } from 'react';
+import { forwardRef, useLayoutEffect, useState, type ReactNode, type RefObject } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import { Tooltip } from '@/ui/overlays';
@@ -75,6 +75,8 @@ function ToolButton({
   active,
   disabled,
   primary,
+  danger,
+  toolId,
   onClick,
 }: {
   icon: LucideIcon;
@@ -83,13 +85,17 @@ function ToolButton({
   active?: boolean;
   disabled?: boolean;
   primary?: boolean;
+  danger?: boolean;
+  /** 绘制工具按钮：二级工具条按它对齐 */
+  toolId?: Tool;
   onClick: () => void;
 }) {
   return (
     <Tooltip content={label} shortcut={shortcut} side="top">
       <button
         type="button"
-        className={clsx('an-btn', active && 'an-btn--active', primary && 'an-btn--primary')}
+        data-tool={toolId}
+        className={clsx('an-btn', active && 'an-btn--active', primary && 'an-btn--primary', danger && 'an-btn--danger')}
         disabled={disabled}
         aria-label={label}
         aria-pressed={active}
@@ -132,6 +138,7 @@ export const Toolbar = forwardRef<HTMLDivElement, ToolbarProps>(function Toolbar
           shortcut={TOOL_KEYS[id]}
           active={tool === id}
           disabled={disabledTools?.[id]}
+          toolId={id}
           onClick={() => onTool(tool === id ? null : id)}
         />
       ))}
@@ -147,6 +154,7 @@ export const Toolbar = forwardRef<HTMLDivElement, ToolbarProps>(function Toolbar
               label={t(`actions.${id}`)}
               shortcut={ACTION_KEYS[id]}
               primary={id === 'done'}
+              danger={id === 'cancel'}
               disabled={disabledActions?.[id]}
               onClick={() => onAction(id)}
             />
@@ -158,6 +166,19 @@ export const Toolbar = forwardRef<HTMLDivElement, ToolbarProps>(function Toolbar
 });
 
 // ───────────────────────── 二级工具条 ─────────────────────────
+
+/**
+ * 二级工具条要对准的位置：主工具条上 `tool` 那个按钮的水平中心（相对工具条左边，CSS 像素）。
+ * 以前二级条贴着主工具条右边放，点左边的画笔，选项却出在最右边，看不出是谁的。
+ */
+export function useToolAnchor(barRef: RefObject<HTMLElement | null>, tool: Tool | null): number | null {
+  const [x, setX] = useState<number | null>(null);
+  useLayoutEffect(() => {
+    const btn = tool ? barRef.current?.querySelector<HTMLElement>(`[data-tool="${tool}"]`) : null;
+    setX(btn ? btn.offsetLeft + btn.offsetWidth / 2 : null);
+  }, [barRef, tool]);
+  return x;
+}
 
 function SizeDots({ sizes, value, onChange, label }: { sizes: number[]; value: number; onChange: (v: number) => void; label: string }) {
   const max = Math.max(...sizes);

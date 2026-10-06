@@ -62,28 +62,44 @@ html[data-view='capture'] #root {
 }
 
 /* 8 个控制点：白色圆 + 框色描边 + 一圈阴影（框是白色时也看得见）；实际命中范围更大 */
+/* 拖柄：四个角是圆点，四条边中间是圆润的短横条。
+   框线（outline）在选区外面一圈，所以按 --sx/--sy 往外挪半个线宽，落在线的正中 */
 .cap-handle {
   position: absolute;
-  width: 7px;
-  height: 7px;
-  margin: -3.5px 0 0 -3.5px;
-  border-radius: 50%;
+  width: 9px;
+  height: 9px;
+  border-radius: 999px;
   background: #fff;
-  box-shadow: 0 0 0 1px var(--cap-frame-color), 0 1px 3px rgba(0, 0, 0, 0.45);
+  box-shadow:
+    0 0 0 1.5px var(--cap-frame-color),
+    0 1px 3px rgba(0, 0, 0, 0.35);
+  transform: translate(-50%, -50%);
+  translate: calc(var(--sx, 0) * var(--cap-frame-width) / 2) calc(var(--sy, 0) * var(--cap-frame-width) / 2);
   pointer-events: none;
 }
+.cap-handle--h {
+  width: 22px;
+  height: 6px;
+}
+.cap-handle--v {
+  width: 6px;
+  height: 22px;
+}
 
+/* 尺寸提示：淡一点的小标签，不抢选区的视觉 */
 .cap-size {
   position: absolute;
   left: 0;
   top: 0;
-  padding: 3px 7px;
-  border-radius: var(--cn-radius-sm);
-  font: 500 11px/14px var(--cn-font-sans);
-  color: var(--cn-label);
+  padding: 2px 6px;
+  border-radius: 5px;
+  font: 400 10.5px/14px var(--cn-font-sans);
+  letter-spacing: 0.01em;
+  color: rgba(255, 255, 255, 0.7);
+  background: rgba(0, 0, 0, 0.2);
+  backdrop-filter: blur(8px);
   pointer-events: none;
   white-space: nowrap;
-  box-shadow: var(--cn-shadow-md);
 }
 
 .cap-text-layer {

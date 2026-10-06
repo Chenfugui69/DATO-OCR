@@ -10,6 +10,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react
 import { useTranslation } from 'react-i18next';
 
 import { useEvent } from '@/lib/events';
+import { useElementSize } from '@/lib/hooks';
 import { editor } from '@/lib/ipc';
 import { shotUrl } from '@/lib/platform';
 import type { EditorAction, EditorDoc } from '@/lib/types';
@@ -21,7 +22,7 @@ import { BRUSH_RANGE, defaultToolOptions, PEN_RANGE, type Tool, type ToolOptions
 import { bitmapSource } from '@/views/annotate/pixels';
 import { canPick, handleCursor, SelectionOverlay, toolCursor } from '@/views/annotate/SelectionOverlay';
 import { TextEditor, useEngineVersion } from '@/views/annotate/TextEditor';
-import { SubToolbar, TOOL_KEYS, Toolbar, type ActionId } from '@/views/annotate/Toolbar';
+import { SubToolbar, TOOL_KEYS, Toolbar, useToolAnchor, type ActionId } from '@/views/annotate/Toolbar';
 
 const engine = new AnnotationEngine();
 const PAD = 24;
@@ -118,6 +119,14 @@ export default function EditorView() {
   // 选中了已有标注：二级工具条显示它的样式，改了直接作用到它身上
   const picked = engine.selectedAnnotation;
   const pickedTool = picked ? toolOf(picked) : null;
+  // 二级工具条在主工具条上方居中；往对应的工具按钮那边挪，但不超出主工具条的两头
+  const barRef = useRef<HTMLDivElement>(null);
+  const subRef = useRef<HTMLDivElement>(null);
+  const barSize = useElementSize(barRef, { width: 600, height: 44 });
+  const subSize = useElementSize(subRef, { width: 300, height: 40 }, [!!(pickedTool ?? tool)]);
+  const anchor = useToolAnchor(barRef, pickedTool ?? tool);
+  const room = Math.max(0, (barSize.width - subSize.width) / 2);
+  const subShift = anchor == null ? 0 : Math.max(-room, Math.min(room, anchor - barSize.width / 2));
 
   const toPx = (e: { clientX: number; clientY: number }, stage: HTMLElement) => {
     const r = stage.getBoundingClientRect();
@@ -285,6 +294,8 @@ export default function EditorView() {
       <footer className="ed-dock">
         {(pickedTool ?? tool) && (
           <SubToolbar
+            ref={subRef}
+            style={{ transform: `translateX(${subShift}px)` }}
             className="ed-sub"
             tool={(pickedTool ?? tool)!}
             options={picked && pickedTool ? engine.optionsOf(picked, options) : options}
@@ -295,6 +306,7 @@ export default function EditorView() {
           />
         )}
         <Toolbar
+          ref={barRef}
           tool={tool}
           onTool={(next) => {
             if (engine.text) engine.commitText();

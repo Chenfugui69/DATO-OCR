@@ -25,7 +25,7 @@ import { BRUSH_RANGE, PEN_RANGE, type Tool } from '@/views/annotate/model';
 import { bmpSource, type PixelSource } from '@/views/annotate/pixels';
 import { canPick, handleCursor, SelectionOverlay, toolCursor } from '@/views/annotate/SelectionOverlay';
 import { TextEditor, useEngineVersion } from '@/views/annotate/TextEditor';
-import { SubToolbar, TOOL_KEYS, Toolbar, type ActionId } from '@/views/annotate/Toolbar';
+import { SubToolbar, TOOL_KEYS, Toolbar, useToolAnchor, type ActionId } from '@/views/annotate/Toolbar';
 import { buildLabels, TRANSLATION_GROUP } from '@/views/annotate/translateLayer';
 
 import {
@@ -745,7 +745,7 @@ function SizeHint({ rect, s, viewport }: { rect: Rect; s: number; viewport: { wi
   const text = `${rect.width} × ${rect.height}`;
   const pos = placeSizeHint({ x: rect.x / s, y: rect.y / s, width: rect.width / s, height: rect.height / s }, size, viewport);
   return (
-    <div ref={ref} className="cap-size cn-glass-thin cn-numeric" style={{ transform: `translate(${pos.x}px, ${pos.y}px)` }}>
+    <div ref={ref} className="cap-size cn-numeric" style={{ transform: `translate(${pos.x}px, ${pos.y}px)` }}>
       {text}
     </div>
   );
@@ -761,11 +761,23 @@ function Handles({ rect, s, radius }: { rect: Rect; s: number; radius: number })
         const dx = h.includes('w') ? inset : h.includes('e') ? -inset : 0;
         const dy = h.includes('n') ? inset : h.includes('s') ? -inset : 0;
         const corner = h.length === 2;
+        // 框线是 outline，画在选区外面一圈；拖柄要落在线的正中，往外挪半个线宽
+        const sx = h.includes('w') ? -1 : h.includes('e') ? 1 : 0;
+        const sy = h.includes('n') ? -1 : h.includes('s') ? 1 : 0;
+        const kind = corner ? 'corner' : sy !== 0 ? 'h' : 'v';
         return (
           <span
             key={h}
-            className="cap-handle"
-            style={{ left: p.x / s + (corner ? dx : 0), top: p.y / s + (corner ? dy : 0), cursor: HANDLE_CURSORS[h] }}
+            className={`cap-handle cap-handle--${kind}`}
+            style={
+              {
+                left: p.x / s + (corner ? dx : 0),
+                top: p.y / s + (corner ? dy : 0),
+                cursor: HANDLE_CURSORS[h],
+                '--sx': sx,
+                '--sy': sy,
+              } as React.CSSProperties
+            }
           />
         );
       })}
@@ -840,14 +852,15 @@ function Toolbars({ rect, s, viewport }: { rect: Rect; s: number; viewport: { wi
   const barRef = useRef<HTMLDivElement>(null);
   const subRef = useRef<HTMLDivElement>(null);
   const bar = useElementSize(barRef, { width: 540, height: 40 });
-  const sub = useElementSize(subRef, { width: 300, height: 36 });
+  const picked0 = engine.selectedAnnotation;
+  const hasSub = !!(tool ?? (picked0 ? toolOf(picked0) : null));
+  const sub = useElementSize(subRef, { width: 300, height: 40 }, [hasSub]);
 
   const css = { x: rect.x / s, y: rect.y / s, width: rect.width / s, height: rect.height / s };
   const pos = placeToolbar(css, bar, viewport);
   const above = !pos.inside && pos.y < css.y;
   let subY = above ? pos.y - 4 - sub.height : pos.y + bar.height + 4;
   if (subY + sub.height > viewport.height || subY < 0) subY = above ? pos.y + bar.height + 4 : pos.y - 4 - sub.height;
-  const subX = Math.max(0, Math.min(pos.x + bar.width - sub.width, viewport.width - sub.width));
 
   // 长截图入口只在这块屏的选区足够大时有意义；模糊需要位图到位
   const blurPending = tool === 'mosaic' && options.mosaic.mode === 'blur' && !bitmapReady;
@@ -855,6 +868,9 @@ function Toolbars({ rect, s, viewport }: { rect: Rect; s: number; viewport: { wi
   const picked = engine.selectedAnnotation;
   const pickedTool = picked ? toolOf(picked) : null;
   const subTool = pickedTool ?? tool;
+  // 二级条的中心对准对应的工具按钮，贴到屏幕边时再往里收
+  const anchor = useToolAnchor(barRef, subTool);
+  const subX = Math.max(4, Math.min(pos.x + (anchor ?? bar.width / 2) - sub.width / 2, viewport.width - sub.width - 4));
   const subOptions = picked && pickedTool ? engine.optionsOf(picked, options) : options;
   return (
     <>

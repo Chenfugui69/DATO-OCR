@@ -1,67 +1,90 @@
-/* 工具条（规格 02 §3.6.6–3.6.8）：高 40、圆角 10、玻璃材质；按钮 32×32、图标 18、间距 2、内边距 4 */
+/* 工具条：高 44、圆角 12、玻璃材质，外面一圈细边 + 柔和投影，压在任何截图内容上都分得清。
+   按钮 34×34、圆角 9、图标 18；选中的绘制工具用浅主色底 + 主色图标（不再整块主色，太抢）；
+   完成按钮是主色实心的稍宽胶囊，取消按钮悬停时泛红。 */
 .an-toolbar {
   display: flex;
   align-items: center;
-  gap: 2px;
-  height: 40px;
-  padding: 4px;
-  border-radius: var(--cn-radius-lg);
+  gap: 1px;
+  height: 44px;
+  padding: 5px;
+  border-radius: 12px;
   white-space: nowrap;
   user-select: none;
+  box-shadow:
+    0 10px 30px rgba(0, 0, 0, 0.22),
+    0 2px 6px rgba(0, 0, 0, 0.12),
+    0 0 0 0.5px rgba(0, 0, 0, 0.22),
+    inset 0 0.5px 0 rgba(255, 255, 255, 0.14);
 }
 .an-btn {
-  width: 32px;
-  height: 32px;
+  width: 34px;
+  height: 34px;
   display: grid;
   place-items: center;
-  border-radius: 7px;
+  border-radius: 9px;
   color: var(--cn-label);
   transition:
     background-color var(--cn-duration-fast) var(--cn-ease-out),
-    transform 60ms var(--cn-ease-out);
+    color var(--cn-duration-fast) var(--cn-ease-out),
+    transform 80ms var(--cn-ease-out);
 }
 .an-btn:hover:not(:disabled) {
   background: var(--cn-bg-hover);
 }
 .an-btn:active:not(:disabled) {
-  transform: scale(0.94);
+  transform: scale(0.92);
   background: var(--cn-bg-active);
 }
 .an-btn:disabled {
   opacity: 0.3;
   cursor: not-allowed;
 }
-/* 当前激活的绘制工具：背景主色、图标反白（规格 02 §3.6.10） */
+/* 当前激活的绘制工具（规格 02 §3.6.10） */
 .an-btn--active,
 .an-btn--active:hover:not(:disabled) {
-  background: var(--cn-accent);
-  color: var(--cn-label-on-accent);
+  background: color-mix(in srgb, var(--cn-accent) 18%, transparent);
+  color: var(--cn-accent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--cn-accent) 35%, transparent);
 }
-/* 完成按钮：主色实心 */
+.an-btn--danger:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--cn-red) 16%, transparent);
+  color: var(--cn-red);
+}
+/* 完成按钮：主色实心胶囊 */
 .an-btn--primary,
 .an-btn--primary:hover:not(:disabled) {
+  width: 44px;
+  margin-left: 2px;
   background: var(--cn-accent);
   color: var(--cn-label-on-accent);
+  box-shadow: 0 2px 8px color-mix(in srgb, var(--cn-accent) 40%, transparent);
 }
 .an-btn--primary:hover:not(:disabled) {
   background: var(--cn-accent-hover);
 }
 .an-sep {
-  width: 0.5px;
-  height: 20px;
-  margin: 0 6px;
+  width: 1px;
+  height: 18px;
+  margin: 0 5px;
+  border-radius: 1px;
   background: var(--cn-separator);
   flex: none;
 }
 
+/* 二级工具条：和主工具条同一套样子，矮一点；水平位置对准对应的工具按钮（useToolAnchor） */
 .an-subtoolbar {
   display: flex;
   align-items: center;
   gap: 2px;
-  height: 36px;
-  padding: 4px 6px;
-  border-radius: var(--cn-radius-lg);
+  height: 40px;
+  padding: 5px 8px;
+  border-radius: 12px;
   user-select: none;
+  box-shadow:
+    0 10px 30px rgba(0, 0, 0, 0.2),
+    0 2px 6px rgba(0, 0, 0, 0.1),
+    0 0 0 0.5px rgba(0, 0, 0, 0.22),
+    inset 0 0.5px 0 rgba(255, 255, 255, 0.14);
 }
 .an-group {
   display: flex;
@@ -70,11 +93,11 @@
 }
 .an-size,
 .an-choice {
-  min-width: 28px;
-  height: 28px;
+  min-width: 30px;
+  height: 30px;
   display: grid;
   place-items: center;
-  border-radius: 6px;
+  border-radius: 8px;
   color: var(--cn-label);
   transition: background-color var(--cn-duration-fast);
 }
@@ -99,11 +122,11 @@
   padding: 0 6px;
   font: 500 12px/1 var(--cn-font-sans);
 }
-/* 色块：16×16 圆形（规格 02 §3.7.3） */
+/* 色块：18×18 圆形（规格 02 §3.7.3 是 16，放大一点好点） */
 .an-color {
   position: relative;
-  width: 16px;
-  height: 16px;
+  width: 18px;
+  height: 18px;
   margin: 0 3px;
   border-radius: 50%;
   box-shadow: inset 0 0 0 0.5px rgba(0, 0, 0, 0.25);
