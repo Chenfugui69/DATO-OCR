@@ -104,6 +104,8 @@ export const editor = {
 // ───────────────────────── 剪贴板 ─────────────────────────
 
 export const clipboard = {
+  /** GIF 卡片预览：数据目录里那份副本的相对路径（早先的记录现在补一份） */
+  gifPreview: (id: number) => call<string | null>('clipboard_gif_preview', { id }),
   query: (query: ClipQuery) => call<ClipPage>('clipboard_query', { query }),
   get: (id: number) => call<ClipDetail>('clipboard_get', { id }),
   stats: () => call<ClipStats>('clipboard_stats'),
@@ -170,6 +172,9 @@ export const ocr = {
     call<void>('ocr_rerun', { jobId, engine, upscale }),
   saveText: (recordId: number, text: string) => call<void>('ocr_save_text', { recordId, text }),
   status: () => call<EngineStatus>('ocr_status'),
+  /** 下载安装 PaddleOCR 引擎，进度看 `ocr-engine-download` 事件 */
+  paddleInstall: () => call<void>('ocr_paddle_install'),
+  paddleRemove: () => call<void>('ocr_paddle_remove'),
   history: (query: { keyword?: string; offset: number; limit: number }) => call<OcrPage>('ocr_history', { query }),
   openRecord: (id: number) => call<void>('ocr_open_record', { id }),
   deleteRecord: (id: number) => call<void>('ocr_delete_record', { id }),
@@ -203,6 +208,8 @@ export const ai = {
 };
 
 export const system = {
+  /** 调用方窗口是不是前台窗口 */
+  isForeground: () => call<boolean>('window_is_foreground'),
   settings: () => call<Settings>('settings_get'),
   setSettings: (settings: Settings) => call<Settings>('settings_set', { settings }),
   resetSettings: () => call<Settings>('settings_reset'),

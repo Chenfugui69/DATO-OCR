@@ -16,6 +16,8 @@ import type { ProviderInfo, TranslateResult } from '@/lib/types';
 import { Button, IconButton, Select, Skeleton } from '@/ui/controls';
 import { notify } from '@/ui/overlays';
 
+import { ProviderLogo } from './ProviderLogo';
+
 export const LANGS = ['zh', 'zh-TW', 'en', 'ja', 'ko', 'fr', 'de', 'es', 'ru', 'pt', 'it', 'ar', 'th', 'vi'];
 
 type State = { loading: boolean; result: TranslateResult | null; error: string | null };
@@ -158,6 +160,7 @@ function ProviderCard({
         onKeyDown={(e) => (e.key === 'Enter' || e.key === ' ') && (e.preventDefault(), toggle())}
       >
         <ChevronRight className="tr-card__chev" size={13} strokeWidth={2} />
+        <ProviderLogo id={provider.id} size={15} />
         <span className="tr-card__name">{provider.name}</span>
         {primary && <span className="tr-card__badge">{t('settings.translate.default')}</span>}
         {/* 折起来时在标题后面露一行译文 */}

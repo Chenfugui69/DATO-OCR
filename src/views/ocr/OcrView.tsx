@@ -4,6 +4,7 @@
 
 import './ocr.css';
 
+import { useQuery } from '@tanstack/react-query';
 import { LogicalPosition, LogicalSize } from '@tauri-apps/api/dpi';
 import { currentMonitor, getCurrentWindow } from '@tauri-apps/api/window';
 import clsx from 'clsx';
@@ -14,7 +15,7 @@ import { useTranslation } from 'react-i18next';
 import { useEvent } from '@/lib/events';
 import { capture, ocr } from '@/lib/ipc';
 import { assetUrl } from '@/lib/platform';
-import { useSettings } from '@/lib/settings';
+import { useSettings, useSettingsStore } from '@/lib/settings';
 import type { OcrJob } from '@/lib/types';
 import { Button, EmptyState, Skeleton, Spinner, Switch } from '@/ui/controls';
 import { DropdownMenu, notify } from '@/ui/overlays';
@@ -184,8 +185,14 @@ export default function OcrView() {
     if (job) void ocr.rerun(job.id, engine, upscale).catch(notify.error);
   };
 
+  const engines = useQuery({ queryKey: ['ocr-status'], queryFn: ocr.status, staleTime: 30_000 });
+  const autoCopy = settings?.ocr.autoCopy ?? true;
   const result = job?.result;
-  const info = result ? `${result.engine} · ${(result.elapsedMs / 1000).toFixed(1)}s` : job?.status === 'running' ? t('ocr.running') : '';
+  const info = result
+    ? `${result.engine} · ${(result.elapsedMs / 1000).toFixed(1)}s${job?.copied ? ` · ${t('ocr.autoCopied')}` : ''}`
+    : job?.status === 'running'
+      ? t('ocr.running')
+      : '';
 
   return (
     <div className="ocr-root">
@@ -355,6 +362,7 @@ export default function OcrView() {
           align="start"
           items={[
             { label: t('ocr.rerunRapid'), onSelect: () => rerun('rapid', false) },
+            ...(engines.data?.paddle ? [{ label: t('ocr.rerunPaddle'), onSelect: () => rerun('paddle', false) }] : []),
             { label: t('ocr.rerunSystem'), onSelect: () => rerun('system', false) },
             { separator: true },
             { label: t('ocr.rerunUpscale'), onSelect: () => rerun(null, true) },
@@ -366,6 +374,14 @@ export default function OcrView() {
           </Button>
         </DropdownMenu>
         <span style={{ flex: 1 }} />
+        <label className="ocr-toggle">
+          <Switch
+            checked={autoCopy}
+            onChange={(v) => void useSettingsStore.getState().update((d) => void (d.ocr.autoCopy = v)).catch(notify.error)}
+            label={t('ocr.autoCopy')}
+          />
+          {t('ocr.autoCopy')}
+        </label>
         <label className="ocr-toggle">
           <Switch checked={keepBreaks} onChange={setKeepBreaks} label={t('ocr.keepBreaks')} />
           {t('ocr.keepBreaks')}

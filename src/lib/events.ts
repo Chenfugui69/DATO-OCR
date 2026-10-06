@@ -12,6 +12,7 @@ import type {
   LongshotProgress,
   LongshotStateEvent,
   OcrJob,
+  PaddleDownload,
   Settings,
   ToastPayload,
   UpdateStatus,
@@ -37,6 +38,7 @@ export interface EventMap {
   'update-status': UpdateStatus;
   'library-changed': null;
   'ocr-job': OcrJob;
+  'ocr-engine-download': PaddleDownload;
   'ocr-history-changed': null;
   toast: ToastPayload;
   navigate: string;

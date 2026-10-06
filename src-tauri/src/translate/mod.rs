@@ -99,6 +99,7 @@ fn provider_name(id: &str) -> &'static str {
     match id {
         "bing" => "必应翻译",
         "transmart" => "腾讯翻译",
+        "youdao" => "有道翻译",
         "google" => "谷歌翻译",
         "deepl" => "DeepL",
         "openai" => "AI 大模型",
@@ -107,7 +108,7 @@ fn provider_name(id: &str) -> &'static str {
 }
 
 fn is_free(id: &str) -> bool {
-    matches!(id, "bing" | "transmart" | "google")
+    matches!(id, "bing" | "transmart" | "youdao" | "google")
 }
 
 /// 全部翻译源，按设置里的顺序。
@@ -218,6 +219,7 @@ pub async fn translate(app: &AppHandle, req: TranslateRequest) -> AppResult<Tran
         let result = match provider.as_str() {
             "bing" => providers::bing(&ctx).await,
             "transmart" => providers::transmart(&ctx, &detected).await,
+            "youdao" => providers::youdao(&ctx).await,
             "google" => providers::google(&ctx).await,
             "deepl" => match secret(app, SECRET_DEEPL) {
                 Some(k) => providers::deepl(&ctx, &k).await,

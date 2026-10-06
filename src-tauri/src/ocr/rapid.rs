@@ -1,4 +1,4 @@
-//! RapidOCR-json 子进程（规格 04 §2）。
+//! RapidOCR-json 子进程（规格 04 §2）。可选的 PaddleOCR-json 引擎是同一个作者、同一套协议，也走这里。
 //!
 //! 协议：启动后打印若干行，最后一行 `OCR init completed.`；之后每行输入一个 JSON
 //! 任务，每行输出一个 JSON 结果。`code` 100 成功、101 无文字（**不是错误**）、其他失败。
@@ -36,20 +36,45 @@ struct RawResult {
 
 impl RapidEngine {
     pub fn spawn(dir: &Path) -> AppResult<Self> {
-        let exe = dir.join("RapidOCR-json.exe");
         // 模型目录用相对路径（工作目录设为引擎目录）：绝对路径里有中文或长路径前缀时引擎读不到
+        Self::spawn_with(
+            dir,
+            "RapidOCR-json.exe",
+            &[
+                "--models=models",
+                "--det=ch_PP-OCRv4_det_infer.onnx",
+                "--cls=ch_ppocr_mobile_v2.0_cls_infer.onnx",
+                "--rec=rec_ch_PP-OCRv4_infer.onnx",
+                "--keys=dict_chinese.txt",
+                "--ensureAscii=1",
+                "--doAngle=1",
+                "--mostAngle=1",
+                // 默认 1024 会把 4K 截图里的小字缩没；2048 是速度和精度的折中
+                "--maxSideLen=2048",
+            ],
+        )
+    }
+
+    /// PaddleOCR-json（下载的高精度引擎）：参数风格不同，协议一样。
+    pub fn spawn_paddle(dir: &Path) -> AppResult<Self> {
+        Self::spawn_with(
+            dir,
+            super::paddle::EXE,
+            &[
+                "-config_path=models/config_chinese.txt",
+                "-cls=1",
+                "-use_angle_cls=1",
+                "-limit_side_len=2048",
+                "-ensure_ascii=1",
+            ],
+        )
+    }
+
+    fn spawn_with(dir: &Path, exe: &str, args: &[&str]) -> AppResult<Self> {
+        let exe = dir.join(exe);
         let mut child = platform::hidden_command(&exe)
             .current_dir(dir)
-            .arg("--models=models")
-            .arg("--det=ch_PP-OCRv4_det_infer.onnx")
-            .arg("--cls=ch_ppocr_mobile_v2.0_cls_infer.onnx")
-            .arg("--rec=rec_ch_PP-OCRv4_infer.onnx")
-            .arg("--keys=dict_chinese.txt")
-            .arg("--ensureAscii=1")
-            .arg("--doAngle=1")
-            .arg("--mostAngle=1")
-            // 默认 1024 会把 4K 截图里的小字缩没；2048 是速度和精度的折中
-            .arg("--maxSideLen=2048")
+            .args(args)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
@@ -116,10 +141,16 @@ impl RapidEngine {
         self.stdin.write_all(request.as_bytes())?;
         self.stdin.write_all(b"\n")?;
         self.stdin.flush()?;
-        let line = match self.lines.recv_timeout(RECOGNIZE_TIMEOUT) {
-            Ok(line) => line,
-            Err(RecvTimeoutError::Timeout) => return Err(AppError::msg("识字超时")),
-            Err(RecvTimeoutError::Disconnected) => return Err(AppError::msg("识字引擎已退出")),
+        // 结果是一行 JSON；引擎偶尔夹着打几行日志，跳过
+        let deadline = std::time::Instant::now() + RECOGNIZE_TIMEOUT;
+        let line = loop {
+            let left = deadline.saturating_duration_since(std::time::Instant::now());
+            match self.lines.recv_timeout(left) {
+                Ok(line) if line.trim_start().starts_with('{') => break line,
+                Ok(_) => continue,
+                Err(RecvTimeoutError::Timeout) => return Err(AppError::msg("识字超时")),
+                Err(RecvTimeoutError::Disconnected) => return Err(AppError::msg("识字引擎已退出")),
+            }
         };
         let _ = std::fs::remove_file(temp);
         let raw: RawResult = serde_json::from_str(&line)?;

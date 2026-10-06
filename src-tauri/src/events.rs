@@ -23,6 +23,8 @@ pub const UPDATE_STATUS: &str = "update-status";
 pub const LIBRARY_CHANGED: &str = "library-changed";
 pub const OCR_JOB: &str = "ocr-job";
 pub const OCR_HISTORY_CHANGED: &str = "ocr-history-changed";
+/// PaddleOCR 引擎下载进度
+pub const OCR_ENGINE_DOWNLOAD: &str = "ocr-engine-download";
 
 pub const TOAST: &str = "toast";
 pub const NAVIGATE: &str = "navigate";

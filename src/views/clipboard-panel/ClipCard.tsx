@@ -5,12 +5,86 @@
 
 import clsx from 'clsx';
 import { File, Globe, Image, Link2, MonitorSmartphone, Palette, Pin, Star, Type } from 'lucide-react';
-import { memo } from 'react';
+import { memo, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import { readableOn, relativeTime } from '@/lib/format';
+import { clipboard } from '@/lib/ipc';
 import { assetUrl } from '@/lib/platform';
 import type { ClipItem } from '@/lib/types';
+
+/** 复制的是单个 GIF 文件：卡片按图片显示（标题、图标都是 GIF） */
+export function isGifItem(item: ClipItem): boolean {
+  return item.type === 'files' && item.files.length === 1 && /\.gif$/i.test(item.files[0] ?? '');
+}
+
+/** GIF 图标：圆角框里写着 GIF，和 lucide 图标一样按 currentColor 描线 */
+function GifIcon({ className, strokeWidth = 1.6 }: { className?: string; strokeWidth?: number }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={strokeWidth} strokeLinecap="round" strokeLinejoin="round">
+      <rect x="2.5" y="5" width="19" height="14" rx="3" />
+      <path d="M10 10.2a2.2 2.2 0 1 0 0 3.6V12H8.8" />
+      <path d="M12.6 9.8v4.4" />
+      <path d="M17.6 9.8h-2.4v4.4M15.2 12h2" />
+    </svg>
+  );
+}
+
+/**
+ * GIF 预览：平时是静止的第一帧（画在 canvas 上），鼠标放上去才放动图，移开就停。
+ * 预览用的是数据目录里那份副本（原文件多半在面板读不到的地方），早先的记录现在补一份
+ */
+function GifPreview({ item, playing, layout }: { item: ClipItem; playing: boolean; layout: 'card' | 'row' }) {
+  const [rel, setRel] = useState(item.thumbPath);
+  const [failed, setFailed] = useState(false);
+  const canvas = useRef<HTMLCanvasElement>(null);
+  useEffect(() => {
+    if (rel || failed) return;
+    let alive = true;
+    clipboard
+      .gifPreview(item.id)
+      .then((r) => alive && (r ? setRel(r) : setFailed(true)))
+      .catch(() => alive && setFailed(true));
+    return () => {
+      alive = false;
+    };
+  }, [item.id, rel, failed]);
+  const src = assetUrl(rel);
+  useEffect(() => {
+    if (!src) return;
+    const img = new window.Image();
+    img.onload = () => {
+      const c = canvas.current;
+      if (!c || !img.naturalWidth) return;
+      // 卡片就两百来像素宽，第一帧缩小了画，省内存
+      const scale = Math.min(1, 480 / img.naturalWidth);
+      c.width = Math.max(1, Math.round(img.naturalWidth * scale));
+      c.height = Math.max(1, Math.round(img.naturalHeight * scale));
+      c.getContext('2d')?.drawImage(img, 0, 0, c.width, c.height);
+    };
+    img.onerror = () => setFailed(true);
+    img.src = src;
+    return () => {
+      img.onload = null;
+      img.onerror = null;
+    };
+  }, [src]);
+  if (!src || failed) {
+    return (
+      <div className="clip-card__files">
+        <GifIcon className="clip-card__gif-fallback" />
+        <div className="clip-card__fname">{(item.files[0] ?? '').split(/[\\/]/).pop()}</div>
+      </div>
+    );
+  }
+  return (
+    <div className="clip-card__image clip-card__gif">
+      <canvas ref={canvas} style={{ visibility: playing ? 'hidden' : undefined }} />
+      {playing && <img src={src} alt="" draggable={false} />}
+      {layout === 'card' && !playing && <span className="clip-card__gif-badge">GIF</span>}
+    </div>
+  );
+}
 
 function domainOf(url: string): string {
   try {
@@ -33,6 +107,7 @@ export const ClipCard = memo(function ClipCard({
   index,
   layout,
   onClick,
+  onActivate,
   onDoubleClick,
   onContextMenu,
 }: {
@@ -40,12 +115,17 @@ export const ClipCard = memo(function ClipCard({
   selected: boolean;
   index: number;
   layout: 'card' | 'row';
+  /** 按下左键：选中 */
   onClick: () => void;
-  onDoubleClick: () => void;
+  /** 单击（松开）就粘贴的模式下传进来 */
+  onActivate?: () => void;
+  onDoubleClick?: () => void;
   onContextMenu: (e: React.MouseEvent) => void;
 }) {
   const { t } = useTranslation();
   const text = item.preview ?? '';
+  const gif = isGifItem(item);
+  const [hover, setHover] = useState(false);
   let body: React.ReactNode;
   let detail: string | null = null;
   let colorStyle: React.CSSProperties | undefined;
@@ -75,6 +155,11 @@ export const ClipCard = memo(function ClipCard({
       );
       break;
     case 'files':
+      if (gif) {
+        body = <GifPreview item={item} playing={hover} layout={layout} />;
+        if (item.width && item.height) detail = `${item.width} × ${item.height}`;
+        break;
+      }
       body = (
         <div className="clip-card__files">
           <File size={layout === 'card' ? 28 : 18} strokeWidth={1.5} />
@@ -103,13 +188,16 @@ export const ClipCard = memo(function ClipCard({
   const time = <span className="clip-card__time">{relativeTime(item.lastUsedAt)}</span>;
   const appName = item.sourceApp ?? t('clip.unknownApp');
   // 从别的设备同步来的：右上角是设备图标，底栏的来源是那台设备的名字
-  const TypeIcon = item.remote ? MonitorSmartphone : (TYPE_ICON[item.type] ?? Type);
+  const TypeIcon = item.remote ? MonitorSmartphone : gif ? GifIcon : (TYPE_ICON[item.type] ?? Type);
 
   return (
     <div
-      className={clsx('clip-card', `clip-card--${layout}`, `clip-card--${item.type}`, selected && 'clip-card--selected')}
+      className={clsx('clip-card', `clip-card--${layout}`, `clip-card--${gif ? 'gif' : item.type}`, selected && 'clip-card--selected')}
       style={colorStyle}
+      onMouseEnter={gif ? () => setHover(true) : undefined}
+      onMouseLeave={gif ? () => setHover(false) : undefined}
       onMouseDown={(e) => e.button === 0 && onClick()}
+      onClick={onActivate}
       onDoubleClick={onDoubleClick}
       onContextMenu={onContextMenu}
       draggable={item.type === 'text' || item.type === 'link'}
@@ -120,7 +208,7 @@ export const ClipCard = memo(function ClipCard({
           <div className="clip-card__head">
             <div className="clip-card__title">
               <span className="clip-card__type">
-                {t(`clip.type.${item.type}`)}
+                {gif ? t('clip.gif') : t(`clip.type.${item.type}`)}
                 {marks}
               </span>
               {time}

@@ -57,9 +57,11 @@ export interface Settings {
     detectFixedHeader: boolean;
   };
   ocr: {
-    engine: 'rapid' | 'system';
+    engine: 'rapid' | 'paddle' | 'system';
     idleTimeoutMinutes: number;
     keepLineBreaks: boolean;
+    /** 识别完自动复制到剪贴板 */
+    autoCopy: boolean;
   };
   translate: {
     targetLanguage: string;
@@ -87,6 +89,8 @@ export interface Settings {
     panelBlur: boolean;
     /** 底部样式贴边：直角、紧贴屏幕底部 */
     panelDocked: boolean;
+    /** 面板里点一下就粘贴（默认双击粘贴） */
+    singleClickPaste: boolean;
     maxTextMb: number;
     maxImageMb: number;
     respectPrivacyFlag: boolean;
@@ -271,6 +275,16 @@ export interface EngineStatus {
   rapidRunning: boolean;
   system: boolean;
   avx: boolean;
+  /** PaddleOCR 已下载 */
+  paddle: boolean;
+  paddleDownload: PaddleDownload;
+}
+
+/** PaddleOCR 引擎下载进度 */
+export interface PaddleDownload {
+  stage: 'downloading' | 'extracting' | null;
+  progress: number | null;
+  error: string | null;
 }
 
 export interface AppInfo {
@@ -489,6 +503,8 @@ export interface OcrJob {
   recordId: number | null;
   result: OcrResult | null;
   error: string | null;
+  /** 识别完已经自动复制到剪贴板 */
+  copied: boolean;
 }
 
 export interface OcrRecordSummary {
@@ -609,7 +625,7 @@ export interface ChatTurn {
   streaming?: boolean;
 }
 
-export type ProviderId = 'bing' | 'transmart' | 'google' | 'deepl' | 'openai';
+export type ProviderId = 'bing' | 'transmart' | 'youdao' | 'google' | 'deepl' | 'openai';
 
 export interface ProviderInfo {
   id: ProviderId;

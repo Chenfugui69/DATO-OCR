@@ -567,6 +567,15 @@ pub fn set_thumb(conn: &Connection, id: i64, thumb: &str) -> AppResult<()> {
     Ok(())
 }
 
+/// 补上 GIF 记录的大小和宽高（早先复制的 GIF 没记）。
+pub fn set_size(conn: &Connection, id: i64, bytes: u64, dims: Option<(u32, u32)>) -> AppResult<()> {
+    conn.execute(
+        "UPDATE clipboard_items SET size_bytes = ?1, width = ?2, height = ?3 WHERE id = ?4",
+        params![bytes as i64, dims.map(|d| d.0), dims.map(|d| d.1), id],
+    )?;
+    Ok(())
+}
+
 /// 还指着旧版（48 像素、文件名不带 -96）来源图标的记录：(exe 路径, 图标)，每个图标一行。
 pub fn legacy_icons(conn: &Connection) -> AppResult<Vec<(String, String)>> {
     let mut stmt = conn.prepare(

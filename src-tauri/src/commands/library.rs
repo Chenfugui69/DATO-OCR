@@ -131,6 +131,27 @@ pub async fn ocr_status(app: AppHandle) -> AppResult<ocr::EngineStatus> {
     blocking(move || Ok(ocr::status(&app))).await
 }
 
+/// 下载安装 PaddleOCR 引擎（进度走 `ocr-engine-download` 事件）。
+#[tauri::command]
+pub async fn ocr_paddle_install(app: AppHandle) -> AppResult<()> {
+    ocr::paddle::install(&app).await
+}
+
+/// 删掉 PaddleOCR 引擎；正在用它的话改回 RapidOCR。
+#[tauri::command]
+pub async fn ocr_paddle_remove(app: AppHandle) -> AppResult<()> {
+    tokio::task::spawn_blocking({
+        let app = app.clone();
+        move || ocr::paddle::remove(&app)
+    })
+    .await
+    .map_err(|e| crate::error::AppError::msg(e.to_string()))??;
+    if state(&app).settings.read().ocr.engine == "paddle" {
+        crate::commands::system::update_settings_with(&app, |s| s.ocr.engine = "rapid".into())?;
+    }
+    Ok(())
+}
+
 #[tauri::command]
 pub async fn ocr_history(app: AppHandle, query: OcrQuery) -> AppResult<OcrPage> {
     state(&app).db.with(|c| ocr_repo::query(c, &query))

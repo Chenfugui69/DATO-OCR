@@ -21,6 +21,14 @@ pub async fn clipboard_get(app: AppHandle, id: i64) -> AppResult<ClipDetail> {
     state(&app).db.with(|c| repo::get_detail(c, id))
 }
 
+/// GIF 卡片的预览：返回数据目录里那份副本的相对路径，早先的记录没有就现在补一份。
+#[tauri::command]
+pub async fn clipboard_gif_preview(app: AppHandle, id: i64) -> AppResult<Option<String>> {
+    tokio::task::spawn_blocking(move || crate::clipboard::ensure_gif_preview(&app, id))
+        .await
+        .map_err(|e| crate::error::AppError::msg(e.to_string()))?
+}
+
 #[tauri::command]
 pub async fn clipboard_stats(app: AppHandle) -> AppResult<ClipStats> {
     state(&app).db.with(|c| repo::stats(c))

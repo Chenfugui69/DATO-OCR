@@ -12,6 +12,7 @@ import { system, translate } from '@/lib/ipc';
 import type { ProviderId, Settings } from '@/lib/types';
 import { Button, IconButton, Segmented, Select, Slider, Switch, TextField } from '@/ui/controls';
 import { notify, promptDialog } from '@/ui/overlays';
+import { ProviderLogo } from '@/views/translate/ProviderLogo';
 import { LANGS } from '@/views/translate/TranslateBox';
 
 import { Group, Row } from './settingsParts';
@@ -100,6 +101,7 @@ export function TranslateSettingsGroups({ settings, set }: { settings: Settings;
               <Row
                 title={
                   <span className="set-provider">
+                    <ProviderLogo id={p.id} size={16} />
                     {t(`settings.translate.${p.id}`)}
                     {p.id === defaultId && <span className="set-provider__badge">{t('settings.translate.default')}</span>}
                   </span>

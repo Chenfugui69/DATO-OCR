@@ -2,8 +2,9 @@
 //!
 //! 引擎生命周期：**懒启动**（第一次识别才拉起）→ **常驻复用** → **空闲回收**（默认 5
 //! 分钟）→ **崩溃自愈**（下次请求自动重启，连续失败 3 次后报错）→ 应用退出时杀掉。
-//! RapidOCR 不可用时退回 Windows 自带 OCR。
+//! RapidOCR 不可用时退回 Windows 自带 OCR。可选下载 PaddleOCR（paddle.rs），选了它但失败时退回 RapidOCR。
 
+pub mod paddle;
 pub mod rapid;
 pub mod reflow;
 
@@ -29,8 +30,11 @@ const MAX_CONSECUTIVE_FAILURES: u32 = 3;
 #[derive(Default)]
 pub struct OcrService {
     rapid: Mutex<Option<RapidEngine>>,
+    paddle: Mutex<Option<RapidEngine>>,
+    paddle_download: Mutex<paddle::DownloadStatus>,
     last_used: Mutex<Option<Instant>>,
     failures: AtomicU32,
+    paddle_failures: AtomicU32,
     reaper: AtomicBool,
     jobs: Mutex<HashMap<String, OcrJob>>,
     current: Mutex<Option<String>>,
@@ -60,6 +64,9 @@ pub struct OcrJob {
     pub record_id: Option<i64>,
     pub result: Option<OcrResult>,
     pub error: Option<String>,
+    /// 识别完已经自动复制到剪贴板
+    #[serde(default)]
+    pub copied: bool,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -69,12 +76,17 @@ pub struct EngineStatus {
     pub rapid_running: bool,
     pub system: bool,
     pub avx: bool,
+    /// PaddleOCR 已下载
+    pub paddle: bool,
+    pub paddle_download: paddle::DownloadStatus,
 }
 
 impl OcrService {
     pub fn shutdown(&self) {
-        if let Some(mut engine) = self.rapid.lock().take() {
-            engine.kill();
+        for slot in [&self.rapid, &self.paddle] {
+            if let Some(mut engine) = slot.lock().take() {
+                engine.kill();
+            }
         }
     }
 }
@@ -82,16 +94,19 @@ impl OcrService {
 pub fn status(app: &AppHandle) -> EngineStatus {
     let st = state(app);
     let rapid_running = st.ocr.rapid.lock().is_some();
+    let paddle_download = st.ocr.paddle_download.lock().clone();
     EngineStatus {
         rapid: rapid::engine_dir(&st.paths).is_some(),
         rapid_running,
         system: platform::system_ocr_available(),
         avx: supports_avx(),
+        paddle: paddle::engine_dir(&st.paths).is_some(),
+        paddle_download,
     }
 }
 
-/// PaddleOCR（可选高精度引擎）要求 AVX；这里只做能力探测，供设置页说明。
-fn supports_avx() -> bool {
+/// PaddleOCR（可选高精度引擎）要求 AVX。
+pub(crate) fn supports_avx() -> bool {
     #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
     {
         std::arch::is_x86_feature_detected!("avx")
@@ -122,31 +137,54 @@ fn ensure_reaper(app: &AppHandle) {
             .lock()
             .is_some_and(|t| t.elapsed() > Duration::from_secs(u64::from(minutes) * 60));
         if idle {
-            if let Some(mut engine) = st.ocr.rapid.lock().take() {
-                engine.kill();
-                tracing::info!("识字引擎空闲超时，已回收");
+            for slot in [&st.ocr.rapid, &st.ocr.paddle] {
+                if let Some(mut engine) = slot.lock().take() {
+                    engine.kill();
+                    tracing::info!("识字引擎空闲超时，已回收");
+                }
             }
         }
     });
 }
 
-fn run_rapid(app: &AppHandle, image: &RgbaImage) -> AppResult<Vec<OcrBlock>> {
+#[derive(Clone, Copy, PartialEq)]
+enum Engine {
+    Rapid,
+    Paddle,
+}
+
+fn run_engine(app: &AppHandle, kind: Engine, image: &RgbaImage) -> AppResult<Vec<OcrBlock>> {
     let st = state(app);
-    let dir =
-        rapid::engine_dir(&st.paths).ok_or_else(|| AppError::msg("没有找到 RapidOCR 引擎"))?;
-    if st.ocr.failures.load(Ordering::SeqCst) >= MAX_CONSECUTIVE_FAILURES {
+    let (slot, failures, dir) = match kind {
+        Engine::Rapid => (
+            &st.ocr.rapid,
+            &st.ocr.failures,
+            rapid::engine_dir(&st.paths).ok_or_else(|| AppError::msg("没有找到 RapidOCR 引擎"))?,
+        ),
+        Engine::Paddle => (
+            &st.ocr.paddle,
+            &st.ocr.paddle_failures,
+            paddle::engine_dir(&st.paths)
+                .ok_or_else(|| AppError::msg("还没有下载 PaddleOCR 引擎"))?,
+        ),
+    };
+    if failures.load(Ordering::SeqCst) >= MAX_CONSECUTIVE_FAILURES {
         return Err(AppError::msg(
             "识字引擎连续启动失败，已停用（重启 DATO OCR 可重试）",
         ));
     }
-    let mut guard = st.ocr.rapid.lock();
+    let mut guard = slot.lock();
     if guard.as_mut().is_some_and(|e| !e.alive()) {
         tracing::warn!("识字引擎进程已退出，重新启动");
         *guard = None;
     }
     if guard.is_none() {
         let started = Instant::now();
-        match RapidEngine::spawn(&dir) {
+        let spawned = match kind {
+            Engine::Rapid => RapidEngine::spawn(&dir),
+            Engine::Paddle => RapidEngine::spawn_paddle(&dir),
+        };
+        match spawned {
             Ok(engine) => {
                 tracing::info!(
                     elapsed_ms = started.elapsed().as_millis() as u64,
@@ -155,7 +193,7 @@ fn run_rapid(app: &AppHandle, image: &RgbaImage) -> AppResult<Vec<OcrBlock>> {
                 *guard = Some(engine);
             }
             Err(err) => {
-                st.ocr.failures.fetch_add(1, Ordering::SeqCst);
+                failures.fetch_add(1, Ordering::SeqCst);
                 return Err(err);
             }
         }
@@ -165,7 +203,7 @@ fn run_rapid(app: &AppHandle, image: &RgbaImage) -> AppResult<Vec<OcrBlock>> {
         .ok_or_else(|| AppError::msg("识字引擎不可用"))?;
     match engine.recognize(image, &st.paths.temp_file("bmp")) {
         Ok(blocks) => {
-            st.ocr.failures.store(0, Ordering::SeqCst);
+            failures.store(0, Ordering::SeqCst);
             Ok(blocks)
         }
         Err(err) => {
@@ -173,7 +211,7 @@ fn run_rapid(app: &AppHandle, image: &RgbaImage) -> AppResult<Vec<OcrBlock>> {
             if let Some(mut e) = guard.take() {
                 e.kill();
             }
-            st.ocr.failures.fetch_add(1, Ordering::SeqCst);
+            failures.fetch_add(1, Ordering::SeqCst);
             Err(err)
         }
     }
@@ -224,10 +262,16 @@ pub fn recognize(
     };
 
     let started = Instant::now();
+    let paddle_result = (preferred == "paddle").then(|| run_engine(app, Engine::Paddle, input));
     let (mut blocks, used) = if preferred == "system" {
         (run_system(input)?, "Windows OCR")
+    } else if let Some(Ok(b)) = paddle_result {
+        (b, "PaddleOCR")
     } else {
-        match run_rapid(app, input) {
+        if let Some(Err(err)) = &paddle_result {
+            tracing::warn!("PaddleOCR 失败，改用 RapidOCR：{err}");
+        }
+        match run_engine(app, Engine::Rapid, input) {
             Ok(b) => (b, "RapidOCR"),
             Err(err) => {
                 tracing::warn!("RapidOCR 失败，改用系统 OCR：{err}");
@@ -324,6 +368,7 @@ pub fn open_job(
         record_id: None,
         result: None,
         error: None,
+        copied: false,
     };
     st.ocr.jobs.lock().clear();
     publish(app, job.clone());
@@ -397,6 +442,7 @@ fn run_job(
                         .db
                         .with(|c| screenshots::set_ocr_text(c, sid, &result.plain_text));
                 }
+                job.copied = auto_copy(&app, &result);
                 job.status = "done".into();
                 job.result = Some(result);
                 let _ = app.emit(events::OCR_HISTORY_CHANGED, ());
@@ -413,6 +459,48 @@ fn run_job(
             let _ = app.emit_to(WINDOW, events::OCR_JOB, &job);
         }
     });
+}
+
+/// 设置里开着"识别后自动复制"就把文字写进剪贴板（格式和识字窗口里"复制全部"一样）。返回复制了没有。
+fn auto_copy(app: &AppHandle, result: &OcrResult) -> bool {
+    let (on, keep_breaks) = {
+        let st = state(app);
+        let s = st.settings.read();
+        (s.ocr.auto_copy, s.ocr.keep_line_breaks)
+    };
+    if !on || std::env::var("CHENOCR_TEST_NO_CLIPBOARD").is_ok_and(|v| v == "1") {
+        return false;
+    }
+    let text = if keep_breaks {
+        result
+            .paragraphs
+            .iter()
+            .map(|p| {
+                p.lines
+                    .iter()
+                    .map(|l| l.text.as_str())
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            })
+            .collect::<Vec<_>>()
+            .join("\n\n")
+    } else {
+        result.plain_text.clone()
+    };
+    if text.trim().is_empty() {
+        return false;
+    }
+    match platform::clipboard_write(&platform::ClipboardPayload::Text {
+        text,
+        html: None,
+        rtf: None,
+    }) {
+        Ok(()) => true,
+        Err(err) => {
+            tracing::warn!("识字结果自动复制失败：{err}");
+            false
+        }
+    }
 }
 
 /// 从识字记录重新打开（主窗口「识字记录」页）。
@@ -439,6 +527,7 @@ pub fn open_record(app: &AppHandle, record_id: i64) -> AppResult<()> {
             elapsed_ms: rec.elapsed_ms.unwrap_or(0) as u64,
         }),
         error: None,
+        copied: false,
     };
     publish(app, job);
     show_window(app);

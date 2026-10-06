@@ -16,7 +16,7 @@
 import '@/views/ocr/ocr.css';
 
 import { getCurrentWindow } from '@tauri-apps/api/window';
-import { ArrowUp, ChevronDown, ExternalLink, Sparkles, X } from 'lucide-react';
+import { ArrowUp, ChevronDown, ExternalLink, Pin, Sparkles, X } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { flushSync } from 'react-dom';
 import { useTranslation } from 'react-i18next';
@@ -134,7 +134,23 @@ export default function TranslatePopup() {
   padRef.current = pad;
   /** 用户在拖右下角手柄：只有这时的尺寸变化才记进设置（弹出时 Rust 摆位、展开 AI 也会改大小） */
   const userResizing = useRef(false);
+  /** 这次改大小已经真的动过（没动过的话一会儿就把 userResizing 放掉，免得之后点外面收不起来） */
+  const resized = useRef(false);
   const resizeTimer = useRef<number | undefined>(undefined);
+  const resizeGuard = useRef<number | undefined>(undefined);
+  /** 用户开始改大小：按住了面板边上的改大小区，或者窗口边上系统那圈边框 */
+  const beginResize = useCallback(() => {
+    userResizing.current = true;
+    resized.current = false;
+    window.clearTimeout(resizeGuard.current);
+    resizeGuard.current = window.setTimeout(() => {
+      if (!resized.current) userResizing.current = false;
+    }, 1500);
+  }, []);
+  /** 置顶（钉住）：点面板外面也不收起（Esc、关闭按钮照样关） */
+  const [pinned, setPinned] = useState(false);
+  const pinnedRef = useRef(pinned);
+  pinnedRef.current = pinned;
   /** 用户在拖面板挪位置（按住空白处拖）：系统拖动期间会短暂拿走焦点，这时不能当成"点了外面" */
   const userMoving = useRef(false);
   const moveTimer = useRef<number | undefined>(undefined);
@@ -205,10 +221,28 @@ export default function TranslatePopup() {
     };
     window.addEventListener('pointerdown', onDown, true);
     const win = getCurrentWindow();
+    let blurTimer: number | undefined;
+    let blurAt = 0;
+    const onFocus = (focused: boolean) => {
+      window.clearTimeout(blurTimer);
+      if (focused) {
+        // 刚失焦又马上拿回焦点：窗口边上那圈系统改大小的边框被按住了（按下去时焦点会先丢再回来，
+        // 页面收不到这次按下），当成用户在拖边改大小，改完的尺寸照样记下来
+        if (performance.now() - blurAt < 300) beginResize();
+        return;
+      }
+      blurAt = performance.now();
+      // 翻译模式点外面就收起；AI 模式、钉住时不收。先等一下再确认真的没焦点了，免得按住边框改大小时被收起
+      blurTimer = window.setTimeout(() => {
+        void (async () => {
+          if (modeRef.current !== 'translate' || pinnedRef.current || userResizing.current || userMoving.current) return;
+          if (await win.isFocused()) return;
+          hide();
+        })();
+      }, 200);
+    };
     const unlisteners: Promise<() => void>[] = [
-      // 翻译模式点外面就收起；AI 模式不收，免得对话没了
-      // 拖手柄改大小、拖着挪位置时系统会短暂拿走焦点，这时也不收
-      win.onFocusChanged(({ payload }) => !payload && modeRef.current === 'translate' && !userResizing.current && !userMoving.current && hide()),
+      win.onFocusChanged(({ payload }) => onFocus(payload)),
       win.onMoved(() => userMoving.current && settle(400)),
       // 用户拖右下角改了大小：记进设置，下次按这个尺寸弹出
       win.onResized(() => {
@@ -219,10 +253,12 @@ export default function TranslatePopup() {
           void system.setRegion(rect);
           if (padRef.current === 0) void system.backdrop(rect);
         }
-        if (!userResizing.current) return;
+        if (!userResizing.current || animating.current) return;
+        resized.current = true;
         window.clearTimeout(resizeTimer.current);
         resizeTimer.current = window.setTimeout(() => {
           userResizing.current = false;
+          resized.current = false;
           const { w, h } = logicalWindowSize();
           const p = padRef.current;
           const box = transRef.current?.getBoundingClientRect();
@@ -245,11 +281,12 @@ export default function TranslatePopup() {
       }),
     ];
     return () => {
+      window.clearTimeout(blurTimer);
       window.removeEventListener('keydown', onKey);
       window.removeEventListener('pointerdown', onDown, true);
       for (const u of unlisteners) void u.then((fn) => fn());
     };
-  }, [hide, logicalWindowSize]);
+  }, [hide, logicalWindowSize, beginResize]);
 
   const openAi = async (ask?: string) => {
     if (animating.current) return;
@@ -276,7 +313,8 @@ export default function TranslatePopup() {
       } else {
         // 对话区从输入框那里往上长，盖住翻译区下面一半：翻译区露出上面一半，窗口往上多长出一个对话区减半个翻译区
         const trans = Math.max(MIN_TRANSLATE_H, Math.round((base.h - pad * 2) / 2));
-        w = Math.max(base.w, 380);
+        // 宽度不变：宽度一变就没法在窗口里原地往上长，只能挪窗口，开头会跳一下
+        w = base.w;
         h = Math.min(mh - 16, pad * 2 + trans + (popup?.drawerHeight ?? 380));
         setTransH(Math.min(trans, h - pad * 2 - MIN_DRAWER));
       }
@@ -307,10 +345,13 @@ export default function TranslatePopup() {
         setSheet(null);
         return;
       }
+      // 挪窗口。顶上有预留（窗口区域裁掉的那一截）的话照样留着：下面的坐标都是面板的，窗口比面板高出 top
+      const top = topRef.current;
+      const panelY = pos.y + top;
       const x = Math.max(mx, Math.min(pos.x, mx + mw - w));
-      const wantY = next === 'drawer' ? pos.y + base.h - h : pos.y;
+      const wantY = next === 'drawer' ? panelY + base.h - h : panelY;
       const y = Math.max(my, Math.min(wantY, my + mh - h));
-      shift.current = { x: pos.x - x, y: pos.y - y };
+      shift.current = { x: pos.x - x, y: panelY - y };
       const full = { fw: w - pad * 2, fh: h - pad * 2 };
       const start = { w: base.w - pad * 2, h: base.h - pad * 2, ...full };
 
@@ -324,16 +365,19 @@ export default function TranslatePopup() {
         setMode('ai');
       });
       userResizing.current = false;
+      // 窗口区域先放开到展开后面板的范围（比现在的窗口大没关系），挪完窗口不会有一帧被裁掉
+      if (top > 0) await system.setRegion({ x: 0, y: top, width: w, height: h });
       // 毛玻璃：背板先只铺在外框现在的位置，之后跟着外框一起长
-      await moveWindow(x, y, w, h, blur ? { x: shift.current.x, y: shift.current.y, width: start.w, height: start.h } : undefined);
+      await moveWindow(x, y - top, w, h + top, blur ? { x: shift.current.x, y: top + shift.current.y, width: start.w, height: start.h } : undefined);
       await frame();
       await frame();
       // 2. 外框长到新尺寸、回到原点，对话区滑进来
       setSheet({ w: full.fw, h: full.fh, ...full, x: 0, y: 0, open: true, animate: true });
-      if (blur) void system.backdrop({ x: 0, y: 0, width: full.fw, height: full.fh }, ANIM_MS);
+      if (blur) void system.backdrop({ x: 0, y: top, width: w, height: h }, ANIM_MS);
       await wait(ANIM_MS + 40);
       setSheet(null);
-      if (blur) void system.backdrop(null);
+      // 没有预留时背板恢复铺满窗口；有预留时就停在面板上（窗口顶上那截不铺）
+      if (blur && top === 0) void system.backdrop(null);
     } finally {
       animating.current = false;
     }
@@ -368,20 +412,22 @@ export default function TranslatePopup() {
         return;
       }
       const { x: sx, y: sy } = shift.current;
+      const top = topRef.current;
       const full = { fw: cur.w - pad * 2, fh: cur.h - pad * 2 };
       // 1. 外框按现在的尺寸定住，然后缩回原来的大小、偏到窗口挪回去之后的位置，对话区滑出去
       flushSync(() => setSheet({ w: full.fw, h: full.fh, ...full, x: 0, y: 0, open: true, animate: false }));
       await frame();
       setSheet({ w: target.w - pad * 2, h: target.h - pad * 2, ...full, x: sx, y: sy, open: false, animate: true });
-      if (blur) void system.backdrop({ x: sx, y: sy, width: target.w, height: target.h }, ANIM_MS);
+      if (blur) void system.backdrop({ x: sx, y: top + sy, width: target.w, height: target.h }, ANIM_MS);
       await wait(ANIM_MS + 20);
       // 2. 窗口一步还原，外框同时回到原点
       userResizing.current = false;
       flushSync(() => {
         setSheet({ w: target.w - pad * 2, h: target.h - pad * 2, ...full, x: 0, y: 0, open: false, animate: false });
       });
-      await moveWindow(pos.x + sx, pos.y + sy, target.w, target.h, blur ? { x: 0, y: 0, width: target.w, height: target.h } : undefined);
-      if (blur) void system.backdrop(null);
+      await moveWindow(pos.x + sx, pos.y + sy, target.w, target.h + top, blur ? { x: 0, y: top, width: target.w, height: target.h } : undefined);
+      if (top > 0) void system.setRegion({ x: 0, y: top, width: target.w, height: target.h });
+      else if (blur) void system.backdrop(null);
       await frame();
       shift.current = { x: 0, y: 0 };
       setMode('translate');
@@ -532,7 +578,14 @@ export default function TranslatePopup() {
                 compact
                 fontSize={popup?.fontSize}
                 actions={
-                  <>
+                  <span className="pop-actions">
+                    <IconButton
+                      icon={Pin}
+                      size="sm"
+                      active={pinned}
+                      label={pinned ? t('translate.unpin') : t('translate.pin')}
+                      onClick={() => setPinned((v) => !v)}
+                    />
                     <IconButton
                       icon={Sparkles}
                       size="sm"
@@ -541,7 +594,7 @@ export default function TranslatePopup() {
                       onClick={() => void (mode === 'ai' ? closeAi() : openAi())}
                     />
                     <IconButton icon={X} size="sm" label={t('common.close')} onClick={hide} />
-                  </>
+                  </span>
                 }
               />
             )}
@@ -612,7 +665,7 @@ export default function TranslatePopup() {
           title={t('translate.resize')}
           onPointerDown={(e) => {
             e.preventDefault();
-            userResizing.current = true;
+            beginResize();
             void getCurrentWindow().startResizeDragging('SouthEast');
           }}
         />
@@ -623,7 +676,7 @@ export default function TranslatePopup() {
               className={`pop-edge pop-edge--${cls}`}
               onPointerDown={(e) => {
                 e.preventDefault();
-                userResizing.current = true;
+                beginResize();
                 void getCurrentWindow().startResizeDragging(dir);
               }}
             />
@@ -658,6 +711,8 @@ html[data-view='translate'], html[data-view='translate'] body { background: tran
 .pop__source { max-height: 66px; overflow: hidden; padding: 12px 14px 8px; font: var(--cn-text-callout); color: var(--cn-label-secondary);
                display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; box-shadow: inset 0 -0.5px 0 var(--cn-separator); flex: none; }
 .pop__body { flex: 1; min-height: 0; }
+/* 语言那一行右边的置顶、问 AI、关闭挨紧一点，窄面板里给语言下拉框多留点地方 */
+.pop-actions { flex: none; display: flex; align-items: center; gap: 0; margin-right: -4px; }
 
 /* 原文：点一下就变成输入框，改完自动重翻 */
 .pop__source { cursor: text; }

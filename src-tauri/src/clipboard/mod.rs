@@ -443,6 +443,65 @@ pub(crate) fn store_remote(
     Ok((id, Some(payload)))
 }
 
+fn is_gif(path: &Path) -> bool {
+    path.extension()
+        .is_some_and(|e| e.eq_ignore_ascii_case("gif"))
+}
+
+struct GifCopy {
+    rel: String,
+    len: u64,
+    /// 宽高（读 GIF 文件头）
+    dims: Option<(u32, u32)>,
+}
+
+/// 复制了一个 GIF 文件：在数据目录里留一份副本当卡片预览（原文件多半在面板读不到的地方，
+/// 之后也可能被挪走）。超过图片大小上限的不留。
+fn gif_copy(app: &AppHandle, path: &Path, max_mb: u32) -> Option<GifCopy> {
+    let len = std::fs::metadata(path).ok()?.len();
+    if len > u64::from(max_mb) * 1024 * 1024 {
+        return None;
+    }
+    let bytes = std::fs::read(path).ok()?;
+    if !bytes.starts_with(b"GIF8") || bytes.len() < 10 {
+        return None;
+    }
+    let dims = Some((
+        u32::from(u16::from_le_bytes([bytes[6], bytes[7]])),
+        u32::from(u16::from_le_bytes([bytes[8], bytes[9]])),
+    ));
+    let st = state(app);
+    let rel = st.paths.new_rel_file("clipboard", "gif").ok()?;
+    std::fs::write(st.paths.abs(&rel), &bytes).ok()?;
+    Some(GifCopy { rel, len, dims })
+}
+
+/// 早先复制的 GIF 没留预览副本：卡片显示时补一份（原文件还在的话）。返回副本的相对路径。
+pub fn ensure_gif_preview(app: &AppHandle, id: i64) -> AppResult<Option<String>> {
+    let st = state(app);
+    let detail = st.db.with(|c| repo::get_detail(c, id))?;
+    let item = &detail.item;
+    if let Some(thumb) = &item.thumb_path {
+        return Ok(Some(thumb.clone()));
+    }
+    let [one] = item.files.as_slice() else {
+        return Ok(None);
+    };
+    let path = Path::new(one);
+    if item.kind != "files" || !is_gif(path) {
+        return Ok(None);
+    }
+    let max_mb = st.settings.read().clipboard.max_image_mb;
+    let Some(copy) = gif_copy(app, path, max_mb) else {
+        return Ok(None);
+    };
+    st.db.with(|c| {
+        repo::set_thumb(c, id, &copy.rel)?;
+        repo::set_size(c, id, copy.len, copy.dims)
+    })?;
+    Ok(Some(copy.rel))
+}
+
 /// 去重命中时，classify 里已经写盘的图片要删掉。
 fn cleanup_unused_files(app: &AppHandle, item: &NewClip) {
     let st = state(app);
@@ -473,12 +532,21 @@ fn classify(
                     .unwrap_or_default()
             })
             .collect();
+        let gif = match snap.files.as_slice() {
+            [one] if is_gif(one) => gif_copy(app, one, settings.max_image_mb),
+            _ => None,
+        };
+        let dims = gif.as_ref().and_then(|g| g.dims);
         return Ok(Some(NewClip {
             kind: "files".into(),
             content_text: Some(joined.clone()),
             preview: Some(preview(&names.join("\n"))),
             hash: sha(joined.as_bytes()),
             char_count: Some(files.len() as i64),
+            size_bytes: gif.as_ref().map(|g| g.len as i64),
+            width: dims.map(|(w, _)| i64::from(w)),
+            height: dims.map(|(_, h)| i64::from(h)),
+            thumb_path: gif.map(|g| g.rel),
             files,
             ..Default::default()
         }));

@@ -8,13 +8,13 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import clsx from 'clsx';
-import { Clipboard, Settings2, X } from 'lucide-react';
+import { Clipboard, MousePointerClick, Settings2, X } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import { useEvent } from '@/lib/events';
 import { clipboard, system, translate } from '@/lib/ipc';
-import { useSettings } from '@/lib/settings';
+import { useSettings, useSettingsStore } from '@/lib/settings';
 import { assetUrl } from '@/lib/platform';
 import { useClipItems, useLiveInvalidation } from '@/lib/queries';
 import type { ClipDetail, ClipItem, ClipType } from '@/lib/types';
@@ -23,7 +23,7 @@ import { isNativeMenuOpen, popupMenu } from '@/ui/nativeMenu';
 import { notify } from '@/ui/overlays';
 
 import { clipMenu } from './actions';
-import { ClipCard } from './ClipCard';
+import { ClipCard, isGifItem } from './ClipCard';
 import { HScrollbar } from './HScrollbar';
 
 type Filter = 'all' | ClipType | 'pinned' | 'favorite';
@@ -55,6 +55,7 @@ export default function PanelView() {
   const settings = useSettings();
   const blur = !!settings?.clipboard.panelBlur;
   const docked = style === 'bottom' && !!settings?.clipboard.panelDocked;
+  const singleClick = !!settings?.clipboard.singleClickPaste;
   const blurRef = useRef(blur);
   blurRef.current = blur;
   const [visible, setVisible] = useState(false);
@@ -68,6 +69,10 @@ export default function PanelView() {
   const searchRef = useRef<HTMLInputElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const hiding = useRef(false);
+  const visibleRef = useRef(false);
+  visibleRef.current = visible;
+  /** 右键菜单关掉之后盯一下焦点（见 watchFocus） */
+  const focusWatch = useRef<number | undefined>(undefined);
 
   useEffect(() => {
     const id = window.setTimeout(() => setDebounced(keyword.trim()), 200);
@@ -138,6 +143,7 @@ export default function PanelView() {
   }, [horizontal]);
 
   const hide = useCallback(() => {
+    window.clearInterval(focusWatch.current);
     if (hiding.current) return;
     hiding.current = true;
     setVisible(false);
@@ -160,6 +166,7 @@ export default function PanelView() {
     setPreview(null);
     // 先回到起始位置再滑入（Alt+V 再按一次是 Rust 直接藏窗口的，那次没走退出动画）
     setVisible(false);
+    window.clearInterval(focusWatch.current);
     window.setTimeout(() => setVisible(true), 16);
     void qc.invalidateQueries({ queryKey: ['clips'] });
     scrollRef.current?.scrollTo({ left: 0, top: 0 });
@@ -198,11 +205,36 @@ export default function PanelView() {
     }
   }, []);
 
+  /**
+   * 右键菜单弹出时窗口会失焦（那次不算点外面），菜单关掉后系统不一定再发一次失焦：
+   * 比如点别的软件把菜单关掉，面板就一直挂着不收。所以菜单关掉后自己盯着，
+   * 发现面板已经不是前台窗口了就收起
+   */
+  const watchFocus = useCallback(() => {
+    window.clearInterval(focusWatch.current);
+    focusWatch.current = window.setInterval(() => {
+      if (!visibleRef.current || hiding.current) {
+        window.clearInterval(focusWatch.current);
+        return;
+      }
+      if (isNativeMenuOpen()) return;
+      void system
+        .isForeground()
+        .then((fg) => {
+          if (fg) return;
+          window.clearInterval(focusWatch.current);
+          hide();
+        })
+        .catch(() => undefined);
+    }, 250);
+  }, [hide]);
+  useEffect(() => () => window.clearInterval(focusWatch.current), []);
+
   const showMenu = useCallback(
     (item: ClipItem) => {
-      void popupMenu(clipMenu(item, t, { groups: groups.data ?? [], inPanel: true, onTranslate: (i) => void openPreview(i, true) }));
+      void popupMenu(clipMenu(item, t, { groups: groups.data ?? [], inPanel: true, onTranslate: (i) => void openPreview(i, true) })).finally(watchFocus);
     },
-    [t, groups.data, openPreview],
+    [t, groups.data, openPreview, watchFocus],
   );
 
   useEffect(() => {
@@ -350,6 +382,15 @@ export default function PanelView() {
             ))}
           </nav>
           <span className="panel__spacer" />
+          <button
+            type="button"
+            className="panel__clickmode"
+            title={t('clip.clickModeHint')}
+            onClick={() => void useSettingsStore.getState().update((d) => void (d.clipboard.singleClickPaste = !singleClick)).catch(notify.error)}
+          >
+            <MousePointerClick size={13} strokeWidth={1.75} />
+            {singleClick ? t('clip.singleClickPaste') : t('clip.doubleClickPaste')}
+          </button>
           <IconButton
             icon={Settings2}
             label={t('nav.settings')}
@@ -385,7 +426,8 @@ export default function PanelView() {
                       layout={horizontal ? 'card' : 'row'}
                       selected={v.index === selected}
                       onClick={() => setSelected(v.index)}
-                      onDoubleClick={() => paste(item)}
+                      onActivate={singleClick ? () => paste(item) : undefined}
+                      onDoubleClick={singleClick ? undefined : () => paste(item)}
                       onContextMenu={(e) => {
                         e.preventDefault();
                         setSelected(v.index);
@@ -406,6 +448,8 @@ export default function PanelView() {
             <div className="panel__preview-box cn-glass" onClick={(e) => e.stopPropagation()}>
               {preview.item.type === 'image' ? (
                 <img src={assetUrl(preview.item.filePath)} alt="" />
+              ) : isGifItem(preview.item) && preview.item.thumbPath ? (
+                <img src={assetUrl(preview.item.thumbPath)} alt="" />
               ) : (
                 <div className="panel__preview-text cn-selectable">{preview.detail?.contentText ?? preview.item.preview}</div>
               )}

@@ -7,10 +7,11 @@ import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import { formatBytes, relativeTime } from '@/lib/format';
-import { clipboard, system, update as updater } from '@/lib/ipc';
+import { useEvent } from '@/lib/events';
+import { clipboard, ocr, system, update as updater } from '@/lib/ipc';
 import { useSettings, useSettingsStore } from '@/lib/settings';
 import { currentVisuals } from '@/lib/theme';
-import type { HotkeyAction, Settings } from '@/lib/types';
+import type { EngineStatus, HotkeyAction, PaddleDownload, Settings } from '@/lib/types';
 import { Button, Segmented, Select, Slider, Switch, TextField } from '@/ui/controls';
 import { HotkeyInput } from '@/ui/HotkeyInput';
 import { confirmDialog, notify } from '@/ui/overlays';
@@ -251,10 +252,14 @@ export function SettingsPage({ section }: { section: string | null }) {
                 value={settings.ocr.engine}
                 options={[
                   { value: 'rapid', label: `RapidOCR${info.data?.ocr.rapid === false ? ` (${t('settings.ocr.unavailable')})` : ''}` },
+                  ...(info.data?.ocr.paddle || settings.ocr.engine === 'paddle' ? [{ value: 'paddle' as const, label: 'PaddleOCR' }] : []),
                   { value: 'system', label: `${t('settings.ocr.system')}${info.data?.ocr.system === false ? ` (${t('settings.ocr.unavailable')})` : ''}` },
                 ]}
                 onChange={(v) => set((d) => void (d.ocr.engine = v))}
               />
+            </Row>
+            <Row title={t('settings.ocr.autoCopy')} desc={t('settings.ocr.autoCopyDesc')}>
+              <Switch checked={settings.ocr.autoCopy} onChange={(v) => set((d) => void (d.ocr.autoCopy = v))} />
             </Row>
             <Row title={t('settings.ocr.instant')} desc={t('settings.ocr.instantDesc')}>
               <Switch checked={c.ocrInstant} onChange={(v) => set((d) => void (d.capture.ocrInstant = v))} />
@@ -279,11 +284,7 @@ export function SettingsPage({ section }: { section: string | null }) {
             <Row title={t('settings.ocr.keepBreaks')}>
               <Switch checked={settings.ocr.keepLineBreaks} onChange={(v) => set((d) => void (d.ocr.keepLineBreaks = v))} />
             </Row>
-            <Row title={t('settings.ocr.paddle')} desc={info.data?.ocr.avx ? t('settings.ocr.paddleSoon') : t('settings.ocr.paddleNoAvx')}>
-              <Button size="sm" disabled>
-                {t('settings.ocr.download')}
-              </Button>
-            </Row>
+            <PaddleEngineRow status={info.data?.ocr} />
           </Group>
 
           <TranslateSettingsGroups settings={settings} set={set} />
@@ -541,5 +542,46 @@ export function SettingsPage({ section }: { section: string | null }) {
       </div>
       {upd && <UpdateDialog status={upd} open={updOpen} onClose={() => setUpdOpen(false)} />}
     </section>
+  );
+}
+
+/** PaddleOCR：下载（带进度）/ 已安装可删除 / 处理器不支持 */
+function PaddleEngineRow({ status }: { status?: EngineStatus }) {
+  const { t } = useTranslation();
+  const qc = useQueryClient();
+  const [dl, setDl] = useState<PaddleDownload | null>(null);
+  useEvent('ocr-engine-download', (p) => {
+    setDl(p);
+    if (!p.stage) void qc.invalidateQueries({ queryKey: ['app-info'] });
+  });
+  const cur = dl ?? status?.paddleDownload;
+  const busy = !!cur?.stage;
+  let desc = t('settings.ocr.paddleDesc');
+  if (status && !status.avx) desc = t('settings.ocr.paddleNoAvx');
+  else if (cur?.stage === 'downloading') desc = t('settings.ocr.paddleDownloading', { percent: Math.round((cur.progress ?? 0) * 100) });
+  else if (cur?.stage === 'extracting') desc = t('settings.ocr.paddleExtracting');
+  else if (cur?.error) desc = t('settings.ocr.paddleFailed', { error: cur.error });
+  else if (status?.paddle) desc = t('settings.ocr.paddleInstalled');
+  return (
+    <Row title={t('settings.ocr.paddle')} desc={desc}>
+      {status?.paddle && !busy ? (
+        <Button
+          size="sm"
+          variant="ghost"
+          onClick={() =>
+            void ocr
+              .paddleRemove()
+              .then(() => qc.invalidateQueries({ queryKey: ['app-info'] }))
+              .catch(notify.error)
+          }
+        >
+          {t('settings.ocr.remove')}
+        </Button>
+      ) : (
+        <Button size="sm" loading={busy} disabled={!status?.avx || busy} onClick={() => void ocr.paddleInstall().catch(() => undefined)}>
+          {t('settings.ocr.download')}
+        </Button>
+      )}
+    </Row>
   );
 }

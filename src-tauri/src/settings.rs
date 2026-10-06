@@ -293,11 +293,13 @@ impl Default for LongshotSettings {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase", default)]
 pub struct OcrSettings {
-    /// rapid | system
+    /// rapid | paddle | system
     pub engine: String,
     /// 0 = 永不回收
     pub idle_timeout_minutes: u32,
     pub keep_line_breaks: bool,
+    /// 识别完自动把文字复制到剪贴板
+    pub auto_copy: bool,
     #[serde(flatten)]
     pub extra: Map<String, Value>,
 }
@@ -308,6 +310,7 @@ impl Default for OcrSettings {
             engine: "rapid".into(),
             idle_timeout_minutes: 5,
             keep_line_breaks: false,
+            auto_copy: true,
             extra: Map::new(),
         }
     }
@@ -424,7 +427,8 @@ impl Default for AiSettings {
 pub const THINKING_LEVELS: [&str; 5] = ["auto", "low", "medium", "high", "max"];
 
 /// 全部翻译源 id。内置免费源在前，自填密钥的在后。
-pub const TRANSLATE_PROVIDERS: [&str; 5] = ["bing", "transmart", "google", "deepl", "openai"];
+pub const TRANSLATE_PROVIDERS: [&str; 6] =
+    ["bing", "transmart", "youdao", "google", "deepl", "openai"];
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -498,7 +502,7 @@ impl Default for TranslateSettings {
                 .iter()
                 .map(|id| ProviderEntry {
                     id: (*id).into(),
-                    enabled: matches!(*id, "bing" | "transmart" | "google"),
+                    enabled: matches!(*id, "bing" | "transmart" | "youdao" | "google"),
                 })
                 .collect(),
             show_all_providers: true,
@@ -546,6 +550,8 @@ pub struct ClipboardSettings {
     pub panel_blur: bool,
     /// 底部样式贴边：直角、紧贴屏幕底部（不贴边是四周留空的悬浮圆角卡片）
     pub panel_docked: bool,
+    /// 面板里点一下就粘贴（默认要双击，单击只是选中）
+    pub single_click_paste: bool,
     pub max_text_mb: u32,
     pub max_image_mb: u32,
     /// 尊重应用的"不要记录"标记（密码管理器）。默认关闭 = 全量记录（铁律 6）
@@ -642,6 +648,7 @@ impl Default for ClipboardSettings {
             panel_style: "bottom".into(),
             panel_blur: false,
             panel_docked: false,
+            single_click_paste: false,
             max_text_mb: 5,
             max_image_mb: 30,
             respect_privacy_flag: false,
@@ -836,12 +843,29 @@ fn migrate_translate_providers(tr: &mut TranslateSettings) {
         keep
     });
     for id in TRANSLATE_PROVIDERS {
-        if !tr.providers.iter().any(|p| p.id == id) {
-            tr.providers.push(ProviderEntry {
-                id: id.into(),
-                enabled: false,
-            });
+        if tr.providers.iter().any(|p| p.id == id) {
+            continue;
         }
+        if id == "youdao" {
+            // 后来加的免费源：老用户也直接打开，排在腾讯翻译后面（没有就排最后）
+            let at = tr
+                .providers
+                .iter()
+                .position(|p| p.id == "transmart")
+                .map_or(tr.providers.len(), |i| i + 1);
+            tr.providers.insert(
+                at,
+                ProviderEntry {
+                    id: id.into(),
+                    enabled: true,
+                },
+            );
+            continue;
+        }
+        tr.providers.push(ProviderEntry {
+            id: id.into(),
+            enabled: false,
+        });
     }
 }
 
@@ -897,6 +921,7 @@ mod tests {
                 ("bing", true),
                 ("google", true),
                 ("transmart", false),
+                ("youdao", true),
                 ("openai", false)
             ]
         );

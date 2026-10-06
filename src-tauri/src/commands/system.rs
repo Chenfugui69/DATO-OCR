@@ -373,3 +373,10 @@ pub async fn quit_app(app: AppHandle) -> AppResult<()> {
 pub fn report_error(window: tauri::Window, scope: String, message: String) {
     tracing::error!(window = window.label(), %scope, "前端错误：{message}");
 }
+
+/// 调用方窗口现在是不是前台窗口（剪贴板面板关掉右键菜单后用它判断要不要收起）。
+#[tauri::command]
+pub async fn window_is_foreground(window: tauri::WebviewWindow) -> AppResult<bool> {
+    let own = crate::platform::native_handle(&window)?;
+    Ok(crate::platform::foreground_window().is_some_and(|h| h.0 == own))
+}

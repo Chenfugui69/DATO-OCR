@@ -6,6 +6,7 @@
 //! |---|---|
 //! | bing | 必应翻译网页版接口，国内可直连 |
 //! | transmart | 腾讯交互翻译的浏览器插件接口，国内可直连 |
+//! | youdao | 有道翻译网页版接口（先取一次密钥，返回内容是加密的），国内可直连 |
 //! | google | Chrome 划词扩展用的 clients5 接口；不行再退到 gtx 客户端。国内直连不通 |
 //! | deepl | 用户自填 API Key（Free 版 key 以 `:fx` 结尾） |
 //! | openai | 任意 OpenAI 兼容接口（OpenAI / DeepSeek / 通义 / Kimi …） |
@@ -198,6 +199,196 @@ pub async fn transmart(ctx: &Ctx<'_>, detected: &str) -> AppResult<Output> {
     })
 }
 
+// ───────────────────────── 有道（网页版） ─────────────────────────
+//
+// 有道翻译网页（fanyi.youdao.com）用的接口：先 GET webtranslate/key 拿 secretKey / aesKey / aesIv，
+// 翻译请求按 secretKey 签名（MD5），返回的是 URL 安全 base64 的 AES-128-CBC 密文，
+// 密钥和 IV 分别是 aesKey、aesIv 的 MD5。密钥一般不变，缓存一小时，失败时刷新一次再试。
+
+struct YoudaoKeys {
+    secret: String,
+    aes_key: [u8; 16],
+    aes_iv: [u8; 16],
+    fetched: Instant,
+}
+
+static YOUDAO: Mutex<Option<YoudaoKeys>> = Mutex::new(None);
+const YOUDAO_KEY_TTL: Duration = Duration::from_secs(3600);
+const YOUDAO_KEY_SIGN: &str = "asdjnjfenknafdfsdfsd";
+
+fn md5_hex(text: &str) -> String {
+    use md5::{Digest, Md5};
+    Md5::digest(text.as_bytes())
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect()
+}
+
+fn md5_bytes(text: &str) -> [u8; 16] {
+    use md5::{Digest, Md5};
+    Md5::digest(text.as_bytes()).into()
+}
+
+fn youdao_lang(code: &str) -> &str {
+    match code {
+        "zh" => "zh-CHS",
+        "zh-TW" => "zh-CHT",
+        other => other,
+    }
+}
+
+/// 公共参数 + 按 `key` 算的签名
+fn youdao_params(key: &str) -> Vec<(&'static str, String)> {
+    let t = chrono::Utc::now().timestamp_millis().to_string();
+    let sign = md5_hex(&format!(
+        "client=fanyideskweb&mysticTime={t}&product=webfanyi&key={key}"
+    ));
+    vec![
+        ("sign", sign),
+        ("client", "fanyideskweb".into()),
+        ("product", "webfanyi".into()),
+        ("appVersion", "1.0.0".into()),
+        ("vendor", "web".into()),
+        ("pointParam", "client,mysticTime,product".into()),
+        ("mysticTime", t),
+        ("keyfrom", "fanyi.web".into()),
+    ]
+}
+
+fn youdao_request(builder: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
+    // 不带 Referer 和这个 cookie 时接口会拒绝
+    let user = format!(
+        "OUTFOX_SEARCH_USER_ID={}@10.110.96.157",
+        -(i64::from(uuid::Uuid::new_v4().as_fields().0 % 1_000_000_000))
+    );
+    builder
+        .header("Referer", "https://fanyi.youdao.com/")
+        .header("Origin", "https://fanyi.youdao.com")
+        .header("Cookie", user)
+}
+
+async fn youdao_keys(
+    client: &reqwest::Client,
+    force: bool,
+) -> AppResult<(String, [u8; 16], [u8; 16])> {
+    if !force {
+        if let Some(k) = YOUDAO.lock().as_ref() {
+            if k.fetched.elapsed() < YOUDAO_KEY_TTL {
+                return Ok((k.secret.clone(), k.aes_key, k.aes_iv));
+            }
+        }
+    }
+    let mut query = youdao_params(YOUDAO_KEY_SIGN);
+    query.push(("keyid", "webfanyi-key-getter".into()));
+    let resp: Value = youdao_request(client.get("https://dict.youdao.com/webtranslate/key"))
+        .query(&query)
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?;
+    let data = &resp["data"];
+    let (Some(secret), Some(key), Some(iv)) = (
+        data["secretKey"].as_str(),
+        data["aesKey"].as_str(),
+        data["aesIv"].as_str(),
+    ) else {
+        return Err(AppError::Network("有道翻译密钥接口格式已变化".into()));
+    };
+    let keys = (secret.to_string(), md5_bytes(key), md5_bytes(iv));
+    *YOUDAO.lock() = Some(YoudaoKeys {
+        secret: keys.0.clone(),
+        aes_key: keys.1,
+        aes_iv: keys.2,
+        fetched: Instant::now(),
+    });
+    Ok(keys)
+}
+
+fn youdao_decrypt(body: &str, key: &[u8; 16], iv: &[u8; 16]) -> AppResult<Value> {
+    use aes::cipher::{block_padding::Pkcs7, BlockDecryptMut, KeyIvInit};
+    use base64::Engine as _;
+    let bad = || AppError::Network("有道翻译返回内容无法解密".into());
+    let mut raw = base64::engine::general_purpose::URL_SAFE
+        .decode(body.trim())
+        .map_err(|_| bad())?;
+    let plain = cbc::Decryptor::<aes::Aes128>::new(key.into(), iv.into())
+        .decrypt_padded_mut::<Pkcs7>(&mut raw)
+        .map_err(|_| bad())?;
+    serde_json::from_slice(plain).map_err(|_| bad())
+}
+
+/// 有道的结果：每段一个数组，段里每句一个 `tgt`；段尾的换行在 tgt 里，统一去掉再按段换行拼回去。
+fn youdao_text(resp: &Value) -> Option<String> {
+    let paragraphs = resp["translateResult"].as_array()?;
+    let text = paragraphs
+        .iter()
+        .map(|p| {
+            p.as_array()
+                .map(|sentences| {
+                    sentences
+                        .iter()
+                        .filter_map(|s| s["tgt"].as_str())
+                        .collect::<String>()
+                })
+                .unwrap_or_default()
+                .trim_end_matches(['\r', '\n'])
+                .to_string()
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    Some(text)
+}
+
+pub async fn youdao(ctx: &Ctx<'_>) -> AppResult<Output> {
+    for attempt in 0..2 {
+        let (secret, key, iv) = youdao_keys(ctx.client, attempt > 0).await?;
+        let mut form = youdao_params(&secret);
+        form.extend([
+            ("i", ctx.text.to_string()),
+            (
+                "from",
+                ctx.from.map(youdao_lang).unwrap_or("auto").to_string(),
+            ),
+            ("to", youdao_lang(ctx.to).to_string()),
+            ("useTerm", "false".into()),
+            ("dictResult", "false".into()),
+            ("keyid", "webfanyi".into()),
+        ]);
+        let body = youdao_request(ctx.client.post("https://dict.youdao.com/webtranslate"))
+            .form(&form)
+            .send()
+            .await?
+            .error_for_status()?
+            .text()
+            .await?;
+        let resp = match youdao_decrypt(&body, &key, &iv) {
+            Ok(v) => v,
+            // 密钥换了：刷新一次再试
+            Err(_) if attempt == 0 => continue,
+            Err(err) => return Err(err),
+        };
+        if resp["code"].as_i64() != Some(0) {
+            if attempt == 0 {
+                continue;
+            }
+            return Err(AppError::Network(format!(
+                "有道翻译返回错误：{}",
+                resp["code"]
+            )));
+        }
+        let text =
+            youdao_text(&resp).ok_or_else(|| AppError::Network("有道翻译返回格式异常".into()))?;
+        // type 形如 "en2zh-CHS"
+        let detected = resp["type"]
+            .as_str()
+            .and_then(|t| t.split('2').next())
+            .map(normalize_detected);
+        return Ok(Output { text, detected });
+    }
+    Err(AppError::Network("有道翻译不可用".into()))
+}
+
 // ───────────────────────── Google (gtx) ─────────────────────────
 
 fn google_lang(code: &str) -> &str {
@@ -381,8 +572,36 @@ pub async fn openai(ctx: &Ctx<'_>, base_url: &str, model: &str, key: &str) -> Ap
 fn normalize_detected(code: &str) -> String {
     let lower = code.to_ascii_lowercase();
     match lower.as_str() {
-        "zh-hans" | "zh-cn" | "zh" => "zh".into(),
-        "zh-hant" | "zh-tw" | "zh-hk" => "zh-TW".into(),
+        "zh-hans" | "zh-cn" | "zh-chs" | "zh" => "zh".into(),
+        "zh-hant" | "zh-tw" | "zh-hk" | "zh-cht" => "zh-TW".into(),
         other => other.split('-').next().unwrap_or(other).to_string(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 真的联网请求有道：`cargo test youdao_live -- --ignored`
+    #[tokio::test]
+    #[ignore]
+    async fn youdao_live() {
+        let client = reqwest::Client::new();
+        for (text, from, to) in [
+            ("今天天气不错\n第二行文字。", None, "en"),
+            ("Hello world", Some("en"), "ja"),
+            ("Bonjour le monde", None, "zh-TW"),
+        ] {
+            let out = youdao(&Ctx {
+                client: &client,
+                text,
+                from,
+                to,
+            })
+            .await
+            .unwrap();
+            println!("{text:?} -> {:?} ({:?})", out.text, out.detected);
+            assert!(!out.text.trim().is_empty());
+        }
     }
 }

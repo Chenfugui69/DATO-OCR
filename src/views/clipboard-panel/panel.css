@@ -137,6 +137,26 @@ html[data-view='clipboard'] body {
 .panel__spacer {
   flex: 1;
 }
+/* 单击 / 双击粘贴切换：和筛选按钮一样的胶囊，带一圈细边区分开 */
+.panel__clickmode {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 26px;
+  padding: 0 10px;
+  border-radius: var(--cn-radius-full);
+  box-shadow: inset 0 0 0 0.5px var(--cn-separator);
+  font: 500 12px/1 var(--cn-font-sans);
+  color: var(--cn-label-secondary);
+  white-space: nowrap;
+  transition:
+    background-color var(--cn-duration-fast),
+    color var(--cn-duration-fast);
+}
+.panel__clickmode:hover {
+  background: var(--cn-bg-hover);
+  color: var(--cn-label);
+}
 
 .panel__list {
   position: relative;
@@ -251,6 +271,9 @@ html[data-view='clipboard'] body {
 }
 .clip-card--files {
   --clip-tint: #9a55d8;
+}
+.clip-card--gif {
+  --clip-tint: #0f9d8a;
 }
 
 /* 卡片顶：按类型着色的标题栏。左边类型 + 时间，右边一个大号来源应用图标，往右上角溢出一点被裁掉 */
@@ -399,6 +422,32 @@ html[data-view='clipboard'] body {
   height: 100%;
   object-fit: cover;
   display: block;
+}
+/* GIF：静止的第一帧和动图叠在一起，悬停时换成动图 */
+.clip-card__gif canvas,
+.clip-card__gif img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.clip-card__gif-badge {
+  position: absolute;
+  left: 8px;
+  bottom: 8px;
+  padding: 2px 6px;
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.55);
+  color: #fff;
+  font: 700 10px/1.2 var(--cn-font-sans);
+  letter-spacing: 0.04em;
+  pointer-events: none;
+}
+.clip-card__gif-fallback {
+  width: 28px;
+  height: 28px;
 }
 .clip-card__color {
   height: 100%;
