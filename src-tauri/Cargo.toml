@@ -1,6 +1,6 @@
 [package]
 name = "chenocr"
-version = "0.2.0"
+version = "0.3.0"
 description = "DATO COR · 截图 · 识字 · 翻译 · 剪贴板 · AI"
 authors = ["DATO COR"]
 edition = "2021"

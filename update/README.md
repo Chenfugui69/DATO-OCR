@@ -37,3 +37,7 @@ DATO COR 的"检查更新"从这里读：
 4. 提交并推送 `update/latest.json`、`update/latest-cn.json`，Gitee 仓库同步
 
 **第 3 步要在第 4 步之前**：清单一推上去，开着自动检查的用户就会去下载安装包。
+
+Gitee 还没准备好时用 `node scripts/release.mjs --github-only`：只生成 `latest.json`。国内渠道读不到 `latest-cn.json`
+会自动改走 GitHub。Gitee 准备好以后，Gitee 发行版上传同一个安装包，再跑一次 `--skip-build` 生成两份清单。
+脚本每次都会用程序里内置的公钥把签名验一遍，验不过就停下，不会发出签错钥匙的版本。
