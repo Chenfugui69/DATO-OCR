@@ -58,8 +58,15 @@ pub fn run() {
 
     let builder = tauri::Builder::default()
         // 单实例必须第一个注册：第二次启动只是把已有实例的主窗口叫出来。
-        // `--page=settings:translate` 这样的参数可以直接跳到某一页（快捷方式、测试用）
+        // `--page=settings:translate` 这样的参数可以直接跳到某一页（快捷方式、测试用）；
+        // `--translate=文字` 在鼠标旁边弹出划词面板翻译这段文字（脚本、快捷指令、测试用）
         .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
+            if let Some(text) = args.iter().find_map(|a| a.strip_prefix("--translate=")) {
+                if !text.trim().is_empty() {
+                    translate::selection::show_popup(app, text.to_string(), None);
+                }
+                return;
+            }
             let page = args.iter().find_map(|a| a.strip_prefix("--page="));
             wm::show_main(app, page);
         }))

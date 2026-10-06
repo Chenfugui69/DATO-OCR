@@ -30,8 +30,9 @@ import { AiChat } from '@/views/ai/AiChat';
 
 import { TranslateBox } from './TranslateBox';
 
-/** 窗口四周留给阴影的透明边（毛玻璃模式下阴影是系统画的，不留） */
-const SHADOW_PAD = 10;
+/** 窗口四周留给阴影的透明边，要装得下下面 .pop-shell 的整个阴影（下方 4 + 12 = 16），
+ *  装不下的话阴影在窗口边上被齐齐切断，看着像一圈方框。毛玻璃模式不画阴影，不留 */
+const SHADOW_PAD = 16;
 /** 底部"问 AI"输入框占的高度 */
 const ASK_H = 44;
 const MIN_AI = 280;
@@ -498,13 +499,13 @@ html[data-view='translate'], html[data-view='translate'] body { background: tran
    桌面，不开毛玻璃时默认不透明；不透明度可在设置里调 */
 /* overflow: clip 而不是 hidden：hidden 的元素还能被滚动（聚焦藏在外面的输入框时浏览器会自动滚），一滚整块内容就跳 */
 .pop-shell { position: relative; flex: 1; min-width: 0; display: flex; border-radius: var(--pop-radius); overflow: clip;
-             box-shadow: 0 8px 28px rgba(0,0,0,0.26), 0 0 0 0.5px rgba(0,0,0,0.28); animation: cn-pop-in 160ms var(--cn-ease-out);
+             box-shadow: 0 4px 12px rgba(0,0,0,0.22), 0 0 0 0.5px rgba(0,0,0,0.28); animation: cn-pop-in 160ms var(--cn-ease-out);
              --pop-hi: rgba(252,252,254,var(--pop-alpha)); --pop-lo: rgba(236,236,241,var(--pop-alpha));
              --r: min(var(--pop-radius), 16px); }
 [data-theme='dark'] .pop-shell { --pop-hi: rgba(46,46,48,var(--pop-alpha)); --pop-lo: rgba(30,30,32,var(--pop-alpha)); }
 /* 毛玻璃：系统亚克力在窗口背后，圆角和阴影都是系统的，这里只铺一层半透明的色调 */
-/* 毛玻璃：系统亚克力在窗口背后，窗口已经被 Rust 裁成同样的圆角（裁出来的边没有抗锯齿），
-   这里不画阴影，只在边上描一圈细线，把圆角的边缘描顺 */
+/* 毛玻璃：系统模糊背板挂在窗口最底下、按同样的圆角裁好（Rust 的 set_glass），
+   这里不画阴影，只在边上描一圈细线，让面板边缘清楚一点 */
 .pop-shell.is-blur { box-shadow: inset 0 0 0 0.5px rgba(255,255,255,0.16); animation: none; }
 [data-theme='light'] .pop-shell.is-blur { box-shadow: inset 0 0 0 0.5px rgba(0,0,0,0.14); }
 .pop-shell.is-drawer { flex-direction: column; }

@@ -156,6 +156,16 @@ pub fn set_round_region(window: &WebviewWindow, radius: u32) {
     sys::effects::set_round_region(window, radius);
 }
 
+/// 毛玻璃背板：`Some(物理像素半径)` 挂上 / 更新，`None` 去掉（见 windows/effects.rs）。只能在 UI 线程调用。
+pub fn set_backdrop(window: &WebviewWindow, radius: Option<u32>) -> bool {
+    sys::effects::set_backdrop(window, radius)
+}
+
+/// 窗口大小变了，背板的圆角裁剪跟上。
+pub fn resize_backdrop(window: &WebviewWindow) -> bool {
+    sys::effects::resize_backdrop(window)
+}
+
 /// 系统圆角（Win11）。
 pub fn set_rounded(window: &WebviewWindow, rounded: bool) {
     sys::effects::set_rounded(window, rounded);

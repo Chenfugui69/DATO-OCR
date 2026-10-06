@@ -90,11 +90,21 @@ windows = { version = "0.62", features = [
   "Win32_UI_WindowsAndMessaging",
   "Foundation",
   "Foundation_Collections",
+  "Foundation_Numerics",
+  "System",
+  "UI",
+  "UI_Composition",
+  "UI_Composition_Desktop",
+  "Win32_System_WinRT",
+  "Win32_System_WinRT_Composition",
   "Globalization",
   "Graphics_Imaging",
   "Media_Ocr",
   "Storage_Streams",
 ] }
+
+# 毛玻璃背板用到的 Vector2（windows 0.62 把数值类型拆成了单独的包）
+windows-numerics = "0.3"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 # 第一版留空，移植时填 objc2 / core-graphics / screencapturekit

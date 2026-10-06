@@ -18,6 +18,170 @@ use windows::Win32::UI::WindowsAndMessaging::GetWindowRect;
 use super::util::{handle_of, hwnd};
 use crate::error::AppResult;
 
+// ───────────────────────── 毛玻璃背板 ─────────────────────────
+//
+// 为什么不用 Tauri 的 `set_effects(Acrylic)`：Win11 上它走 DWM 的系统背板（DWMSBT），背板永远铺满
+// 整个矩形窗口，`SetWindowRgn` 也裁不掉。面板是圆角的，圆角外面就露出一块方的毛玻璃，看着像一圈
+// 方方的阴影（用户报过）。系统圆角又只有 8px 一档。
+//
+// 改成自己在窗口最底下挂一层 Windows.UI.Composition 的视觉对象：画刷用系统给的"宿主背板"
+// （就是亚克力用的那张已经模糊好的桌面），再用圆角矩形裁剪。半径随便设，边缘有抗锯齿，
+// 网页内容盖在它上面（窗口本身是透明的）。
+
+use std::cell::RefCell;
+use std::collections::HashMap;
+
+use windows::core::Interface;
+use windows::core::BOOL;
+use windows::System::DispatcherQueueController;
+use windows::Win32::Foundation::HWND;
+use windows::Win32::Graphics::Dwm::DWMWA_USE_HOSTBACKDROPBRUSH;
+use windows::Win32::System::WinRT::Composition::ICompositorDesktopInterop;
+use windows::Win32::System::WinRT::{
+    CreateDispatcherQueueController, DispatcherQueueOptions, DQTAT_COM_NONE, DQTYPE_THREAD_CURRENT,
+};
+use windows::Win32::UI::WindowsAndMessaging::GetClientRect;
+use windows::UI::Composition::Desktop::DesktopWindowTarget;
+use windows::UI::Composition::{CompositionRoundedRectangleGeometry, Compositor};
+use windows_numerics::Vector2;
+
+struct Backdrop {
+    // 目标一释放，挂在窗口上的视觉树就没了，所以得一直拿着
+    _target: DesktopWindowTarget,
+    geometry: CompositionRoundedRectangleGeometry,
+}
+
+thread_local! {
+    /// 合成器要求当前线程有 DispatcherQueue；两个都只建一次（都在 UI 线程上）
+    static COMPOSITOR: RefCell<Option<(DispatcherQueueController, Compositor)>> = const { RefCell::new(None) };
+    static BACKDROPS: RefCell<HashMap<isize, Backdrop>> = RefCell::new(HashMap::new());
+}
+
+fn compositor() -> windows::core::Result<Compositor> {
+    COMPOSITOR.with(|slot| {
+        let mut slot = slot.borrow_mut();
+        if let Some((_, c)) = slot.as_ref() {
+            return Ok(c.clone());
+        }
+        // SAFETY: 结构体大小如实填写；控制器存进线程局部变量，和线程同生命周期。
+        let controller = unsafe {
+            CreateDispatcherQueueController(DispatcherQueueOptions {
+                dwSize: std::mem::size_of::<DispatcherQueueOptions>() as u32,
+                threadType: DQTYPE_THREAD_CURRENT,
+                apartmentType: DQTAT_COM_NONE,
+            })?
+        };
+        let compositor = Compositor::new()?;
+        *slot = Some((controller, compositor.clone()));
+        Ok(compositor)
+    })
+}
+
+fn client_size(h: HWND) -> Vector2 {
+    let mut rc = RECT::default();
+    // SAFETY: h 是存活的窗口。
+    let _ = unsafe { GetClientRect(h, &mut rc) };
+    Vector2 {
+        X: (rc.right - rc.left).max(1) as f32,
+        Y: (rc.bottom - rc.top).max(1) as f32,
+    }
+}
+
+fn attach_backdrop(h: HWND, radius: f32) -> windows::core::Result<()> {
+    let key = h.0 as isize;
+    let size = client_size(h);
+    let corner = Vector2 {
+        X: radius,
+        Y: radius,
+    };
+    let existing = BACKDROPS.with(|b| b.borrow().get(&key).map(|bd| bd.geometry.clone()));
+    if let Some(geometry) = existing {
+        geometry.SetCornerRadius(corner)?;
+        geometry.SetSize(size)?;
+        return Ok(());
+    }
+    let on = BOOL(1);
+    // SAFETY: 传入的指针和大小匹配一个 BOOL。
+    unsafe {
+        DwmSetWindowAttribute(
+            h,
+            DWMWA_USE_HOSTBACKDROPBRUSH,
+            (&on as *const BOOL).cast(),
+            std::mem::size_of::<BOOL>() as u32,
+        )?;
+    }
+    let compositor = compositor()?;
+    let interop: ICompositorDesktopInterop = compositor.cast()?;
+    // SAFETY: h 是本线程创建的存活窗口。isTopmost = false：挂在网页内容下面。
+    let target = unsafe { interop.CreateDesktopWindowTarget(h, false)? };
+    let visual = compositor.CreateSpriteVisual()?;
+    visual.SetRelativeSizeAdjustment(Vector2 { X: 1.0, Y: 1.0 })?;
+    visual.SetBrush(&compositor.CreateHostBackdropBrush()?)?;
+    let geometry = compositor.CreateRoundedRectangleGeometry()?;
+    geometry.SetCornerRadius(corner)?;
+    geometry.SetSize(size)?;
+    visual.SetClip(&compositor.CreateGeometricClipWithGeometry(&geometry)?)?;
+    target.SetRoot(&visual)?;
+    BACKDROPS.with(|b| {
+        b.borrow_mut().insert(
+            key,
+            Backdrop {
+                _target: target,
+                geometry,
+            },
+        )
+    });
+    Ok(())
+}
+
+/// 毛玻璃背板：`Some(半径)`（物理像素）挂上或者更新半径和大小，`None` 去掉。只能在 UI 线程调用。
+/// 挂不上返回 false（Win10 没有 `DWMWA_USE_HOSTBACKDROPBRUSH`，调用方退回系统亚克力）。
+pub fn set_backdrop(window: &WebviewWindow, radius: Option<u32>) -> bool {
+    let Ok(h) = window.hwnd() else { return false };
+    match radius {
+        Some(r) => match attach_backdrop(h, r as f32) {
+            Ok(()) => true,
+            Err(err) => {
+                tracing::warn!(label = window.label(), "毛玻璃背板设置失败：{err}");
+                false
+            }
+        },
+        None => {
+            let removed = BACKDROPS.with(|b| b.borrow_mut().remove(&(h.0 as isize)));
+            if removed.is_some() {
+                let off = BOOL(0);
+                // SAFETY: 同上。
+                unsafe {
+                    let _ = DwmSetWindowAttribute(
+                        h,
+                        DWMWA_USE_HOSTBACKDROPBRUSH,
+                        (&off as *const BOOL).cast(),
+                        std::mem::size_of::<BOOL>() as u32,
+                    );
+                }
+            }
+            true
+        }
+    }
+}
+
+/// 窗口大小变了：背板的裁剪跟着变（视觉对象本身按比例铺满，不用管）。没挂背板返回 false。
+pub fn resize_backdrop(window: &WebviewWindow) -> bool {
+    let Ok(h) = window.hwnd() else { return false };
+    let geometry = BACKDROPS.with(|b| {
+        b.borrow()
+            .get(&(h.0 as isize))
+            .map(|bd| bd.geometry.clone())
+    });
+    match geometry {
+        Some(geometry) => {
+            let _ = geometry.SetSize(client_size(h));
+            true
+        }
+        None => false,
+    }
+}
+
 pub fn native_handle(window: &WebviewWindow) -> AppResult<u64> {
     Ok(handle_of(window.hwnd()?))
 }

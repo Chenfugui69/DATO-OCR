@@ -117,6 +117,13 @@ pub mod effects {
     pub fn set_rounded(window: &WebviewWindow, rounded: bool) {}
     /// contentView.layer.cornerRadius + masksToBounds
     pub fn set_round_region(window: &WebviewWindow, radius: u32) {}
+    /// NSVisualEffectView（.hudWindow 材质）+ layer.cornerRadius
+    pub fn set_backdrop(window: &WebviewWindow, radius: Option<u32>) -> bool {
+        false
+    }
+    pub fn resize_backdrop(window: &WebviewWindow) -> bool {
+        false
+    }
     /// NSWindow.setFrame(_:display:)
     pub fn set_bounds(
         window: &WebviewWindow,

@@ -169,50 +169,70 @@ static GLASS: parking_lot::Mutex<Option<std::collections::HashMap<String, f64>>>
     parking_lot::Mutex::new(None);
 
 /// 浮动面板的材质：
-/// - 毛玻璃：系统亚克力（背后内容实时模糊）。系统圆角只有 8px 一档，所以关掉系统圆角、自己把窗口
-///   裁成用户要的半径（`radius`，0 = 直角）。裁出来的边没有抗锯齿，页面在边上画一圈细线盖一盖
+/// - 毛玻璃：窗口最底下挂一层系统模糊背板，按用户要的半径（`radius`，0 = 直角）裁成圆角，
+///   网页盖在上面只铺一层淡色调（见 `platform::set_backdrop`）
 /// - 不开毛玻璃：窗口全透明，圆角和阴影由页面自己画（四周留了透明边）
 ///
-/// 实测（Win11 24H2）不能用 Blur（老的 ACCENT_ENABLE_BLURBEHIND，配 WebView2 背后是黑的），
-/// 也不能开系统阴影（会把窗框延伸进来、窗口变大）。亚克力自带色调，页面色调要淡；窗口失去焦点时
-/// 系统会把亚克力换成纯色，这是系统行为。只能在 UI 线程调用。
+/// 不能用 Tauri 的 `set_effects`：Acrylic 在 Win11 上铺满整个矩形窗口、裁不掉，圆角外面露出方块；
+/// Blur（老的 ACCENT_ENABLE_BLURBEHIND）配 WebView2 背后是黑的。也不能开系统阴影（会把窗框延伸
+/// 进来、窗口变大）。只能在 UI 线程调用。
 pub fn set_glass(window: &WebviewWindow, blur: bool, radius: f64) {
-    let effects = blur.then(|| EffectsBuilder::new().effect(Effect::Acrylic).build());
-    if let Err(err) = window.set_effects(effects) {
-        tracing::warn!(label = window.label(), "设置面板材质失败：{err}");
-    }
+    // 以前的版本用过系统亚克力和窗口裁剪，先都清掉
+    let _ = window.set_effects(None::<tauri::utils::config::WindowEffectsConfig>);
     platform::set_rounded(window, false);
-    let r = if blur { radius.max(0.0) } else { 0.0 };
-    GLASS
-        .lock()
-        .get_or_insert_with(Default::default)
-        .insert(window.label().to_string(), r);
-    apply_region(window, r);
-}
-
-fn apply_region(window: &WebviewWindow, radius: f64) {
+    platform::set_round_region(window, 0);
+    let r = blur.then(|| radius.max(0.0));
+    {
+        let mut glass = GLASS.lock();
+        let map = glass.get_or_insert_with(Default::default);
+        match r {
+            Some(r) => map.insert(window.label().to_string(), r),
+            None => map.remove(window.label()),
+        };
+    }
     let s = window.scale_factor().unwrap_or(1.0);
-    platform::set_round_region(window, (radius * s).round() as u32);
+    let px = r.map(|r| (r * s).round() as u32);
+    if !platform::set_backdrop(window, px) {
+        // Win10 挂不上背板：退回系统亚克力，再把窗口裁成圆角（Win10 的亚克力走窗口合成属性，跟着窗口区域走）
+        let effects = EffectsBuilder::new().effect(Effect::Acrylic).build();
+        if let Err(err) = window.set_effects(Some(effects)) {
+            tracing::warn!(label = window.label(), "设置面板材质失败：{err}");
+        }
+        platform::set_round_region(window, px.unwrap_or(0));
+    }
 }
 
-/// 面板窗口创建时调一次：窗口大小、缩放一变就按记下的半径重新裁圆角。
+/// 面板窗口创建时调一次：窗口大小变了背板裁剪跟着变，缩放变了圆角半径按新缩放重算。
 pub fn track_glass(window: &WebviewWindow) {
     let w = window.clone();
-    window.on_window_event(move |event| {
-        if matches!(
-            event,
-            tauri::WindowEvent::Resized(_) | tauri::WindowEvent::ScaleFactorChanged { .. }
-        ) {
-            // 先把半径取出来再裁：裁的时候系统可能同步发回窗口消息
+    window.on_window_event(move |event| match event {
+        tauri::WindowEvent::Resized(_) => {
+            // Win10 退回窗口裁剪的情况：窗口一变大小就得按新大小重新裁
+            if !platform::resize_backdrop(&w) {
+                let r = GLASS
+                    .lock()
+                    .as_ref()
+                    .and_then(|m| m.get(w.label()).copied());
+                if let Some(r) = r {
+                    let s = w.scale_factor().unwrap_or(1.0);
+                    platform::set_round_region(&w, (r * s).round() as u32);
+                }
+            }
+        }
+        tauri::WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
+            // 先把半径取出来再设：设的时候系统可能同步发回窗口消息
             let r = GLASS
                 .lock()
                 .as_ref()
-                .and_then(|m| m.get(w.label()).copied())
-                .unwrap_or(0.0);
-            if r > 0.0 {
-                apply_region(&w, r);
+                .and_then(|m| m.get(w.label()).copied());
+            if let Some(r) = r {
+                let px = (r * scale_factor).round() as u32;
+                if !platform::set_backdrop(&w, Some(px)) {
+                    platform::set_round_region(&w, px);
+                }
             }
         }
+        _ => {}
     });
 }
 
