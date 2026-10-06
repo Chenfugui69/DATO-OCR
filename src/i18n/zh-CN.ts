@@ -370,6 +370,9 @@ const zhCN = {
     thought: '思考过程',
   },
   translate: {
+      editSource: '点击编辑原文，改完自动重新翻译',
+      expand: '展开',
+      collapse: '折叠',
     resize: '拖动改变大小',
     selectionButton: '翻译选中的文字',
     swap: '交换',
@@ -458,6 +461,7 @@ const zhCN = {
       gifFpsDesc: '截图后点工具条上的"录制 GIF"（Ctrl+G）。帧率越高越流畅，文件也越大；最长录 60 秒',
       gifCursor: 'GIF 录进鼠标指针',
       rightClick: '右键',
+      rightClickNone: '无操作',
       rightClickExit: '直接退出截图',
       rightClickCancel: '先取消选区，再按退出',
     },

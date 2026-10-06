@@ -161,9 +161,19 @@ pub fn set_backdrop(window: &WebviewWindow, radius: Option<u32>) -> bool {
     sys::effects::set_backdrop(window, radius)
 }
 
+/// 背板只铺窗口里的一块（物理像素），`ms` > 0 时动画过去；`None` = 铺满窗口。只能在 UI 线程调用。
+pub fn set_backdrop_rect(window: &WebviewWindow, rect: Option<(f32, f32, f32, f32)>, ms: u32) {
+    sys::effects::set_backdrop_rect(window, rect, ms);
+}
+
 /// 窗口大小变了，背板的圆角裁剪跟上。
 pub fn resize_backdrop(window: &WebviewWindow) -> bool {
     sys::effects::resize_backdrop(window)
+}
+
+/// 窗口只保留一个矩形（物理像素）：外面不显示、点击穿透。`None` = 整个窗口。
+pub fn set_rect_region(window: &WebviewWindow, rect: Option<(i32, i32, i32, i32)>) {
+    sys::effects::set_rect_region(window, rect);
 }
 
 /// 系统圆角（Win11）。

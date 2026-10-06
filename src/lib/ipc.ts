@@ -181,6 +181,8 @@ export const translate = {
   providers: () => call<ProviderInfo[]>('translate_providers'),
   detect: (text: string) => call<string>('translate_detect', { text }),
   popupText: () => call<string | null>('translate_popup_text'),
+  /** 划词面板上方预留了多高（逻辑像素） */
+  popupReserve: () => call<number>('translate_popup_reserve'),
 };
 
 // ───────────────────────── 系统 ─────────────────────────
@@ -220,5 +222,11 @@ export const system = {
   quit: () => call<void>('quit_app'),
   hideToast: () => call<void>('toast_hide'),
   /** 当前窗口一次同时改位置和大小（逻辑像素） */
-  setBounds: (x: number, y: number, width: number, height: number) => call<void>('window_set_bounds', { x, y, width, height }),
+  /** 改窗口位置大小；`backdrop` 给了的话毛玻璃背板同时改成只铺窗口里的这一块（逻辑像素） */
+  setBounds: (x: number, y: number, width: number, height: number, backdrop?: { x: number; y: number; width: number; height: number }) =>
+    call<void>('window_set_bounds', { x, y, width, height, backdrop: backdrop ?? null }),
+  /** 窗口只保留一块（逻辑像素）：外面不显示、点击穿透；null = 整个窗口 */
+  setRegion: (rect: { x: number; y: number; width: number; height: number } | null) => call<void>('window_set_region', { rect }),
+  /** 毛玻璃背板只铺窗口里的一块、`ms` 毫秒动画过去；`rect` 为 null = 铺满窗口 */
+  backdrop: (rect: { x: number; y: number; width: number; height: number } | null, ms = 0) => call<void>('window_backdrop', { rect, ms }),
 };

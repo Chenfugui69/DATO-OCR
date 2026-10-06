@@ -31,6 +31,13 @@ const BUTTON_TTL: Duration = Duration::from_millis(3500);
 
 /// 最近一次要翻译的文字。气泡页面刚加载完时主动来取（事件可能在页面就绪前就发出了）。
 static CURRENT: Mutex<Option<String>> = Mutex::new(None);
+/// 面板上方预留的高度（逻辑像素，见 `reserve_above`）
+static RESERVE: Mutex<f64> = Mutex::new(0.0);
+
+/// 面板现在上方预留了多高（页面加载晚了、错过事件时用）。
+pub fn current_reserve() -> f64 {
+    *RESERVE.lock()
+}
 static WATCH: Mutex<Option<SelectionWatchGuard>> = Mutex::new(None);
 /// 悬浮按钮当前的位置（屏幕物理坐标）；None = 没显示
 static BUTTON: Mutex<Option<PhysicalRect>> = Mutex::new(None);
@@ -45,6 +52,8 @@ pub fn current() -> Option<String> {
 #[serde(rename_all = "camelCase")]
 pub struct TranslatePopup {
     pub text: String,
+    /// 面板上方预留的高度（逻辑像素）
+    pub reserve: f64,
 }
 
 /// 快捷键入口：翻译当前选中的文字，气泡出现在鼠标旁边。
@@ -193,13 +202,72 @@ pub fn show_popup(app: &AppHandle, text: String, at: Option<(i32, i32)>) {
             Some((x, y)) => (wm::Anchor::Point(x, y), wm::monitor_at(x, y)),
             None => (wm::Anchor::Cursor, wm::monitor_under_cursor()),
         };
+        let mut reserve = 0.0;
         if let Some(monitor) = monitor {
             let _ = wm::place_on_monitor(&window, &monitor, w, h, anchor);
+            reserve = reserve_above(&app, &window, &monitor, h);
         }
-        let _ = app.emit_to(WINDOW, events::TRANSLATE_REQUEST, TranslatePopup { text });
+        *RESERVE.lock() = reserve;
+        let _ = app.emit_to(
+            WINDOW,
+            events::TRANSLATE_REQUEST,
+            TranslatePopup { text, reserve },
+        );
         let _ = window.show();
         let _ = window.set_focus();
     });
+}
+
+/// 抽屉式"问 AI"是从输入框的位置往上长的。要是展开时才把窗口往上挪，窗口挪动和网页重画对不上同一帧，
+/// 面板会跳一下。所以面板弹出时（窗口还没显示）就把窗口往上多留出抽屉要长的那么高：留出来的部分
+/// 用窗口区域裁掉（不显示、点击穿透），毛玻璃背板也只铺在面板上。展开时面板在窗口里往上长，窗口不动。
+/// 上面空间不够（面板贴着屏幕顶）就少留或不留，展开时页面再挪窗口。返回留了多高（逻辑像素）。
+fn reserve_above(
+    app: &AppHandle,
+    window: &tauri::WebviewWindow,
+    monitor: &platform::MonitorInfo,
+    h: f64,
+) -> f64 {
+    platform::set_rect_region(window, None);
+    platform::set_backdrop_rect(window, None, 0);
+    let popup = state(app).settings.read().translate.popup.clone();
+    if popup.ai_layout != "drawer" {
+        return 0.0;
+    }
+    let s = monitor.scale_factor.max(0.5);
+    let pad = if popup.blur { 0.0 } else { 16.0 };
+    // 和页面里展开抽屉的算法一致：翻译区露出一半，加上抽屉的高度
+    let trans = ((h - pad * 2.0) / 2.0).round().max(110.0);
+    let want = (pad * 2.0 + trans + f64::from(popup.drawer_height) - h).max(0.0);
+    let (Ok(pos), Ok(size)) = (window.outer_position(), window.outer_size()) else {
+        return 0.0;
+    };
+    let room = (f64::from(pos.y - monitor.work_area.y) / s).max(0.0);
+    let reserve = want.min(room).floor();
+    if reserve < 1.0 {
+        return 0.0;
+    }
+    let rp = (reserve * s).round() as i32;
+    if platform::set_bounds(
+        window,
+        pos.x,
+        pos.y - rp,
+        size.width,
+        size.height + rp as u32,
+    )
+    .is_err()
+    {
+        return 0.0;
+    }
+    platform::set_rect_region(window, Some((0, rp, size.width as i32, size.height as i32)));
+    if popup.blur {
+        platform::set_backdrop_rect(
+            window,
+            Some((0.0, rp as f32, size.width as f32, size.height as f32)),
+            0,
+        );
+    }
+    reserve
 }
 
 // ───────────────────────── 选字手势：悬浮按钮 / 按住修饰键 ─────────────────────────

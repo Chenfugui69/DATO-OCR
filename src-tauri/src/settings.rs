@@ -180,7 +180,7 @@ pub struct CaptureSettings {
     pub detect_windows: bool,
     pub detect_child_windows: bool,
     pub snap_threshold: u32,
-    /// exit | cancelSelection
+    /// none（默认，右键什么都不做）| exit | cancelSelection
     pub right_click: String,
     /// copy | copyAndSave
     pub finish_action: String,
@@ -217,7 +217,7 @@ impl Default for CaptureSettings {
             detect_windows: true,
             detect_child_windows: true,
             snap_threshold: 8,
-            right_click: "exit".into(),
+            right_click: "none".into(),
             finish_action: "copy".into(),
             save_to_library: true,
             save_directory: None,
@@ -480,7 +480,7 @@ impl Default for PopupStyle {
             height: 0,
             font_size: 15,
             opacity: 1.0,
-            radius: 14,
+            radius: 24,
             show_source: false,
             ai_layout: "drawer".into(),
             drawer_height: 380,
@@ -702,6 +702,9 @@ impl Settings {
         c.ocr_mask_opacity = c.ocr_mask_opacity.clamp(0.0, 0.9);
         if !matches!(c.instant_action.as_str(), "select" | "copy" | "save") {
             c.instant_action = "select".into();
+        }
+        if !matches!(c.right_click.as_str(), "none" | "exit" | "cancelSelection") {
+            c.right_click = "none".into();
         }
         c.frame.sanitize();
         c.ocr_frame.sanitize();

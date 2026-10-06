@@ -212,6 +212,7 @@ export function SettingsPage({ section }: { section: string | null }) {
               <Select
                 value={c.rightClick}
                 options={[
+                  { value: 'none', label: t('settings.capture.rightClickNone') },
                   { value: 'exit', label: t('settings.capture.rightClickExit') },
                   { value: 'cancelSelection', label: t('settings.capture.rightClickCancel') },
                 ]}

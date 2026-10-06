@@ -234,7 +234,7 @@ export interface CaptureSettings {
   detectWindows: boolean;
   detectChildWindows: boolean;
   snapThreshold: number;
-  rightClick: 'exit' | 'cancelSelection';
+  rightClick: 'none' | 'exit' | 'cancelSelection';
   finishAction: 'copy' | 'copyAndSave';
   saveToLibrary: boolean;
   saveDirectory: string | null;

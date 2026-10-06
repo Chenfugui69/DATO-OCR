@@ -6,7 +6,7 @@
 // - 单源：只显示一个结果，默认源失败时 Rust 侧自动降级到下一个；可手动指定源
 
 import { useQuery } from '@tanstack/react-query';
-import { ArrowDownUp, Copy, RotateCw } from 'lucide-react';
+import { ArrowDownUp, ChevronRight, Copy, RotateCw } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 
@@ -40,6 +40,26 @@ function useTranslate(text: string, from: string, to: string, provider: string) 
     return () => window.clearTimeout(id);
   }, [run]);
   return { ...state, run };
+}
+
+/** 折起来的翻译源（记在本机，下次打开还是折着） */
+const COLLAPSED_KEY = 'tr-collapsed';
+function loadCollapsed(): Set<string> {
+  try {
+    return new Set(JSON.parse(localStorage.getItem(COLLAPSED_KEY) ?? '[]') as string[]);
+  } catch {
+    return new Set();
+  }
+}
+function saveCollapsed(id: string, collapsed: boolean) {
+  const set = loadCollapsed();
+  if (collapsed) set.add(id);
+  else set.delete(id);
+  try {
+    localStorage.setItem(COLLAPSED_KEY, JSON.stringify([...set]));
+  } catch {
+    // 存不了就只在这次有效
+  }
 }
 
 function copyText(text: string, done: string) {
@@ -118,27 +138,52 @@ function ProviderCard({
 }) {
   const { t } = useTranslation();
   const { loading, result, error, run } = useTranslate(text, from, to, provider.id);
+  const [collapsed, setCollapsed] = useState(() => loadCollapsed().has(provider.id));
   useEffect(() => {
     if (result) onDetected?.({ from: result.from, to: result.to });
   }, [result, onDetected]);
+  const toggle = () => {
+    saveCollapsed(provider.id, !collapsed);
+    setCollapsed(!collapsed);
+  };
   return (
-    <section className="tr-card" data-primary={primary || undefined}>
-      <header className="tr-card__head">
+    <section className="tr-card" data-primary={primary || undefined} data-collapsed={collapsed || undefined}>
+      <header
+        className="tr-card__head"
+        role="button"
+        tabIndex={0}
+        aria-expanded={!collapsed}
+        title={collapsed ? t('translate.expand') : t('translate.collapse')}
+        onClick={toggle}
+        onKeyDown={(e) => (e.key === 'Enter' || e.key === ' ') && (e.preventDefault(), toggle())}
+      >
+        <ChevronRight className="tr-card__chev" size={13} strokeWidth={2} />
         <span className="tr-card__name">{provider.name}</span>
         {primary && <span className="tr-card__badge">{t('settings.translate.default')}</span>}
-        <span style={{ flex: 1 }} />
-        {error && <IconButton icon={RotateCw} size="sm" label={t('common.retry')} onClick={() => void run()} />}
-        <IconButton icon={Copy} size="sm" label={t('translate.copy')} disabled={!result} onClick={() => result && copyText(result.text, t('translate.copied'))} />
+        {/* 折起来时在标题后面露一行译文 */}
+        <span className="tr-card__peek">{collapsed && result ? result.text : ''}</span>
+        <span className="tr-card__tools" onClick={(e) => e.stopPropagation()}>
+          {error && <IconButton icon={RotateCw} size="sm" label={t('common.retry')} onClick={() => void run()} />}
+          <IconButton
+            icon={Copy}
+            size="sm"
+            label={t('translate.copy')}
+            disabled={!result}
+            onClick={() => result && copyText(result.text, t('translate.copied'))}
+          />
+        </span>
       </header>
-      <div className="tr-card__body cn-selectable">
-        {loading && !result ? (
-          <Skeleton />
-        ) : error ? (
-          <div className="tr-box__error">{error}</div>
-        ) : (
-          <div style={{ opacity: loading ? 0.5 : 1 }}>{result?.text}</div>
-        )}
-      </div>
+      {!collapsed && (
+        <div className="tr-card__body cn-selectable">
+          {loading && !result ? (
+            <Skeleton />
+          ) : error ? (
+            <div className="tr-box__error">{error}</div>
+          ) : (
+            <div style={{ opacity: loading ? 0.5 : 1 }}>{result?.text}</div>
+          )}
+        </div>
+      )}
     </section>
   );
 }

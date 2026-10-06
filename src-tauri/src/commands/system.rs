@@ -284,15 +284,81 @@ pub async fn window_set_bounds(
     y: f64,
     width: f64,
     height: f64,
+    backdrop: Option<BackdropRect>,
 ) -> AppResult<()> {
     let s = window.scale_factor()?;
-    crate::platform::set_bounds(
-        &window,
-        (x * s).round() as i32,
-        (y * s).round() as i32,
+    let (px, py) = ((x * s).round() as i32, (y * s).round() as i32);
+    let (pw, ph) = (
         (width * s).round().max(1.0) as u32,
         (height * s).round().max(1.0) as u32,
-    )
+    );
+    let Some(b) = backdrop else {
+        return crate::platform::set_bounds(&window, px, py, pw, ph);
+    };
+    // 毛玻璃面板展开 / 收起：窗口挪动和背板范围在 UI 线程上一起改，系统合成时是同一帧
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    let w = window.clone();
+    window.run_on_main_thread(move || {
+        crate::platform::set_backdrop_rect(&w, Some(b.physical(s)), 0);
+        let _ = tx.send(crate::platform::set_bounds(&w, px, py, pw, ph));
+    })?;
+    rx.await
+        .map_err(|_| crate::error::AppError::msg("窗口操作被取消"))?
+}
+
+/// 窗口里的一块（逻辑像素）。
+#[derive(serde::Deserialize, Clone, Copy)]
+pub struct BackdropRect {
+    x: f64,
+    y: f64,
+    width: f64,
+    height: f64,
+}
+
+impl BackdropRect {
+    fn physical(self, s: f64) -> (f32, f32, f32, f32) {
+        (
+            (self.x * s) as f32,
+            (self.y * s) as f32,
+            (self.width * s) as f32,
+            (self.height * s) as f32,
+        )
+    }
+}
+
+/// 窗口只保留一块（逻辑像素）：外面不显示、点击穿透；`rect` 为空 = 整个窗口。
+#[tauri::command]
+pub async fn window_set_region(
+    window: tauri::WebviewWindow,
+    rect: Option<BackdropRect>,
+) -> AppResult<()> {
+    let s = window.scale_factor()?;
+    let rect = rect.map(|r| {
+        let (x, y, w, h) = r.physical(s);
+        (
+            x.round() as i32,
+            y.round() as i32,
+            w.round() as i32,
+            h.round() as i32,
+        )
+    });
+    crate::platform::set_rect_region(&window, rect);
+    Ok(())
+}
+
+/// 毛玻璃背板只铺窗口里的一块，`ms` > 0 时动画过去（和页面同一条缓动曲线）；`rect` 为空 = 铺满窗口。
+#[tauri::command]
+pub async fn window_backdrop(
+    window: tauri::WebviewWindow,
+    rect: Option<BackdropRect>,
+    ms: u32,
+) -> AppResult<()> {
+    let s = window.scale_factor()?;
+    let w = window.clone();
+    window.run_on_main_thread(move || {
+        crate::platform::set_backdrop_rect(&w, rect.map(|r| r.physical(s)), ms);
+    })?;
+    Ok(())
 }
 
 #[tauri::command]

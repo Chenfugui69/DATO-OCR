@@ -13,7 +13,7 @@ import { flushSync } from 'react-dom';
 import { useTranslation } from 'react-i18next';
 
 import { broadcast, on } from '@/lib/events';
-import { formatColor } from '@/lib/format';
+import { formatColor, readableOn } from '@/lib/format';
 import { useElementSize } from '@/lib/hooks';
 import { capture, gif, reportError } from '@/lib/ipc';
 import { shotUrl, windowLabel } from '@/lib/platform';
@@ -578,8 +578,10 @@ function onContextMenu(e: React.MouseEvent) {
     engine.commitText();
     return;
   }
-  // 微信行为：右键直接退出；设置里可改成"先取消选区、再右键才退出"（Snipaste）
-  if (st.session.settings.rightClick === 'cancelSelection' && st.selection) clearSelection();
+  // 默认右键什么都不做；设置里可改成"直接退出"（微信）或"先取消选区、再右键才退出"（Snipaste）
+  const mode = st.session.settings.rightClick;
+  if (mode === 'none') return;
+  if (mode === 'cancelSelection' && st.selection) clearSelection();
   else cancel();
 }
 
@@ -729,6 +731,8 @@ function frameVars(f: FrameStyle | undefined): React.CSSProperties {
   const style = f ?? { color: 'accent', width: 1.5, style: 'solid', radius: 0 };
   return {
     '--cap-frame-color': style.color === 'accent' ? 'var(--cn-accent)' : style.color,
+    // 完成按钮用框的颜色当底色，上面的勾按底色深浅选黑或白
+    '--cap-frame-fg': style.color === 'accent' || readableOn(style.color) === 'white' ? '#fff' : 'rgba(0,0,0,0.85)',
     '--cap-frame-width': `${style.width}px`,
     '--cap-frame-style': style.style,
     '--cap-frame-radius': `${style.radius}px`,

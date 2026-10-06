@@ -54,10 +54,9 @@ html[data-view='capture'] #root {
   position: absolute;
   outline: var(--cap-frame-width) var(--cap-frame-style) var(--cap-frame-color);
   border-radius: var(--cap-frame-radius);
-  /* 同 .cap-hover：外圈比描边多出一点点（垫在描边下面），内圈贴着里边 */
-  box-shadow:
-    0 0 0 calc(var(--cap-frame-width) + 0.75px) rgba(0, 0, 0, 0.32),
-    inset 0 0 0 0.75px rgba(0, 0, 0, 0.32);
+  /* 外圈比描边多出一点点深色（垫在描边下面），白框压在白色内容上也看得清。
+     不再在里边描一圈：选区贴着屏幕边时描边在屏幕外，只剩里边那圈深色细线，看着像一条黑线 */
+  box-shadow: 0 0 0 calc(var(--cap-frame-width) + 0.75px) rgba(0, 0, 0, 0.32);
   pointer-events: none;
 }
 
@@ -84,6 +83,17 @@ html[data-view='capture'] #root {
 .cap-handle--v {
   width: 6px;
   height: 22px;
+}
+
+/* 截图工具条的完成按钮跟选区框同一个颜色 */
+.cap-root .an-btn--primary,
+.cap-root .an-btn--primary:hover:not(:disabled) {
+  background: var(--cap-frame-color);
+  color: var(--cap-frame-fg, #fff);
+  box-shadow: 0 2px 8px color-mix(in srgb, var(--cap-frame-color) 40%, transparent);
+}
+.cap-root .an-btn--primary:hover:not(:disabled) {
+  filter: brightness(1.08);
 }
 
 /* 尺寸提示：淡一点的小标签，不抢选区的视觉 */

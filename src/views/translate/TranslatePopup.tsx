@@ -33,8 +33,6 @@ import { TranslateBox } from './TranslateBox';
 /** 窗口四周留给阴影的透明边，要装得下下面 .pop-shell 的整个阴影（下方 4 + 12 = 16），
  *  装不下的话阴影在窗口边上被齐齐切断，看着像一圈方框。毛玻璃模式不画阴影，不留 */
 const SHADOW_PAD = 16;
-/** 底部"问 AI"输入框占的高度 */
-const ASK_H = 44;
 const MIN_AI = 280;
 const MIN_TRANSLATE = 360;
 const MIN_TRANSLATE_H = 110;
@@ -58,12 +56,41 @@ interface Sheet {
   fh: number;
 }
 
+/** 面板四边、四角的拖动改大小区 */
+const RESIZE_EDGES = [
+  ['North', 'n'],
+  ['South', 's'],
+  ['West', 'w'],
+  ['East', 'e'],
+  ['NorthWest', 'nw'],
+  ['NorthEast', 'ne'],
+  ['SouthWest', 'sw'],
+] as const;
+
 const ANIM_MS = 340;
 const EASE = 'cubic-bezier(0.32, 0.72, 0, 1)';
 const frame = () => new Promise<void>((r) => requestAnimationFrame(() => r()));
 const wait = (ms: number) => new Promise<void>((r) => window.setTimeout(r, ms));
 
-const logicalWindowSize = () => ({ w: window.innerWidth, h: window.innerHeight });
+
+/**
+ * 改窗口位置大小，网页这边外框已经提前往反方向挪好了：两件事要落在同一帧，不然会闪一下。
+ * 网页改了之后要过一两帧才真正上屏，改窗口却几乎立刻生效，所以等网页这一帧交出去了再改窗口。
+ */
+async function moveWindow(
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  backdrop?: { x: number; y: number; width: number; height: number },
+) {
+  const delay = (window as unknown as { __moveDelay?: number }).__moveDelay ?? MOVE_DELAY_FRAMES;
+  for (let i = 0; i < delay; i += 1) await frame();
+  await system.setBounds(x, y, w, h, backdrop);
+}
+
+/** 改窗口前等几帧（见 moveWindow） */
+const MOVE_DELAY_FRAMES = 1;
 
 /** 按住拖动，松手回调（用来保存）。 */
 function dragHandle(e: React.PointerEvent<HTMLElement>, move: (ev: PointerEvent) => void, done: () => void) {
@@ -93,6 +120,8 @@ export default function TranslatePopup() {
   /** 这次展开用的布局（展开后改设置不影响已经开着的） */
   const [layout, setLayout] = useState<Layout>('drawer');
   const [question, setQuestion] = useState('');
+  /** 原文在编辑：点原文那一栏就变成输入框，改完自动重翻 */
+  const [editingSource, setEditingSource] = useState(false);
   const [pendingAsk, setPendingAsk] = useState<{ id: number; text: string } | null>(null);
   /** 侧边：翻译卡片宽度；抽屉：翻译区高度（逻辑像素） */
   const [transW, setTransW] = useState(440);
@@ -117,21 +146,39 @@ export default function TranslatePopup() {
   /** 展开时为了放得下，窗口往左 / 往上挪了多少；收起时挪回去 */
   const shift = useRef({ x: 0, y: 0 });
   const [sheet, setSheet] = useState<Sheet | null>(null);
+  /** 窗口顶上不属于面板的那一截（逻辑像素）：弹出时为抽屉往上长预留的，裁掉了不显示（Rust 的 reserve_above） */
+  const [topSpace, setTopSpace] = useState(0);
+  const topRef = useRef(0);
+  topRef.current = topSpace;
+  /** 这次展开是在窗口里往上长的（没挪窗口）：长了多高，收起时缩回去 */
+  const grownInPlace = useRef(0);
+  /** 面板（不含顶上预留）的大小 */
+  const logicalWindowSize = useCallback(() => ({ w: window.innerWidth, h: window.innerHeight - topRef.current }), []);
   const animating = useRef(false);
 
   const adopt = useCallback((next: string) => {
     setText(next);
     setSeq((n) => n + 1);
+    setEditingSource(false);
     setMode('translate');
     setQuestion('');
     setPendingAsk(null);
   }, []);
-  useEvent('translate-request', (p) => adopt(p.text));
+  useEvent('translate-request', (p) => {
+    grownInPlace.current = 0;
+    setTopSpace(p.reserve ?? 0);
+    setSheet(null);
+    adopt(p.text);
+  });
   // 面板第一次出现时页面可能还没加载完、错过了事件，加载好后主动取一次
   useEffect(() => {
     translate
       .popupText()
       .then((current) => current && adopt(current))
+      .catch(() => undefined);
+    translate
+      .popupReserve()
+      .then(setTopSpace)
       .catch(() => undefined);
   }, [adopt]);
 
@@ -165,6 +212,13 @@ export default function TranslatePopup() {
       win.onMoved(() => userMoving.current && settle(400)),
       // 用户拖右下角改了大小：记进设置，下次按这个尺寸弹出
       win.onResized(() => {
+        // 顶上有预留时，窗口区域和毛玻璃背板要跟着面板的新大小（动画期间由展开 / 收起自己管）
+        const top = topRef.current;
+        if (top > 0 && !animating.current) {
+          const rect = { x: 0, y: top, width: window.innerWidth, height: window.innerHeight - top };
+          void system.setRegion(rect);
+          if (padRef.current === 0) void system.backdrop(rect);
+        }
         if (!userResizing.current) return;
         window.clearTimeout(resizeTimer.current);
         resizeTimer.current = window.setTimeout(() => {
@@ -195,7 +249,7 @@ export default function TranslatePopup() {
       window.removeEventListener('pointerdown', onDown, true);
       for (const u of unlisteners) void u.then((fn) => fn());
     };
-  }, [hide]);
+  }, [hide, logicalWindowSize]);
 
   const openAi = async (ask?: string) => {
     if (animating.current) return;
@@ -220,15 +274,42 @@ export default function TranslatePopup() {
         w = Math.min(mw - 16, trans + pad * 2 + Math.max(MIN_AI, panel?.width ?? 520));
         h = Math.min(mh - 16, Math.max(base.h, panel?.height ?? 620));
       } else {
-        // 输入框那一条让给抽屉，翻译区保持原来的高度
-        const trans = Math.max(MIN_TRANSLATE_H, base.h - pad * 2 - ASK_H);
+        // 对话区从输入框那里往上长，盖住翻译区下面一半：翻译区露出上面一半，窗口往上多长出一个对话区减半个翻译区
+        const trans = Math.max(MIN_TRANSLATE_H, Math.round((base.h - pad * 2) / 2));
         w = Math.max(base.w, 380);
         h = Math.min(mh - 16, pad * 2 + trans + (popup?.drawerHeight ?? 380));
         setTransH(Math.min(trans, h - pad * 2 - MIN_DRAWER));
       }
-      // 原地往右 / 往下长；放不下才整个往回挪
+      // 侧边：原地往右长。抽屉：底边（输入框）不动，往上长。放不下才整个往回挪
+      const grow = h - base.h;
+      if (next === 'drawer' && w === base.w && grow > 0 && topRef.current >= grow) {
+        const top = topRef.current - grow;
+        const full = { fw: w - pad * 2, fh: h - pad * 2 };
+        grownInPlace.current = grow;
+        // 1. 外框先按原来的大小、原来的位置（往下偏 grow）定住，顶上预留缩小同样多，屏幕上看不动；
+        //    窗口区域放开到外框要长到的地方
+        flushSync(() => {
+          setLayout(next);
+          if (ask) setPendingAsk({ id: Date.now(), text: ask });
+          setQuestion('');
+          setTopSpace(top);
+          setSheet({ w: base.w - pad * 2, h: base.h - pad * 2, ...full, x: 0, y: grow, open: false, animate: false });
+          setMode('ai');
+        });
+        userResizing.current = false;
+        void system.setRegion({ x: 0, y: top, width: w, height: window.innerHeight - top });
+        await frame();
+        await frame();
+        // 2. 外框往上长到新高度，对话区从输入框那里升上来，毛玻璃背板用同一条曲线跟着长
+        setSheet({ w: full.fw, h: full.fh, ...full, x: 0, y: 0, open: true, animate: true });
+        if (blur) void system.backdrop({ x: 0, y: top, width: full.fw, height: full.fh }, ANIM_MS);
+        await wait(ANIM_MS + 40);
+        setSheet(null);
+        return;
+      }
       const x = Math.max(mx, Math.min(pos.x, mx + mw - w));
-      const y = Math.max(my, Math.min(pos.y, my + mh - h));
+      const wantY = next === 'drawer' ? pos.y + base.h - h : pos.y;
+      const y = Math.max(my, Math.min(wantY, my + mh - h));
       shift.current = { x: pos.x - x, y: pos.y - y };
       const full = { fw: w - pad * 2, fh: h - pad * 2 };
       const start = { w: base.w - pad * 2, h: base.h - pad * 2, ...full };
@@ -243,13 +324,16 @@ export default function TranslatePopup() {
         setMode('ai');
       });
       userResizing.current = false;
-      await system.setBounds(x, y, w, h);
+      // 毛玻璃：背板先只铺在外框现在的位置，之后跟着外框一起长
+      await moveWindow(x, y, w, h, blur ? { x: shift.current.x, y: shift.current.y, width: start.w, height: start.h } : undefined);
       await frame();
       await frame();
       // 2. 外框长到新尺寸、回到原点，对话区滑进来
       setSheet({ w: full.fw, h: full.fh, ...full, x: 0, y: 0, open: true, animate: true });
+      if (blur) void system.backdrop({ x: 0, y: 0, width: full.fw, height: full.fh }, ANIM_MS);
       await wait(ANIM_MS + 40);
       setSheet(null);
+      if (blur) void system.backdrop(null);
     } finally {
       animating.current = false;
     }
@@ -262,19 +346,42 @@ export default function TranslatePopup() {
       const pos = { x: window.screenX, y: window.screenY };
       const cur = logicalWindowSize();
       const target = baseSize.current;
+      const grown = grownInPlace.current;
+      if (grown > 0) {
+        // 在窗口里长出来的：缩回原来的大小和位置，顶上预留还原，窗口不动
+        const full = { fw: cur.w - pad * 2, fh: cur.h - pad * 2 };
+        const top = topRef.current + grown;
+        flushSync(() => setSheet({ w: full.fw, h: full.fh, ...full, x: 0, y: 0, open: true, animate: false }));
+        await frame();
+        setSheet({ w: target.w - pad * 2, h: target.h - pad * 2, ...full, x: 0, y: grown, open: false, animate: true });
+        if (blur) void system.backdrop({ x: 0, y: top, width: target.w, height: target.h }, ANIM_MS);
+        await wait(ANIM_MS + 20);
+        userResizing.current = false;
+        grownInPlace.current = 0;
+        flushSync(() => {
+          setTopSpace(top);
+          setSheet(null);
+          setMode('translate');
+          setPendingAsk(null);
+        });
+        void system.setRegion({ x: 0, y: top, width: target.w, height: target.h });
+        return;
+      }
       const { x: sx, y: sy } = shift.current;
       const full = { fw: cur.w - pad * 2, fh: cur.h - pad * 2 };
       // 1. 外框按现在的尺寸定住，然后缩回原来的大小、偏到窗口挪回去之后的位置，对话区滑出去
       flushSync(() => setSheet({ w: full.fw, h: full.fh, ...full, x: 0, y: 0, open: true, animate: false }));
       await frame();
       setSheet({ w: target.w - pad * 2, h: target.h - pad * 2, ...full, x: sx, y: sy, open: false, animate: true });
+      if (blur) void system.backdrop({ x: sx, y: sy, width: target.w, height: target.h }, ANIM_MS);
       await wait(ANIM_MS + 20);
       // 2. 窗口一步还原，外框同时回到原点
       userResizing.current = false;
       flushSync(() => {
         setSheet({ w: target.w - pad * 2, h: target.h - pad * 2, ...full, x: 0, y: 0, open: false, animate: false });
       });
-      await system.setBounds(pos.x + sx, pos.y + sy, target.w, target.h);
+      await moveWindow(pos.x + sx, pos.y + sy, target.w, target.h, blur ? { x: 0, y: 0, width: target.w, height: target.h } : undefined);
+      if (blur) void system.backdrop(null);
       await frame();
       shift.current = { x: 0, y: 0 };
       setMode('translate');
@@ -309,18 +416,18 @@ export default function TranslatePopup() {
 
   /** 抽屉：拖顶上的小横条，翻译区和对话区上下此消彼长 */
   const dragDrawer = (e: React.PointerEvent<HTMLSpanElement>) => {
-    const offset = e.clientY - (pad + transH);
+    const offset = e.clientY - (pad + topSpace + transH);
     let last = transH;
     dragHandle(
       e,
       (ev) => {
-        last = Math.round(Math.min(window.innerHeight - pad * 2 - MIN_DRAWER, Math.max(MIN_TRANSLATE_H, ev.clientY - offset - pad)));
+        last = Math.round(Math.min(window.innerHeight - topSpace - pad * 2 - MIN_DRAWER, Math.max(MIN_TRANSLATE_H, ev.clientY - offset - pad - topSpace)));
         setTransH(last);
       },
       () =>
         void useSettingsStore
           .getState()
-          .update((d) => void (d.translate.popup.drawerHeight = Math.round(window.innerHeight - pad * 2 - last)))
+          .update((d) => void (d.translate.popup.drawerHeight = Math.round(window.innerHeight - topSpace - pad * 2 - last)))
           .catch(() => undefined),
     );
   };
@@ -332,9 +439,10 @@ export default function TranslatePopup() {
   };
 
   const style = {
-    '--pop-radius': `${popup?.radius ?? 14}px`,
+    '--pop-radius': `${popup?.radius ?? 24}px`,
     '--pop-alpha': String(popup?.opacity ?? 1),
     '--pop-pad': `${pad}px`,
+    '--pop-top': `${topSpace}px`,
   } as React.CSSProperties;
 
   const shellClass = ['pop-shell', mode === 'ai' ? `is-${layout}` : 'is-plain', blur ? 'is-blur' : ''].join(' ');
@@ -390,12 +498,33 @@ export default function TranslatePopup() {
   return (
     <div className="pop-root" style={style}>
       <div className={shellClass} style={shellStyle}>
-        <div ref={transRef} className="pop-pane pop-pane--translate" key={seq} style={paneStyle}>
-          {popup?.showSource && (
-            <div className="pop__source cn-selectable" title={text} data-tauri-drag-region>
-              {text}
-            </div>
-          )}
+        <div
+          ref={transRef}
+          className={`pop-pane pop-pane--translate${(mode === 'translate' || (sheet && layout === 'drawer')) && text ? ' has-ask' : ''}`}
+          key={seq}
+          style={paneStyle}
+        >
+          {popup?.showSource &&
+            (editingSource ? (
+              <textarea
+                className="pop__source pop__source--edit"
+                autoFocus
+                value={text}
+                onChange={(e) => setText(e.target.value)}
+                onBlur={() => setEditingSource(false)}
+                onKeyDown={(e) => {
+                  // Esc 只退出编辑，不关面板
+                  if (e.key === 'Escape') {
+                    e.stopPropagation();
+                    setEditingSource(false);
+                  }
+                }}
+              />
+            ) : (
+              <div className="pop__source" title={t('translate.editSource')} onClick={() => setEditingSource(true)}>
+                {text}
+              </div>
+            ))}
           <div className="pop__body">
             {text && (
               <TranslateBox
@@ -418,22 +547,24 @@ export default function TranslatePopup() {
             )}
           </div>
           {(mode === 'translate' || (sheet && layout === 'drawer')) && text && (
-            <div className="pop-ask">
-              <Sparkles size={14} strokeWidth={1.75} />
-              <input
-                value={question}
-                placeholder={t('ai.askPlaceholder')}
-                onChange={(e) => setQuestion(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' && !e.nativeEvent.isComposing && question.trim()) {
-                    e.preventDefault();
-                    void openAi(question.trim());
-                  }
-                }}
-              />
-              <button type="button" aria-label={t('ai.send')} disabled={!question.trim()} onClick={() => void openAi(question.trim())}>
-                <ArrowUp size={14} strokeWidth={2.25} />
-              </button>
+            <div className="pop-ask-wrap">
+              <div className="pop-ask">
+                <Sparkles size={14} strokeWidth={1.75} />
+                <input
+                  value={question}
+                  placeholder={t('ai.askPlaceholder')}
+                  onChange={(e) => setQuestion(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && !e.nativeEvent.isComposing && question.trim()) {
+                      e.preventDefault();
+                      void openAi(question.trim());
+                    }
+                  }}
+                />
+                <button type="button" aria-label={t('ai.send')} disabled={!question.trim()} onClick={() => void openAi(question.trim())}>
+                  <ArrowUp size={14} strokeWidth={2.25} />
+                </button>
+              </div>
             </div>
           )}
         </div>
@@ -485,6 +616,18 @@ export default function TranslatePopup() {
             void getCurrentWindow().startResizeDragging('SouthEast');
           }}
         />
+        {!sheet &&
+          RESIZE_EDGES.map(([dir, cls]) => (
+            <span
+              key={cls}
+              className={`pop-edge pop-edge--${cls}`}
+              onPointerDown={(e) => {
+                e.preventDefault();
+                userResizing.current = true;
+                void getCurrentWindow().startResizeDragging(dir);
+              }}
+            />
+          ))}
       </div>
       <style>{POPUP_CSS}</style>
     </div>
@@ -493,7 +636,7 @@ export default function TranslatePopup() {
 
 const POPUP_CSS = `
 html[data-view='translate'], html[data-view='translate'] body { background: transparent !important; }
-.pop-root { position: fixed; inset: 0; padding: var(--pop-pad); display: flex; }
+.pop-root { position: fixed; inset: 0; padding: var(--pop-pad); padding-top: calc(var(--pop-pad) + var(--pop-top, 0px)); display: flex; }
 
 /* 两档底色：浮在上面的一层（hi）和压在下面的一层（lo）。透明窗口里 backdrop-filter 模糊不了
    桌面，不开毛玻璃时默认不透明；不透明度可在设置里调 */
@@ -516,8 +659,23 @@ html[data-view='translate'], html[data-view='translate'] body { background: tran
                display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; box-shadow: inset 0 -0.5px 0 var(--cn-separator); flex: none; }
 .pop__body { flex: 1; min-height: 0; }
 
-/* 底部"问 AI"输入框 */
-.pop-ask { flex: none; display: flex; align-items: center; gap: 8px; height: 32px; margin: 2px 12px 10px; padding: 0 4px 0 11px;
+/* 原文：点一下就变成输入框，改完自动重翻 */
+.pop__source { cursor: text; }
+.pop__source:hover { background: var(--cn-bg-hover); }
+.pop__source--edit { display: block; width: 100%; max-height: 120px; min-height: 44px; field-sizing: content; resize: none; border: none; outline: none;
+                     background: var(--cn-fill-quaternary); color: var(--cn-label); -webkit-line-clamp: unset; overflow: auto;
+                     box-shadow: inset 0 -1px 0 var(--cn-accent); }
+
+/* 底部"问 AI"输入框：浮在翻译区底部，翻译结果一直延伸到它后面；底色从输入框的中间才开始（上面是渐变），
+   不再是输入框上面一整条底色把结果截断 */
+.pop-pane--translate { --pane-bg: var(--pop-hi); }
+.is-drawer .pop-pane--translate { --pane-bg: var(--pop-lo); }
+.pop-ask-wrap { position: absolute; left: 0; right: 0; bottom: 0; z-index: 3; padding: 0 12px 10px;
+                background: linear-gradient(to bottom, transparent 0, var(--pane-bg) 16px); }
+.has-ask .tr-box { padding-bottom: 46px; }
+.has-ask .tr-box:has(.tr-box__cards) { padding-bottom: 0; }
+.has-ask .tr-box__cards { padding-bottom: 46px; }
+.pop-ask { flex: none; display: flex; align-items: center; gap: 8px; height: 32px; padding: 0 4px 0 11px;
            border-radius: 16px; background: var(--cn-fill-quaternary); box-shadow: inset 0 0 0 0.5px var(--cn-separator); color: var(--cn-accent); }
 .pop-ask:focus-within { box-shadow: inset 0 0 0 1px var(--cn-accent); }
 .pop-ask input { flex: 1; min-width: 0; height: 100%; border: none; outline: none; background: transparent; color: var(--cn-label); font: var(--cn-text-body); }
@@ -565,7 +723,16 @@ html[data-view='translate'], html[data-view='translate'] body { background: tran
 .pop-seam:hover::after { opacity: 0.8; }
 .pop-seam[data-dragging]::after { opacity: 1; background: var(--cn-accent); }
 
-.pop__grip { position: absolute; right: 0; bottom: 0; z-index: 5; width: 14px; height: 14px; cursor: nwse-resize;
+/* 四边四角的改大小区：贴着面板边的一圈，看不见，鼠标放上去变成双向箭头 */
+.pop-edge { position: absolute; z-index: 6; touch-action: none; }
+.pop-edge--n { top: 0; left: 10px; right: 10px; height: 5px; cursor: ns-resize; }
+.pop-edge--s { bottom: 0; left: 10px; right: 16px; height: 5px; cursor: ns-resize; }
+.pop-edge--w { left: 0; top: 10px; bottom: 10px; width: 5px; cursor: ew-resize; }
+.pop-edge--e { right: 0; top: 10px; bottom: 16px; width: 5px; cursor: ew-resize; }
+.pop-edge--nw { left: 0; top: 0; width: 10px; height: 10px; cursor: nwse-resize; }
+.pop-edge--ne { right: 0; top: 0; width: 10px; height: 10px; cursor: nesw-resize; }
+.pop-edge--sw { left: 0; bottom: 0; width: 10px; height: 10px; cursor: nesw-resize; }
+.pop__grip { position: absolute; right: 0; bottom: 0; z-index: 7; width: 14px; height: 14px; cursor: nwse-resize;
              background: linear-gradient(135deg, transparent 55%, var(--cn-label-tertiary) 55%, var(--cn-label-tertiary) 62%, transparent 62%, transparent 75%, var(--cn-label-tertiary) 75%, var(--cn-label-tertiary) 82%, transparent 82%); opacity: 0.5; }
 .pop__grip:hover { opacity: 1; }
 `;

@@ -264,6 +264,42 @@ html[data-view='editor'][data-glass='off'] body {
   align-items: center;
   gap: 6px;
   min-height: 24px;
+  cursor: pointer;
+  user-select: none;
+  outline: none;
+}
+/* 折叠箭头：展开时朝下 */
+.tr-card__chev {
+  flex: none;
+  margin-left: -2px;
+  color: var(--cn-label-tertiary);
+  transform: rotate(90deg);
+  transition: transform 160ms var(--cn-ease-out);
+}
+.tr-card[data-collapsed] .tr-card__chev {
+  transform: none;
+}
+.tr-card__head:hover .tr-card__chev,
+.tr-card__head:focus-visible .tr-card__chev {
+  color: var(--cn-label-secondary);
+}
+.tr-card__peek {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font: var(--cn-text-footnote);
+  color: var(--cn-label-tertiary);
+}
+.tr-card__tools {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex: none;
+}
+.tr-card[data-collapsed] {
+  padding-bottom: 6px;
 }
 .tr-card__name {
   font: var(--cn-text-footnote);

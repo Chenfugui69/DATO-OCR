@@ -40,7 +40,7 @@ export interface EventMap {
   'ocr-history-changed': null;
   toast: ToastPayload;
   navigate: string;
-  'translate-request': { text: string };
+  'translate-request': { text: string; reserve?: number };
   'selection-button-show': number;
   'ai-context': AiContext;
   'editor-open': EditorDoc;

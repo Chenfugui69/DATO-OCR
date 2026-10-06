@@ -121,6 +121,8 @@ pub mod effects {
     pub fn set_backdrop(window: &WebviewWindow, radius: Option<u32>) -> bool {
         false
     }
+    pub fn set_rect_region(window: &WebviewWindow, rect: Option<(i32, i32, i32, i32)>) {}
+    pub fn set_backdrop_rect(window: &WebviewWindow, rect: Option<(f32, f32, f32, f32)>, ms: u32) {}
     pub fn resize_backdrop(window: &WebviewWindow) -> bool {
         false
     }

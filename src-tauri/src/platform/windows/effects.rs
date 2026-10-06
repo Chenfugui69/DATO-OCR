@@ -12,7 +12,9 @@ use windows::Win32::Graphics::Dwm::{
     DwmSetWindowAttribute, DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_DONOTROUND, DWMWCP_ROUND,
     DWM_WINDOW_CORNER_PREFERENCE,
 };
-use windows::Win32::Graphics::Gdi::{CreateRoundRectRgn, DeleteObject, SetWindowRgn};
+use windows::Win32::Graphics::Gdi::{
+    CreateRectRgn, CreateRoundRectRgn, DeleteObject, SetWindowRgn,
+};
 use windows::Win32::UI::WindowsAndMessaging::GetWindowRect;
 
 use super::util::{handle_of, hwnd};
@@ -49,6 +51,8 @@ struct Backdrop {
     // 目标一释放，挂在窗口上的视觉树就没了，所以得一直拿着
     _target: DesktopWindowTarget,
     geometry: CompositionRoundedRectangleGeometry,
+    /// 背板的范围由页面指定（展开 / 收起动画期间），窗口变大小时不自动铺满
+    manual: bool,
 }
 
 thread_local! {
@@ -128,6 +132,7 @@ fn attach_backdrop(h: HWND, radius: f32) -> windows::core::Result<()> {
             Backdrop {
                 _target: target,
                 geometry,
+                manual: false,
             },
         )
     });
@@ -166,19 +171,76 @@ pub fn set_backdrop(window: &WebviewWindow, radius: Option<u32>) -> bool {
 }
 
 /// 窗口大小变了：背板的裁剪跟着变（视觉对象本身按比例铺满，不用管）。没挂背板返回 false。
+/// 页面正在指定背板范围（动画期间）时不动它。
 pub fn resize_backdrop(window: &WebviewWindow) -> bool {
     let Ok(h) = window.hwnd() else { return false };
-    let geometry = BACKDROPS.with(|b| {
+    let state = BACKDROPS.with(|b| {
         b.borrow()
             .get(&(h.0 as isize))
-            .map(|bd| bd.geometry.clone())
+            .map(|bd| (bd.geometry.clone(), bd.manual))
     });
-    match geometry {
-        Some(geometry) => {
+    match state {
+        Some((geometry, false)) => {
             let _ = geometry.SetSize(client_size(h));
             true
         }
+        Some((_, true)) => true,
         None => false,
+    }
+}
+
+/// 背板只铺在窗口里的一块（物理像素 x, y, w, h），`ms` > 0 时用和页面一样的缓动曲线动画过去；
+/// `None` = 恢复铺满整个窗口。面板在窗口里展开 / 收起时，背板跟着面板外框走，不然毛玻璃
+/// 会先铺满整个新窗口，面板还没长到那里就露出一块空的毛玻璃。只能在 UI 线程调用。
+pub fn set_backdrop_rect(window: &WebviewWindow, rect: Option<(f32, f32, f32, f32)>, ms: u32) {
+    let Ok(h) = window.hwnd() else { return };
+    let key = h.0 as isize;
+    let geometry = BACKDROPS.with(|b| {
+        let mut map = b.borrow_mut();
+        let bd = map.get_mut(&key)?;
+        bd.manual = rect.is_some();
+        Some(bd.geometry.clone())
+    });
+    let Some(geometry) = geometry else { return };
+    let (offset, size) = match rect {
+        Some((x, y, w, hh)) => (
+            Vector2 { X: x, Y: y },
+            Vector2 {
+                X: w.max(1.0),
+                Y: hh.max(1.0),
+            },
+        ),
+        None => (Vector2 { X: 0.0, Y: 0.0 }, client_size(h)),
+    };
+    let result = (|| -> windows::core::Result<()> {
+        let offset_name = windows::core::HSTRING::from("Offset");
+        let size_name = windows::core::HSTRING::from("Size");
+        geometry.StopAnimation(&offset_name)?;
+        geometry.StopAnimation(&size_name)?;
+        if ms == 0 {
+            geometry.SetOffset(offset)?;
+            geometry.SetSize(size)?;
+            return Ok(());
+        }
+        let compositor = compositor()?;
+        // 和页面里的 cubic-bezier(0.32, 0.72, 0, 1) 一样
+        let ease = compositor.CreateCubicBezierEasingFunction(
+            Vector2 { X: 0.32, Y: 0.72 },
+            Vector2 { X: 0.0, Y: 1.0 },
+        )?;
+        let duration = windows::Foundation::TimeSpan {
+            Duration: i64::from(ms) * 10_000,
+        };
+        for (name, value) in [(&offset_name, offset), (&size_name, size)] {
+            let anim = compositor.CreateVector2KeyFrameAnimation()?;
+            anim.InsertKeyFrameWithEasingFunction(1.0, value, &ease)?;
+            anim.SetDuration(duration)?;
+            geometry.StartAnimation(name, &anim)?;
+        }
+        Ok(())
+    })();
+    if let Err(err) = result {
+        tracing::debug!("毛玻璃背板范围设置失败：{err}");
     }
 }
 
@@ -253,6 +315,25 @@ pub fn set_round_region(window: &WebviewWindow, radius: u32) {
         let rgn = CreateRoundRectRgn(0, 0, rc.right - rc.left + 1, rc.bottom - rc.top + 1, d, d);
         if SetWindowRgn(h, Some(rgn), true) == 0 {
             let _ = DeleteObject(rgn.into());
+        }
+    }
+}
+
+/// 把窗口限制在一个矩形里（物理像素，相对窗口左上角）：外面的部分不显示、点击直接穿过去。`None` = 整个窗口。
+pub fn set_rect_region(window: &WebviewWindow, rect: Option<(i32, i32, i32, i32)>) {
+    let Ok(h) = window.hwnd() else { return };
+    // SAFETY: h 是存活的 Tauri 窗口。SetWindowRgn 成功后区域归系统所有，失败才由我们释放。
+    unsafe {
+        match rect {
+            None => {
+                let _ = SetWindowRgn(h, None, true);
+            }
+            Some((x, y, w, hh)) => {
+                let rgn = CreateRectRgn(x, y, x + w, y + hh);
+                if SetWindowRgn(h, Some(rgn), true) == 0 {
+                    let _ = DeleteObject(rgn.into());
+                }
+            }
         }
     }
 }

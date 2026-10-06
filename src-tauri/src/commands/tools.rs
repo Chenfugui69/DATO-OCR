@@ -28,3 +28,9 @@ pub async fn translate_detect(text: String) -> AppResult<String> {
 pub async fn translate_popup_text() -> AppResult<Option<String>> {
     Ok(selection::current())
 }
+
+/// 划词面板上方预留了多高（逻辑像素）
+#[tauri::command]
+pub async fn translate_popup_reserve() -> AppResult<f64> {
+    Ok(crate::translate::selection::current_reserve())
+}

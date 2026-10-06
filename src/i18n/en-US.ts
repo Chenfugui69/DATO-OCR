@@ -341,6 +341,9 @@ const enUS: Dict = {
     thought: 'Thought process',
   },
   translate: {
+      editSource: 'Click to edit the source text; it re-translates automatically',
+      expand: 'Expand',
+      collapse: 'Collapse',
     resize: 'Drag to resize',
     selectionButton: 'Translate selected text',
     swap: 'Swap',
@@ -429,6 +432,7 @@ const enUS: Dict = {
       gifFpsDesc: 'Use "Record GIF" on the capture toolbar (Ctrl+G). Higher is smoother but bigger; up to 60 seconds',
       gifCursor: 'Record the mouse pointer in GIFs',
       rightClick: 'Right click',
+      rightClickNone: 'Do nothing',
       rightClickExit: 'Exit capture',
       rightClickCancel: 'Clear selection first',
     },

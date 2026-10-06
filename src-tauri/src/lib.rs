@@ -168,6 +168,7 @@ pub fn run() {
             commands::tools::translate_providers,
             commands::tools::translate_detect,
             commands::tools::translate_popup_text,
+            commands::tools::translate_popup_reserve,
             commands::ai::ai_models,
             commands::ai::ai_chat,
             commands::ai::ai_cancel,
@@ -193,6 +194,8 @@ pub fn run() {
             commands::system::show_main,
             commands::system::toast_hide,
             commands::system::window_set_bounds,
+            commands::system::window_backdrop,
+            commands::system::window_set_region,
             commands::system::quit_app,
             commands::system::report_error,
         ]);

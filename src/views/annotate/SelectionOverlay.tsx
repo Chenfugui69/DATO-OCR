@@ -7,6 +7,9 @@ import type { AnnotationEngine, AnnotationHandle } from './engine';
 import type { Tool, ToolOptions } from './model';
 import { useEngineVersion } from './TextEditor';
 
+/** 虚线框离图形的距离（和 .an-sel 的 outline-offset 3px + 1px 线宽的一半对应），CSS 像素 */
+const OUTLINE_GAP = 3.5;
+
 export function SelectionOverlay({ engine, displayScale }: { engine: AnnotationEngine; displayScale: number }) {
   useEngineVersion(engine);
   const info = engine.selectionInfo();
@@ -16,9 +19,15 @@ export function SelectionOverlay({ engine, displayScale }: { engine: AnnotationE
   return (
     <>
       {o && <div className="an-sel" style={{ left: o.x / s, top: o.y / s, width: o.width / s, height: o.height / s }} />}
-      {info.handles.map((h) => (
-        <span key={h.id} className="an-sel-handle" style={{ left: h.at.x / s, top: h.at.y / s }} />
-      ))}
+      {info.handles.map((h) => {
+        // 有虚线框（矩形、椭圆、文字、译文）时，控制点挪到虚线上：虚线框比图形大一圈（outline-offset 3px + 半个线宽）
+        const id = String(h.id);
+        const compass = o && /^[nsew]{1,2}$/.test(id);
+        const dx = compass ? (id.includes('w') ? -OUTLINE_GAP : id.includes('e') ? OUTLINE_GAP : 0) : 0;
+        const dy = compass ? (id.includes('n') ? -OUTLINE_GAP : id.includes('s') ? OUTLINE_GAP : 0) : 0;
+        const kind = !compass || id.length === 2 ? '' : id === 'n' || id === 's' ? ' an-sel-handle--h' : ' an-sel-handle--v';
+        return <span key={id} className={`an-sel-handle${kind}`} style={{ left: h.at.x / s + dx, top: h.at.y / s + dy }} />;
+      })}
     </>
   );
 }
