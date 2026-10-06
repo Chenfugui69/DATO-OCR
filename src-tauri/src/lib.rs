@@ -36,6 +36,7 @@ mod storage;
 mod sync;
 mod translate;
 mod tray;
+mod update;
 mod wm;
 
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -131,6 +132,10 @@ pub fn run() {
             commands::sync::sync_webdav_disconnect,
             commands::sync::sync_webdav_now,
             commands::sync::sync_webdav_devices,
+            commands::update::update_status,
+            commands::update::update_check,
+            commands::update::update_install,
+            commands::update::update_skip,
             commands::library::library_query,
             commands::library::library_delete,
             commands::library::library_set_favorite,
@@ -255,6 +260,7 @@ fn on_ready(app: &AppHandle) {
     translate::selection::reconfigure(app);
     clipboard::start(app);
     sync::start(app);
+    update::start(app);
     platform::watch_system_events(on_system_event);
     std::thread::spawn(platform::warm_up_capture);
     maintenance::spawn(app);

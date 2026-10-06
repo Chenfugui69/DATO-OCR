@@ -17,6 +17,8 @@ pub const CLIPBOARD_CHANGED: &str = "clipboard-changed";
 pub const CLIPBOARD_PANEL_SHOW: &str = "clipboard-panel-show";
 /// 多端同步的状态变了（设备上下线、有人申请加入、网盘同步结果…）
 pub const SYNC_CHANGED: &str = "sync-changed";
+/// 检查更新 / 下载安装的状态变了
+pub const UPDATE_STATUS: &str = "update-status";
 
 pub const LIBRARY_CHANGED: &str = "library-changed";
 pub const OCR_JOB: &str = "ocr-job";

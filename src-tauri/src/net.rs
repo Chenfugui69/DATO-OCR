@@ -17,6 +17,10 @@ pub enum Purpose {
     Ai,
     /// WebDAV 网盘同步：传图片可能要一会儿
     Sync,
+    /// 检查更新：拿一个小 JSON
+    Update,
+    /// 下载安装包：几十 MB，不设总超时，只要一直有数据进来就行
+    Download,
 }
 
 pub fn client(app: &AppHandle, purpose: Purpose) -> reqwest::Client {
@@ -38,6 +42,8 @@ pub fn client(app: &AppHandle, purpose: Purpose) -> reqwest::Client {
         Purpose::Translate => builder.timeout(Duration::from_secs(5)),
         Purpose::Ai => builder.read_timeout(Duration::from_secs(120)),
         Purpose::Sync => builder.timeout(Duration::from_secs(90)),
+        Purpose::Update => builder.timeout(Duration::from_secs(20)),
+        Purpose::Download => builder.read_timeout(Duration::from_secs(60)),
     };
     builder = match net.proxy_mode.as_str() {
         "none" => builder.no_proxy(),

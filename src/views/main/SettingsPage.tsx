@@ -3,11 +3,11 @@
 
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Crop, FolderOpen, RotateCcw } from 'lucide-react';
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
-import { formatBytes } from '@/lib/format';
-import { clipboard, system } from '@/lib/ipc';
+import { formatBytes, relativeTime } from '@/lib/format';
+import { clipboard, system, update as updater } from '@/lib/ipc';
 import { useSettings, useSettingsStore } from '@/lib/settings';
 import { currentVisuals } from '@/lib/theme';
 import type { HotkeyAction, Settings } from '@/lib/types';
@@ -19,8 +19,9 @@ import { AiSettingsGroups } from './AiSettings';
 import { FrameStyleRows } from './FrameStyleRows';
 import { Group, Row } from './settingsParts';
 import { TranslateSettingsGroups } from './TranslateSettings';
+import { UpdateBanner, UpdateDialog, useUpdate } from './UpdateDialog';
 
-const SECTIONS = ['general', 'capture', 'longshot', 'ocr', 'translate', 'selection', 'ai', 'network', 'clipboard', 'hotkeys', 'appearance', 'storage', 'about'] as const;
+const SECTIONS = ['general', 'capture', 'longshot', 'ocr', 'translate', 'selection', 'ai', 'network', 'clipboard', 'hotkeys', 'appearance', 'storage', 'update', 'about'] as const;
 
 export function SettingsPage({ section }: { section: string | null }) {
   const { t } = useTranslation();
@@ -30,6 +31,8 @@ export function SettingsPage({ section }: { section: string | null }) {
   const qc = useQueryClient();
   const info = useQuery({ queryKey: ['app-info'], queryFn: system.appInfo });
   const hotkeys = useQuery({ queryKey: ['hotkeys'], queryFn: system.hotkeys });
+  const { status: upd, prompt } = useUpdate();
+  const [updOpen, setUpdOpen] = useState(false);
 
   useEffect(() => {
     if (!section) return;
@@ -74,6 +77,7 @@ export function SettingsPage({ section }: { section: string | null }) {
       </nav>
       <div ref={scroller} className="page__body">
         <div className="settings">
+          {prompt && upd && <UpdateBanner status={upd} onOpen={() => setUpdOpen(true)} />}
           <Group id="general" title={t('settings.section.general')}>
             <Row title={t('settings.general.autoStart')}>
               <Switch checked={settings.general.autoStart} onChange={(v) => set((d) => void (d.general.autoStart = v))} />
@@ -462,6 +466,57 @@ export function SettingsPage({ section }: { section: string | null }) {
             </Row>
           </Group>
 
+          <Group id="update" title={t('settings.section.update')}>
+            <Row
+              title={t('update.current', { version: upd?.current ?? info.data?.version ?? '' })}
+              desc={
+                upd?.error ? (
+                  <span className="set-row__error">{upd.error}</span>
+                ) : upd?.available ? (
+                  t('update.found', { version: upd.available.version })
+                ) : upd?.lastCheck ? (
+                  t('update.latest', { time: relativeTime(upd.lastCheck) })
+                ) : (
+                  t('update.never')
+                )
+              }
+            >
+              {upd?.available && (
+                <Button size="sm" variant="primary" onClick={() => setUpdOpen(true)}>
+                  {t('update.view')}
+                </Button>
+              )}
+              <Button
+                size="sm"
+                loading={upd?.checking}
+                onClick={() =>
+                  void updater
+                    .check()
+                    .then((s) => {
+                      if (s.available) setUpdOpen(true);
+                      else if (!s.error) notify.success(t('update.upToDate'));
+                    })
+                    .catch(notify.error)
+                }
+              >
+                {t('update.check')}
+              </Button>
+            </Row>
+            <Row title={t('update.auto')} desc={t('update.autoDesc')}>
+              <Switch checked={settings.update.autoCheck} onChange={(v) => set((d) => void (d.update.autoCheck = v))} />
+            </Row>
+            <Row title={t('update.channel')} desc={t('update.channelDesc')}>
+              <Select
+                value={settings.update.channel}
+                options={[
+                  { value: 'cn', label: t('update.channelCn') },
+                  { value: 'global', label: t('update.channelGlobal') },
+                ]}
+                onChange={(v) => set((d) => void (d.update.channel = v))}
+              />
+            </Row>
+          </Group>
+
           <Group id="about" title={t('settings.section.about')} note={t('settings.about.privacy')}>
             <div className="about">
               <span className="about__logo">
@@ -483,6 +538,7 @@ export function SettingsPage({ section }: { section: string | null }) {
           </Group>
         </div>
       </div>
+      {upd && <UpdateDialog status={upd} open={updOpen} onClose={() => setUpdOpen(false)} />}
     </section>
   );
 }

@@ -1,0 +1,44 @@
+{
+  "added": [
+    "多台设备同步剪贴板：电脑上复制，Mac、手机上直接粘贴（同一个 Wi-Fi 扫码就能连，也能用坚果云等网盘同步）",
+    "截图可以录成 GIF 动图",
+    "截图后一键翻译，译文直接显示在图片原来的位置",
+    "截图上画的框、写的字，画完还能拖动、改大小",
+    "矩形马赛克：拖一下就把一块区域打码",
+    "划词翻译面板里可以直接问 AI",
+    "自动检查更新，有新版本会在设置里提示"
+  ],
+  "improved": [
+    "剪贴板面板换了新样子：卡片更大，按内容类型上色，一眼就能分清",
+    "剪贴板里的图片预览更清楚了",
+    "剪贴板面板可以贴紧屏幕底部，也可以开毛玻璃效果",
+    "画笔、马赛克的鼠标指针会显示笔刷大小"
+  ],
+  "fixed": [
+    "用取色器改颜色后保存失败",
+    "打字时不小心点到右键，刚写的字会丢",
+    "剪贴板面板截不了图"
+  ],
+  "en": {
+    "added": [
+      "Sync the clipboard across devices: copy on the PC, paste on a Mac or phone (scan a QR code on the same Wi-Fi, or sync through a WebDAV drive)",
+      "Record a screen area as a GIF",
+      "Translate a screenshot in place: the translation appears right where the text was",
+      "Boxes and text you draw on a screenshot can be moved and resized afterwards",
+      "Rectangle mosaic: drag to blur an area",
+      "Ask AI right from the translation popup",
+      "Automatic update checks, with a notice in Settings"
+    ],
+    "improved": [
+      "New clipboard panel look: bigger cards, colored by type",
+      "Sharper image previews in the clipboard",
+      "The clipboard panel can dock to the bottom edge and use frosted glass",
+      "Pen and mosaic cursors show the brush size"
+    ],
+    "fixed": [
+      "Color picker changes failed to save",
+      "A stray right-click while typing lost the text",
+      "The clipboard panel could not be captured in screenshots"
+    ]
+  }
+}

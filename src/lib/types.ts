@@ -96,6 +96,39 @@ export interface Settings {
     retentionMaxItems: number;
   };
   sync: SyncSettings;
+  update: {
+    /** 自动检查更新（启动后一次，之后每 6 小时） */
+    autoCheck: boolean;
+    /** cn = 国内（Gitee），global = 国外（GitHub） */
+    channel: 'cn' | 'global';
+    /** 点了"不显示更新提示"的版本 */
+    skippedVersion: string;
+  };
+}
+
+export interface UpdateChanges {
+  added: string[];
+  fixed: string[];
+  improved: string[];
+}
+
+export interface UpdateInfo {
+  version: string;
+  date: string | null;
+  changes: UpdateChanges;
+  changesEn: UpdateChanges | null;
+  notes: string | null;
+  size: number | null;
+}
+
+export interface UpdateStatus {
+  current: string;
+  checking: boolean;
+  lastCheck: number | null;
+  error: string | null;
+  available: UpdateInfo | null;
+  stage: 'downloading' | 'verifying' | 'installing' | 'ready' | null;
+  progress: number | null;
 }
 
 /** 多端同步（规格 09）。密码不在这里（在 Rust 那边加密保存）。 */

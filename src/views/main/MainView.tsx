@@ -18,6 +18,7 @@ import { LibraryPage } from './LibraryPage';
 import { OcrHistoryPage } from './OcrHistoryPage';
 import { SettingsPage } from './SettingsPage';
 import { SyncPage } from './SyncPage';
+import { useUpdate } from './UpdateDialog';
 
 export type Page = 'library' | 'clipboard' | 'ocr' | 'sync' | 'settings';
 
@@ -35,6 +36,8 @@ export default function MainView() {
   const [page, setPage] = useState<Page>('library');
   const [section, setSection] = useState<string | null>(null);
   const stats = useQuery({ queryKey: ['clip-stats'], queryFn: clipboard.stats });
+  // 有新版本（且没选"不显示更新提示"）：设置旁边亮个小红点
+  const { prompt: updatePrompt } = useUpdate();
 
   // Rust 侧（托盘、剪贴板面板的齿轮按钮）可以指定打开哪一页：`settings` / `settings:translate`
   useEvent('navigate', (target) => {
@@ -86,6 +89,7 @@ export default function MainView() {
             <Icon size={16} strokeWidth={1.5} />
             {t(`nav.${id}`)}
             {id === 'clipboard' && stats.data && <span className="sidebar__count cn-numeric">{stats.data.total.toLocaleString()}</span>}
+            {id === 'settings' && updatePrompt && <span className="sidebar__dot" title={t('update.dot')} />}
           </button>
         ))}
         <span className="sidebar__spacer" />

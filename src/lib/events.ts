@@ -14,6 +14,7 @@ import type {
   OcrJob,
   Settings,
   ToastPayload,
+  UpdateStatus,
   VisualCapabilities,
 } from './types';
 
@@ -33,6 +34,7 @@ export interface EventMap {
   'clipboard-panel-show': { style: 'bottom' | 'vertical' };
   /** 多端同步的状态变了，重新拉一次 */
   'sync-changed': null;
+  'update-status': UpdateStatus;
   'library-changed': null;
   'ocr-job': OcrJob;
   'ocr-history-changed': null;

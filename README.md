@@ -23,6 +23,7 @@ Windows 优先（Windows 10 2004+），macOS 已留好平台抽象层，后续�
 | 划词翻译：快捷键、选字后的悬浮按钮、按住 Alt / Ctrl 选字直接翻译；多个翻译源同时显示；面板可毛玻璃 | Ctrl+Alt+T | ✅ 真机验证 |
 | AI 对话：自定义接口和密钥、检测并挑选模型；可带选中文字、识字结果、截图提问 | 托盘 / 可设热键 | ✅ 模拟服务验证 |
 | 主窗口：截图库、识字记录、剪贴板管理、设置 | 托盘 / 双击图标 | ✅ |
+| 检查更新：国内（Gitee）/ 国外（GitHub）两个渠道，设置里提示新版本和更新简介，下载后验签再安装 | 设置 → 更新 | ✅ 本地模拟更新服务验证；还没发过真版本 |
 
 **还没验证的**：双显示器（尤其混合 DPI、副屏负坐标）、在 Chrome / 微信 / VS Code / Excel 里长截图、
 安装包装到中文路径。macOS 只有桩代码。详见 [`docs/实现交接.md`](docs/实现交接.md) 第 5 节。
@@ -67,6 +68,17 @@ corepack pnpm tauri dev      # 开发（Vite 1420 端口 + 调试版 Rust）
 corepack pnpm tauri build    # 出 NSIS 安装包：src-tauri/target/release/bundle/nsis/
 ```
 
+### 发版（检查更新用）
+
+```bash
+node scripts/release.mjs     # 打包 → 用更新私钥签名 → 生成 update/latest.json（国外）和 latest-cn.json（国内）
+```
+
+发版前把三处版本号（`package.json`、`src-tauri/Cargo.toml`、`src-tauri/tauri.conf.json`）改成新版本，
+写好 `update/notes/<版本>.json`（给不懂技术的用户看的更新简介）。签名私钥在 `~/.tauri/dato-cor-updater.key`，
+**丢了就没法再发能自动更新的版本**，务必备份；它不在仓库里。脚本跑完照着提示：先把安装包传到 GitHub 和 Gitee
+的发行版（标签 `v<版本>`），再提交推送 `update/` 下的两份清单。详见 [`update/README.md`](update/README.md)。
+
 ### 测试与检查
 
 ```bash
@@ -90,6 +102,8 @@ cargo test --manifest-path src-tauri/Cargo.toml -- --ignored --nocapture
 - `CHENOCR_TEST_DATA_DIR=目录`：数据（设置、数据库、图片）放到这个目录下，不碰真正的历史。
 - `CHENOCR_TEST_SYNC_LOOPBACK=1`：局域网同步服务只绑 127.0.0.1（不触发防火墙询问）、不做 mDNS 广播、加入申请自动同意。
   只绑回环时只有本机程序连得上，所以自动同意不会放外人进来。
+- `CHENOCR_TEST_UPDATE_URL=http://127.0.0.1:端口/latest.json`：检查更新只查这个地址（允许 http），启动 3 秒后就查。
+- `CHENOCR_TEST_UPDATE_NO_INSTALL=1`：点"更新"只下载、验签，不运行安装包、不退出。
 - 日志在 `%APPDATA%\DATO COR\logs\`，开发模式同时打到终端。前端未捕获的错误也会转进日志。
 
 ## 代码结构

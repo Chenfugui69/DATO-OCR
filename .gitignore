@@ -20,3 +20,6 @@ scripts/test/*.txt
 .DS_Store
 Thumbs.db
 *.log
+
+# 发版产物（安装包、签名），上传到 GitHub / Gitee 发行版，不入库
+release/

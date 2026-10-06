@@ -11,6 +11,7 @@ pub mod library;
 pub mod sync;
 pub mod system;
 pub mod tools;
+pub mod update;
 
 use serde::de::DeserializeOwned;
 use tauri::ipc::{InvokeBody, Request};

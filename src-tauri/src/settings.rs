@@ -26,6 +26,7 @@ pub struct Settings {
     pub translate: TranslateSettings,
     pub clipboard: ClipboardSettings,
     pub sync: SyncSettings,
+    pub update: UpdateSettings,
     pub network: NetworkSettings,
     pub ai: AiSettings,
     #[serde(flatten)]
@@ -45,6 +46,7 @@ impl Default for Settings {
             translate: Default::default(),
             clipboard: Default::default(),
             sync: Default::default(),
+            update: Default::default(),
             network: Default::default(),
             ai: Default::default(),
             extra: Map::new(),
@@ -588,6 +590,31 @@ pub struct SyncSettings {
     pub extra: Map<String, Value>,
 }
 
+/// 检查更新。
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase", default)]
+pub struct UpdateSettings {
+    /// 自动检查更新（启动后一次，之后每 6 小时）
+    pub auto_check: bool,
+    /// cn = 国内（Gitee）| global = 国外（GitHub）；连不上会自动试另一个
+    pub channel: String,
+    /// 用户点了"不显示更新提示"的版本：这个版本不再提示，有更新的再提示
+    pub skipped_version: String,
+    #[serde(flatten)]
+    pub extra: Map<String, Value>,
+}
+
+impl Default for UpdateSettings {
+    fn default() -> Self {
+        Self {
+            auto_check: true,
+            channel: "cn".into(),
+            skipped_version: String::new(),
+            extra: Map::new(),
+        }
+    }
+}
+
 impl Default for SyncSettings {
     fn default() -> Self {
         Self {
@@ -760,6 +787,9 @@ impl Settings {
         }
         sy.webdav_interval = sy.webdav_interval.clamp(5, 300);
         sy.max_image_mb = sy.max_image_mb.clamp(1, 50);
+        if !matches!(self.update.channel.as_str(), "cn" | "global") {
+            self.update.channel = "cn".into();
+        }
         self
     }
 }

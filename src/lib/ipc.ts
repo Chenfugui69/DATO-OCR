@@ -2,7 +2,7 @@
 
 import { Channel, invoke } from '@tauri-apps/api/core';
 
-import type { AiContext, AppInfo, CaptureIntent, ChatEvent, ChatRequest, ClipDetail, ClipGroup, ClipPage, ClipQuery, ClipStats, DavDevice, EditorAction, EditorDoc, EngineStatus, FinishAction, HotkeyStatus, OcrJob, OcrPage, PhysicalRect, PinInfo, ProviderInfo, RegionTranslation, SecretsStatus, SessionInfo, Settings, ShotPage, SyncStatus, ShotQuery, TranslateRequest, TranslateResult, VisualCapabilities } from './types';
+import type { AiContext, AppInfo, CaptureIntent, ChatEvent, ChatRequest, ClipDetail, ClipGroup, ClipPage, ClipQuery, ClipStats, DavDevice, EditorAction, EditorDoc, EngineStatus, FinishAction, HotkeyStatus, OcrJob, OcrPage, PhysicalRect, PinInfo, ProviderInfo, RegionTranslation, SecretsStatus, SessionInfo, Settings, ShotPage, SyncStatus, UpdateStatus, ShotQuery, TranslateRequest, TranslateResult, VisualCapabilities } from './types';
 
 /** Rust 侧 AppError 的结构化形态。 */
 export class AppError extends Error {
@@ -139,6 +139,15 @@ export const sync = {
   webdavDisconnect: () => call<void>('sync_webdav_disconnect'),
   webdavNow: () => call<void>('sync_webdav_now'),
   webdavDevices: () => call<DavDevice[]>('sync_webdav_devices'),
+};
+
+// ───────────────────────── 检查更新 ─────────────────────────
+
+export const update = {
+  status: () => call<UpdateStatus>('update_status'),
+  check: () => call<UpdateStatus>('update_check'),
+  install: () => call<void>('update_install'),
+  skip: (version: string) => call<void>('update_skip', { version }),
 };
 
 // ───────────────────────── 截图库 / 识字 ─────────────────────────
