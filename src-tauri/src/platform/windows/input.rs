@@ -66,6 +66,11 @@ pub fn focus_window(window: WindowHandle) -> AppResult<()> {
     Ok(())
 }
 
+/// 长截图：滚轮发给有焦点的窗口（"滚动非活动窗口"关闭的系统上尤其如此），所以把焦点交过去。
+pub fn route_scroll_to(window: WindowHandle) -> AppResult<()> {
+    focus_window(window)
+}
+
 fn key(vk: VIRTUAL_KEY, up: bool) -> INPUT {
     INPUT {
         r#type: INPUT_KEYBOARD,

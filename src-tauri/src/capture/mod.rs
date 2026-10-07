@@ -119,10 +119,25 @@ pub fn trigger(app: &AppHandle, intent: CaptureIntent) {
     let app = app.clone();
     std::thread::spawn(move || {
         if let Err(err) = start(&app, intent, false) {
-            tracing::error!("启动截图失败：{err}");
-            wm::toast(&app, "error", format!("截图失败：{err}"));
+            report_start_failure(&app, &err);
         }
     });
+}
+
+/// 截图没能开始。缺系统权限时光弹个提示不够：提示又小又短，而从主窗口点的截图，主窗口这时
+/// 已经藏起来了，用户看到的就是"点了没反应"。把主窗口叫回来，停在设置页的"系统权限"上。
+fn report_start_failure(app: &AppHandle, err: &AppError) {
+    tracing::error!("启动截图失败：{err}");
+    if platform::permissions().screen_capture == Some(false) {
+        wm::show_main(app, Some("settings:permissions"));
+        wm::toast(
+            app,
+            "error",
+            "还没有「屏幕录制」权限，请按设置页里的说明授权",
+        );
+    } else {
+        wm::toast(app, "error", format!("截图失败：{err}"));
+    }
 }
 
 /// 瞬间截屏：按下热键就抓整个桌面（带鼠标指针），让一碰就消失的弹窗、悬停提示来不及反应。
@@ -134,8 +149,7 @@ pub fn trigger_instant(app: &AppHandle) {
     let app = app.clone();
     std::thread::spawn(move || {
         if let Err(err) = start(&app, CaptureIntent::Normal, true) {
-            tracing::error!("瞬间截屏失败：{err}");
-            wm::toast(&app, "error", format!("截图失败：{err}"));
+            report_start_failure(&app, &err);
         }
     });
 }
@@ -389,6 +403,15 @@ pub fn end_session(app: &AppHandle, session_id: u64, restore_focus: bool) {
         }
         state(&ui_app).capture.release_busy();
     });
+}
+
+/// 取消正在进行的截图 / 长截图（命令行 `--action=cancel`，脚本和自动化测试用）。
+pub fn cancel_current(app: &AppHandle) {
+    if state(app).longshot.is_active() {
+        longshot::abort(app);
+    } else if let Some(session) = state(app).capture.current() {
+        end_session(app, session.id, true);
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]

@@ -19,6 +19,9 @@ use windows::Win32::UI::WindowsAndMessaging::GetWindowRect;
 
 use super::util::{handle_of, hwnd};
 use crate::error::AppResult;
+pub use crate::platform::generic::{
+    build_floating, frame_window, is_foreground, place_window, take_focus, window_effects,
+};
 
 // ───────────────────────── 毛玻璃背板 ─────────────────────────
 //
@@ -398,6 +401,24 @@ pub fn set_bounds(
         )?;
     }
     Ok(())
+}
+
+/// 同上，单位是逻辑像素。
+pub fn set_bounds_logical(
+    window: &WebviewWindow,
+    x: f64,
+    y: f64,
+    width: f64,
+    height: f64,
+) -> AppResult<()> {
+    let s = window.scale_factor()?;
+    set_bounds(
+        window,
+        (x * s).round() as i32,
+        (y * s).round() as i32,
+        (width * s).round().max(1.0) as u32,
+        (height * s).round().max(1.0) as u32,
+    )
 }
 
 /// 诊断模式下，窗口显示时放开抓屏、隐藏时恢复排除。非诊断模式什么都不做。

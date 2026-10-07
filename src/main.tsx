@@ -9,7 +9,7 @@ import { createRoot } from 'react-dom/client';
 
 import { setLanguage } from '@/i18n';
 import { reportError } from '@/lib/ipc';
-import { loadDataDir, windowLabel } from '@/lib/platform';
+import { isMac, loadDataDir, modKey, windowLabel } from '@/lib/platform';
 import { initSettingsSync, useSettingsStore } from '@/lib/settings';
 import { initTheme } from '@/lib/theme';
 import { DialogHost, Toaster, TooltipProvider } from '@/ui/overlays';
@@ -55,7 +55,7 @@ function lockBrowserDefaults() {
     'keydown',
     (e) => {
       const k = e.key.toLowerCase();
-      if (k === 'f5' || (e.ctrlKey && ['r', 'p', 'f', 'g', 'j', 'u', 'o', 's'].includes(k) && !e.altKey)) {
+      if (k === 'f5' || (modKey(e) && ['r', 'p', 'f', 'g', 'j', 'u', 'o', 's'].includes(k) && !e.altKey)) {
         // 视图自己处理这些组合键（Ctrl+S 保存、Ctrl+P 贴图…），这里只拦浏览器默认动作
         e.preventDefault();
       }
@@ -75,6 +75,8 @@ async function boot() {
   const label = windowLabel();
   const [, name, load] = views.find(([match]) => match(label)) ?? views[views.length - 1]!;
   document.documentElement.dataset.view = name;
+  // 样式里少数几处要分平台（标题栏给系统的红黄绿灯让位）
+  document.documentElement.dataset.platform = isMac ? 'mac' : 'win';
   lockBrowserDefaults();
   initSettingsSync();
 

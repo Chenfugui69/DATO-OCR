@@ -9,6 +9,7 @@
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "tauri": "tauri",
+    "build:mac": "tauri build --bundles app && node scripts/mac-sign.mjs",
     "lint": "eslint .",
     "test": "vitest run",
     "fetch-ocr": "node scripts/fetch-ocr.mjs"
@@ -24,7 +25,7 @@
     "@radix-ui/react-tooltip": "^1.2.8",
     "@tanstack/react-query": "^5.62.0",
     "@tanstack/react-virtual": "^3.11.0",
-    "@tauri-apps/api": "^2",
+    "@tauri-apps/api": "^2.12.1",
     "clsx": "^2.1.1",
     "dompurify": "^3.4.16",
     "i18next": "^24.2.0",

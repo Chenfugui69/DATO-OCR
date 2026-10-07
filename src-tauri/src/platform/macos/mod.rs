@@ -1,293 +1,136 @@
-//! macOS 实现（第一版留桩）。
+//! macOS 实现。函数签名与 `windows/` 一一对应，上层零改动。
 //!
-//! 每个函数都写明了移植时用什么 API —— 这是给未来移植者的地图。
-//! 签名必须与 `windows/` 完全一致，上层代码零改动。
-//!
-//! ⚠ macOS 的权限申请（屏幕录制、辅助功能）是移植时最大的工作量，不是 API 本身。
+//! 和 Windows 最大的不同是**权限**：抓屏要「屏幕录制」，模拟按键（粘贴、划词取字）和全局
+//! 吞键要「辅助功能」，都得用户在系统设置里手动打开，见 `permissions`。
+//! 另一个不同是**坐标**：系统给的是逻辑"点"，这一层负责和上层的物理像素互相换算，见 `geometry`。
 
-#![allow(unused_variables)]
+pub mod app_icon;
+pub mod backdrop;
+pub mod capture;
+pub mod clipboard;
+pub mod cursor;
+pub mod effects;
+pub mod hook;
+pub mod input;
+pub mod ocr;
+pub mod permissions;
+pub mod process;
+pub mod secret;
+pub mod selection_hook;
+pub mod system_events;
+pub mod system_info;
+pub mod window_enum;
 
-use crate::error::{AppError, AppResult};
+mod ffi;
+mod geometry;
+mod util;
 
-fn todo(api: &str) -> AppError {
-    AppError::msg(format!("macOS 尚未实现：{api}"))
-}
+use super::types::{DefaultHotkeys, Permission, Permissions};
 
-pub fn init_process() {}
+/// Mac 笔记本的 F1–F3 默认是亮度和调度中心，得按住 fn 才是功能键；
+/// 换成 ⌥1 / ⌥2 / ⌥3，位置和 Windows 的 F1 / F2 / F3 对应。
+pub const DEFAULT_HOTKEYS: DefaultHotkeys = DefaultHotkeys {
+    capture: "Alt+1",
+    longshot: "Alt+2",
+    ocr: "Alt+3",
+    clipboard: "Alt+V",
+    translate: "Ctrl+Alt+T",
+    instant: "Alt+Shift+1",
+};
+pub const SYSTEM_OCR_NAME: &str = "Apple Vision";
+/// 可下载的 PaddleOCR 引擎（PaddleOCR-json）只有 Windows 版
+pub const PADDLE_OCR_SUPPORTED: bool = false;
+/// 菜单栏图标的习惯是左键就弹菜单
+pub const TRAY_MENU_ON_LEFT_CLICK: bool = true;
+pub const TRAY_ICON_IS_TEMPLATE: bool = true;
 
-pub mod capture {
-    use super::*;
-    use crate::platform::{MonitorId, MonitorInfo};
-    use image::RgbaImage;
-
-    /// NSScreen.screens + CGDisplayBounds，backingScaleFactor 即 scale_factor
-    pub fn list_monitors() -> AppResult<Vec<MonitorInfo>> {
-        Err(todo("NSScreen"))
-    }
-    /// ScreenCaptureKit（12.3+）SCScreenshotManager，需「屏幕录制」权限
-    pub fn capture_all() -> AppResult<Vec<(MonitorInfo, RgbaImage)>> {
-        Err(todo("ScreenCaptureKit"))
-    }
-    /// SCStream 连续录屏（GIF 用）
-    pub struct ScreenRecorder;
-    impl ScreenRecorder {
-        pub fn start(id: MonitorId) -> AppResult<Self> {
-            Err(todo("SCStream"))
-        }
-        pub fn next(&self, timeout: std::time::Duration) -> Option<RgbaImage> {
-            None
-        }
-    }
-    pub fn capture_monitor(id: MonitorId) -> AppResult<RgbaImage> {
-        Err(todo("ScreenCaptureKit"))
-    }
-    pub fn warm_up() {}
-}
-
-pub mod system_events {
-    use crate::platform::SystemEvent;
-    /// NSApplicationDidChangeScreenParametersNotification / NSWorkspaceDidWakeNotification
-    pub fn install(handler: fn(SystemEvent)) {}
-}
-
-pub mod window_enum {
-    use super::*;
-    use crate::platform::{AppInfo, PhysicalRect, WindowHandle, WindowInfo};
-
-    /// CGWindowListCopyWindowInfo(kCGWindowListOptionOnScreenOnly)
-    pub fn enumerate_top_level() -> AppResult<Vec<WindowInfo>> {
-        Ok(Vec::new())
-    }
-    /// Accessibility API（AXUIElement），需「辅助功能」权限
-    pub fn enumerate_children(window: WindowHandle) -> AppResult<Vec<PhysicalRect>> {
-        Ok(Vec::new())
-    }
-    /// CGWindowListCopyWindowInfo 按 Z 序找第一个包含该点的窗口
-    pub fn window_at(x: i32, y: i32) -> Option<WindowHandle> {
-        None
-    }
-    /// NSWorkspace.frontmostApplication
-    /// NSRunningApplication.processIdentifier 对比 getpid()
-    pub fn is_own_window(window: WindowHandle) -> bool {
-        false
-    }
-    pub fn foreground_window() -> Option<WindowHandle> {
-        None
-    }
-    pub fn app_info_of(window: WindowHandle) -> Option<AppInfo> {
-        None
-    }
-}
-
-pub mod input {
-    use super::*;
-    use crate::platform::WindowHandle;
-
-    /// NSRunningApplication.activate
-    pub fn focus_window(window: WindowHandle) -> AppResult<()> {
-        Err(todo("NSRunningApplication.activate"))
-    }
-    /// NSEvent.mouseLocation（注意 macOS 坐标原点在左下角）
-    pub fn cursor_position() -> Option<(i32, i32)> {
-        None
-    }
-    /// CGEventCreateKeyboardEvent(kVK_ANSI_V, cmd)，需「辅助功能」权限
-    pub fn send_paste() -> AppResult<()> {
-        Err(todo("CGEvent"))
-    }
-    pub fn send_copy() -> AppResult<()> {
-        Err(todo("CGEvent"))
-    }
-}
-
-pub mod effects {
-    use super::*;
-    use tauri::WebviewWindow;
-
-    /// ns_window() 指针
-    pub fn native_handle(window: &WebviewWindow) -> AppResult<u64> {
-        Err(todo("ns_window"))
-    }
-    /// NSWindow.sharingType = .none
-    pub fn set_exclude_from_capture(window: &WebviewWindow, exclude: bool) {}
-    pub fn reveal_for_tests(window: &WebviewWindow, visible: bool) {}
-    /// NSPanel + .nonactivatingPanel 样式
-    pub fn set_no_activate(window: &WebviewWindow) {}
-    /// contentView.layer.cornerRadius
-    pub fn set_rounded(window: &WebviewWindow, rounded: bool) {}
-    /// contentView.layer.cornerRadius + masksToBounds
-    pub fn set_round_region(window: &WebviewWindow, radius: u32) {}
-    /// NSVisualEffectView（.hudWindow 材质）+ layer.cornerRadius
-    pub fn set_backdrop(window: &WebviewWindow, radius: Option<u32>) -> bool {
-        false
-    }
-    pub fn set_rect_region(window: &WebviewWindow, rect: Option<(i32, i32, i32, i32)>) {}
-    pub fn set_backdrop_rect(window: &WebviewWindow, rect: Option<(f32, f32, f32, f32)>, ms: u32) {}
-    pub fn resize_backdrop(window: &WebviewWindow) -> bool {
-        false
-    }
-    /// NSWindow.setFrame(_:display:)
-    pub fn set_bounds(
-        window: &WebviewWindow,
-        x: i32,
-        y: i32,
-        width: u32,
-        height: u32,
-    ) -> AppResult<()> {
-        window.set_position(tauri::PhysicalPosition::new(x, y))?;
-        window.set_size(tauri::PhysicalSize::new(width, height))?;
-        Ok(())
-    }
-    /// orderOut
-    pub fn hide_window(window: &WebviewWindow) {
-        let _ = window.hide();
-    }
-    /// orderFrontRegardless
-    pub fn show_without_activate(window: &WebviewWindow) -> AppResult<()> {
-        window.show()?;
-        Ok(())
-    }
-}
-
-pub mod backdrop {
-    use super::*;
-    use crate::platform::{MonitorId, PhysicalRect};
-    use image::RgbaImage;
-
-    /// 无边框 NSWindow + CALayer.contents = CGImage，level 比遮罩低一级
-    pub fn ensure(monitor: MonitorId) -> AppResult<()> {
-        Err(todo("NSWindow backdrop"))
-    }
-    pub fn load(monitor: MonitorId, image: &RgbaImage, at: PhysicalRect) -> AppResult<()> {
-        Err(todo("NSWindow backdrop"))
-    }
-    pub fn show_below(monitor: MonitorId, overlay: u64) -> AppResult<()> {
-        Err(todo("NSWindow backdrop"))
-    }
-    pub fn hide_all() {}
-    pub fn release_all() {}
-    pub fn retain(keep: &[MonitorId]) {}
-}
-
-pub mod clipboard {
-    use super::*;
-    use crate::platform::{ClipboardPayload, ClipboardSnapshot};
-    use std::sync::mpsc::Sender;
-
-    pub type Backup = ();
-
-    /// NSPasteboard.general.changeCount 200ms 轮询（macOS 没有变化通知）
-    pub fn start_listener(tx: Sender<ClipboardSnapshot>) -> AppResult<()> {
-        Err(todo("NSPasteboard"))
-    }
-    pub fn write(payload: &ClipboardPayload) -> AppResult<()> {
-        Err(todo("NSPasteboard"))
-    }
-    pub fn read_text() -> Option<String> {
-        None
-    }
-    pub fn backup() -> Option<Backup> {
-        None
-    }
-    pub fn restore(backup: Backup) {}
-    pub fn sequence_number() -> u32 {
-        0
-    }
-}
-
-pub mod hook {
-    use super::*;
-    use crate::platform::HookEvent;
-    use std::sync::mpsc::Sender;
-
-    pub struct Guard;
-
-    /// CGEventTapCreate(kCGHIDEventTap)，需「辅助功能」权限
-    pub fn install(tx: Sender<HookEvent>) -> AppResult<Guard> {
-        Err(todo("CGEventTap"))
-    }
-}
-
-pub mod cursor {
-    /// NSCursor.currentSystem 的 image + hotSpot，画到截图上
-    pub fn draw_cursor(image: &mut image::RgbaImage, origin: (i32, i32)) {}
-}
-
-pub mod selection_hook {
-    use super::*;
-    use crate::platform::{PhysicalRect, SelectionEvent};
-    use std::sync::mpsc::Sender;
-
-    pub struct Guard;
-
-    /// NSEvent.addGlobalMonitorForEvents(leftMouseUp)，需「辅助功能」权限；
-    /// 选中文字优先用 AXSelectedText 读，读不到再模拟 ⌘C
-    pub fn install(tx: Sender<SelectionEvent>) -> AppResult<Guard> {
-        Err(todo("NSEvent global monitor"))
-    }
-    pub fn set_button_rect(rect: Option<PhysicalRect>) {}
-}
-
-pub mod secret {
-    use super::*;
-    /// Keychain Services：SecItemAdd / SecItemCopyMatching
-    pub fn protect(plain: &[u8]) -> AppResult<Vec<u8>> {
-        Err(todo("Keychain"))
-    }
-    pub fn unprotect(cipher: &[u8]) -> AppResult<Vec<u8>> {
-        Err(todo("Keychain"))
-    }
-}
-
-pub mod system_info {
-    use crate::platform::SystemVisuals;
-    use std::path::PathBuf;
-
-    /// NSApp.effectiveAppearance / NSWorkspace.accessibilityDisplayShouldReduceTransparency
-    pub fn visuals() -> SystemVisuals {
-        SystemVisuals {
-            transparency_enabled: true,
-            ..Default::default()
+/// `Ctrl+Alt+T` → `⌃⌥T`
+pub fn accelerator_symbols(accelerator: &str) -> String {
+    let mut modifiers = [false; 4];
+    let mut key = String::new();
+    for part in accelerator.split('+').map(str::trim) {
+        match part.to_ascii_lowercase().as_str() {
+            "ctrl" | "control" => modifiers[0] = true,
+            "alt" | "option" => modifiers[1] = true,
+            "shift" => modifiers[2] = true,
+            "super" | "cmd" | "command" | "meta" | "cmdorctrl" | "commandorcontrol" => {
+                modifiers[3] = true;
+            }
+            _ => key = part.to_string(),
         }
     }
-    pub fn pictures_dir() -> Option<PathBuf> {
-        std::env::var_os("HOME").map(|h| PathBuf::from(h).join("Pictures"))
+    let mut out = String::new();
+    for (on, symbol) in modifiers.iter().zip(["⌃", "⌥", "⇧", "⌘"]) {
+        if *on {
+            out.push_str(symbol);
+        }
     }
-    /// 登录项（SMAppService）。改名前的旧登录项，Mac 版还没发过，没有要清的
-    pub fn remove_autostart_entry(_name: &str) -> bool {
-        false
+    out.push_str(&key);
+    out
+}
+
+/// macOS 的菜单不认 `\t`，快捷键用符号写在文字后面。
+pub fn menu_label(text: &str, accelerator: &str) -> String {
+    if accelerator.is_empty() {
+        text.to_string()
+    } else {
+        format!("{text}　{}", accelerator_symbols(accelerator))
     }
 }
 
-pub mod app_icon {
-    use image::RgbaImage;
-    use std::path::Path;
-    /// NSWorkspace.icon(forFile:)
-    pub fn extract(exe: &Path) -> Option<RgbaImage> {
-        None
+pub fn is_reopen_event(event: &tauri::RunEvent) -> bool {
+    matches!(event, tauri::RunEvent::Reopen { .. })
+}
+
+pub fn permissions() -> Permissions {
+    Permissions {
+        screen_capture: Some(permissions::screen_capture_granted()),
+        accessibility: Some(permissions::accessibility_granted()),
     }
 }
 
-pub mod process {
-    use std::path::Path;
-    use std::process::Command;
-    pub fn hidden_command(program: &Path) -> Command {
-        Command::new(program)
-    }
-    /// macOS 没有作业对象：子进程里轮询 getppid() 或用 kqueue 监听父进程 NOTE_EXIT
-    pub fn tie_to_current_process(child: &std::process::Child) {}
+pub fn request_permission(which: Permission) {
+    permissions::request(which);
 }
 
-pub mod ocr {
-    use super::*;
-    use crate::platform::SysOcrLine;
-    use image::RgbaImage;
+/// 启动前在前台的那个应用（进程号）。
+static LAUNCHED_OVER: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
 
-    /// Vision.framework VNRecognizeTextRequest
-    pub fn available() -> bool {
-        false
+pub fn init_process() {
+    // 显示器的可用区域和名字只能在主线程读，趁现在（进程入口，主线程）先记一份
+    if let Some(mtm) = objc2::MainThreadMarker::new() {
+        geometry::refresh_extras(mtm);
     }
-    pub fn recognize(image: &RgbaImage) -> AppResult<Vec<SysOcrLine>> {
-        Err(todo("Vision"))
+    if let Some(front) = objc2_app_kit::NSWorkspace::sharedWorkspace().frontmostApplication() {
+        LAUNCHED_OVER.store(
+            front.processIdentifier(),
+            std::sync::atomic::Ordering::SeqCst,
+        );
+    }
+}
+
+/// 静默启动（开机自启）时不显示任何窗口，但 macOS 照样会把新启动的应用切到前台，
+/// 用户正在用的程序就丢了焦点。把前台还给启动前的那个应用。
+pub fn after_silent_start() {
+    let pid = LAUNCHED_OVER.load(std::sync::atomic::Ordering::SeqCst);
+    if pid == 0 || pid == std::process::id() as i32 {
+        return;
+    }
+    if let Some(app) = window_enum::running_app(pid) {
+        #[allow(deprecated)]
+        app.activateWithOptions(
+            objc2_app_kit::NSApplicationActivationOptions::ActivateIgnoringOtherApps,
+        );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn accelerator_symbols_follow_mac_order() {
+        assert_eq!(super::accelerator_symbols("Alt+1"), "⌥1");
+        assert_eq!(super::accelerator_symbols("Ctrl+Alt+T"), "⌃⌥T");
+        assert_eq!(super::accelerator_symbols("Super+Shift+S"), "⇧⌘S");
+        assert_eq!(super::accelerator_symbols("F1"), "F1");
     }
 }

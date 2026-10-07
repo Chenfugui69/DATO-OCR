@@ -56,6 +56,9 @@ fn set(app: &AppHandle, f: impl FnOnce(&mut DownloadStatus)) {
 
 /// 下载并安装。重复调用（已经在下载）直接返回。
 pub async fn install(app: &AppHandle) -> AppResult<()> {
+    if !crate::platform::paddle_ocr_supported() {
+        return Err(AppError::msg("PaddleOCR 引擎目前只有 Windows 版"));
+    }
     if !super::supports_avx() {
         return Err(AppError::msg(
             "这台电脑的处理器不支持 AVX 指令集，用不了 PaddleOCR",

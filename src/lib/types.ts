@@ -287,6 +287,13 @@ export interface PaddleDownload {
   error: string | null;
 }
 
+export interface Permissions {
+  /** 屏幕录制：没有就截不到别的程序的窗口 */
+  screenCapture: boolean | null;
+  /** 辅助功能：模拟粘贴 / 复制、全局拦截按键 */
+  accessibility: boolean | null;
+}
+
 export interface AppInfo {
   version: string;
   dataDir: string;

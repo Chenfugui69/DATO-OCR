@@ -81,23 +81,37 @@ fn enumerate() -> AppResult<Vec<(Monitor, MonitorInfo)>> {
 pub struct ScreenRecorder {
     recorder: xcap::VideoRecorder,
     rx: std::sync::mpsc::Receiver<xcap::Frame>,
+    region: PhysicalRect,
 }
 
 impl ScreenRecorder {
-    pub fn start(id: MonitorId) -> AppResult<Self> {
+    /// `region`：这块屏里要录的那一块（屏内物理像素）。
+    pub fn start(id: MonitorId, region: PhysicalRect) -> AppResult<Self> {
         let (monitor, _) = enumerate()?
             .into_iter()
             .find(|(_, info)| info.id == id)
             .ok_or_else(|| AppError::Capture(format!("显示器 {id} 已不存在")))?;
         let (recorder, rx) = monitor.video_recorder()?;
         recorder.start()?;
-        Ok(Self { recorder, rx })
+        Ok(Self {
+            recorder,
+            rx,
+            region,
+        })
     }
 
-    /// 取一帧新画面（整块屏，RGBA，alpha 没有语义）。画面没变化时等到超时返回 None。
+    /// 取一帧新画面（只有 `region` 那一块，不透明 RGBA）。画面没变化时等到超时返回 None。
     pub fn next(&self, timeout: std::time::Duration) -> Option<RgbaImage> {
         let frame = self.rx.recv_timeout(timeout).ok()?;
-        RgbaImage::from_raw(frame.width, frame.height, frame.raw)
+        // WGC 给的是整块屏，alpha 没有语义；裁出区域时顺手补成不透明
+        let full = RgbaImage::from_raw(frame.width, frame.height, frame.raw)?;
+        match crate::imaging::crop_opaque(&full, self.region) {
+            Ok(image) => Some(image),
+            Err(err) => {
+                tracing::debug!("录屏裁帧失败：{err}");
+                None
+            }
+        }
     }
 }
 

@@ -9,9 +9,10 @@ import { useTranslation } from 'react-i18next';
 import { formatBytes, relativeTime } from '@/lib/format';
 import { useEvent } from '@/lib/events';
 import { clipboard, ocr, system, update as updater } from '@/lib/ipc';
+import { accelLabel, isMac } from '@/lib/platform';
 import { useSettings, useSettingsStore } from '@/lib/settings';
 import { currentVisuals } from '@/lib/theme';
-import type { EngineStatus, HotkeyAction, PaddleDownload, Settings } from '@/lib/types';
+import type { EngineStatus, HotkeyAction, PaddleDownload, Permissions, Settings } from '@/lib/types';
 import { Button, Segmented, Select, Slider, Switch, TextField } from '@/ui/controls';
 import { HotkeyInput } from '@/ui/HotkeyInput';
 import { confirmDialog, notify } from '@/ui/overlays';
@@ -22,7 +23,7 @@ import { Group, Row } from './settingsParts';
 import { TranslateSettingsGroups } from './TranslateSettings';
 import { UpdateBanner, UpdateDialog, useUpdate } from './UpdateDialog';
 
-const SECTIONS = ['general', 'capture', 'longshot', 'ocr', 'translate', 'selection', 'ai', 'network', 'clipboard', 'hotkeys', 'appearance', 'storage', 'update', 'about'] as const;
+const SECTIONS = ['general', 'permissions', 'capture', 'longshot', 'ocr', 'translate', 'selection', 'ai', 'network', 'clipboard', 'hotkeys', 'appearance', 'storage', 'update', 'about'] as const;
 
 export function SettingsPage({ section }: { section: string | null }) {
   const { t } = useTranslation();
@@ -34,6 +35,10 @@ export function SettingsPage({ section }: { section: string | null }) {
   const hotkeys = useQuery({ queryKey: ['hotkeys'], queryFn: system.hotkeys });
   const { status: upd, prompt } = useUpdate();
   const [updOpen, setUpdOpen] = useState(false);
+  // macOS 的屏幕录制 / 辅助功能权限；别的平台两项都是 null，不显示这一组。
+  // 用户去系统设置里改完回来时窗口重新获得焦点，顺带重查一次
+  const perms = useQuery({ queryKey: ['permissions'], queryFn: system.permissions, refetchOnWindowFocus: true });
+  const permRows = (['screenCapture', 'accessibility'] as (keyof Permissions)[]).filter((k) => perms.data?.[k] != null);
 
   useEffect(() => {
     if (!section) return;
@@ -64,7 +69,7 @@ export function SettingsPage({ section }: { section: string | null }) {
         <h1 className="page__title">{t('nav.settings')}</h1>
       </div>
       <nav className="settings-nav">
-        {SECTIONS.map((s) => (
+        {SECTIONS.filter((s) => s !== 'permissions' || permRows.length > 0).map((s) => (
           <button
             key={s}
             type="button"
@@ -100,6 +105,25 @@ export function SettingsPage({ section }: { section: string | null }) {
               <Switch checked={settings.general.offlineMode} onChange={(v) => set((d) => void (d.general.offlineMode = v))} />
             </Row>
           </Group>
+
+          {permRows.length > 0 && (
+            <Group id="permissions" title={t('settings.section.permissions')} note={t('settings.permissions.note')}>
+              {permRows.map((k) => {
+                const name = k === 'screenCapture' ? 'screen' : 'accessibility';
+                return (
+                  <Row key={k} title={t(`settings.permissions.${name}`)} desc={t(`settings.permissions.${name}Desc`)}>
+                    {perms.data?.[k] ? (
+                      <span className="set-row__ok">{t('settings.permissions.granted')}</span>
+                    ) : (
+                      <Button size="sm" onClick={() => void system.requestPermission(k).catch(notify.error)}>
+                        {t('settings.permissions.grant')}
+                      </Button>
+                    )}
+                  </Row>
+                );
+              })}
+            </Group>
+          )}
 
           <Group id="capture" title={t('settings.section.capture')}>
             <Row title={t('settings.capture.finishAction')}>
@@ -160,7 +184,7 @@ export function SettingsPage({ section }: { section: string | null }) {
               <span className="set-row__value cn-numeric">{c.maskOpacity > 0 ? `${Math.round(c.maskOpacity * 100)}%` : t('settings.capture.noDim')}</span>
               <Slider value={Math.round(c.maskOpacity * 100)} min={0} max={80} onChange={(v) => set((d) => void (d.capture.maskOpacity = v / 100))} />
             </Row>
-            <Row title={t('settings.capture.instantAction')} desc={t('settings.capture.instantActionDesc', { hotkey: settings.hotkeys.instant })}>
+            <Row title={t('settings.capture.instantAction')} desc={t('settings.capture.instantActionDesc', { hotkey: accelLabel(settings.hotkeys.instant) })}>
               <Select
                 value={c.instantAction}
                 options={[
@@ -284,7 +308,8 @@ export function SettingsPage({ section }: { section: string | null }) {
             <Row title={t('settings.ocr.keepBreaks')}>
               <Switch checked={settings.ocr.keepLineBreaks} onChange={(v) => set((d) => void (d.ocr.keepLineBreaks = v))} />
             </Row>
-            <PaddleEngineRow status={info.data?.ocr} />
+            {/* 可下载的 PaddleOCR 引擎只有 Windows 版 */}
+            {!isMac && <PaddleEngineRow status={info.data?.ocr} />}
           </Group>
 
           <TranslateSettingsGroups settings={settings} set={set} />
@@ -397,9 +422,11 @@ export function SettingsPage({ section }: { section: string | null }) {
                 size="sm"
                 icon={RotateCcw}
                 onClick={() =>
-                  set((d) => {
-                    d.hotkeys = { ...d.hotkeys, capture: 'F1', longshot: 'F2', ocr: 'F3', clipboard: 'Alt+V', translate: 'Ctrl+Alt+T', instant: 'Shift+F1' };
-                  })
+                  // 默认热键每个平台一套，由 Rust 那边给
+                  void system
+                    .defaultHotkeys()
+                    .then((defaults) => set((d) => void (d.hotkeys = { ...d.hotkeys, ...defaults, ai: d.hotkeys.ai })))
+                    .catch(notify.error)
                 }
               >
                 {t('settings.hotkeys.resetButton')}

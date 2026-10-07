@@ -7,6 +7,7 @@ import { useTranslation } from 'react-i18next';
 
 import { useEvent } from '@/lib/events';
 import { ai } from '@/lib/ipc';
+import { modKey } from '@/lib/platform';
 import type { AiContext } from '@/lib/types';
 import { TitleBar } from '@/ui/TitleBar';
 
@@ -26,7 +27,7 @@ export default function AiView() {
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.ctrlKey && e.key.toLowerCase() === 'w') {
+      if (modKey(e) && e.key.toLowerCase() === 'w') {
         e.preventDefault();
         void getCurrentWindow().close();
       }

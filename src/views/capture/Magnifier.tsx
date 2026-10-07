@@ -4,6 +4,7 @@
 import { useLayoutEffect, useRef } from 'react';
 
 import { formatColor } from '@/lib/format';
+import { CONTENT_INTERVAL, useThrottled } from '@/lib/hooks';
 import type { PixelSource } from '@/views/annotate/pixels';
 
 import { placeMagnifier, type Point } from './geometry';
@@ -30,8 +31,10 @@ export function Magnifier({
   format: 'hex' | 'rgb' | 'hsl';
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const cx = Math.floor(cursor.x);
-  const cy = Math.floor(cursor.y);
+  // 放大镜的位置每帧跟着鼠标走（只挪图层，不重画）；里面的画面、坐标、颜色隔一会儿才换
+  const sample = useThrottled(cursor, CONTENT_INTERVAL);
+  const cx = Math.floor(sample.x);
+  const cy = Math.floor(sample.y);
 
   useLayoutEffect(() => {
     const ctx = canvasRef.current?.getContext('2d');

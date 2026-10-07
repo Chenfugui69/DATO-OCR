@@ -2,7 +2,7 @@
 
 import { Channel, invoke } from '@tauri-apps/api/core';
 
-import type { AiContext, AppInfo, CaptureIntent, ChatEvent, ChatRequest, ClipDetail, ClipGroup, ClipPage, ClipQuery, ClipStats, DavDevice, EditorAction, EditorDoc, EngineStatus, FinishAction, HotkeyStatus, OcrJob, OcrPage, PhysicalRect, PinInfo, ProviderInfo, RegionTranslation, SecretsStatus, SessionInfo, Settings, ShotPage, SyncStatus, UpdateStatus, ShotQuery, TranslateRequest, TranslateResult, VisualCapabilities } from './types';
+import type { AiContext, AppInfo, CaptureIntent, ChatEvent, ChatRequest, ClipDetail, ClipGroup, ClipPage, ClipQuery, ClipStats, DavDevice, EditorAction, EditorDoc, EngineStatus, FinishAction, HotkeyStatus, OcrJob, OcrPage, Permissions, PhysicalRect, PinInfo, ProviderInfo, RegionTranslation, SecretsStatus, SessionInfo, Settings, ShotPage, SyncStatus, UpdateStatus, ShotQuery, TranslateRequest, TranslateResult, VisualCapabilities } from './types';
 
 /** Rust 侧 AppError 的结构化形态。 */
 export class AppError extends Error {
@@ -228,6 +228,12 @@ export const system = {
   showMain: (page?: string) => call<void>('show_main', { page: page ?? null }),
   quit: () => call<void>('quit_app'),
   hideToast: () => call<void>('toast_hide'),
+  /** 要用户手动授予的系统权限（macOS）；别的平台两项都是 null */
+  permissions: () => call<Permissions>('permissions_status'),
+  /** 弹系统的授权引导并打开对应的系统设置页 */
+  requestPermission: (which: keyof Permissions) => call<void>('permission_request', { which }),
+  /** 这个平台的默认热键 */
+  defaultHotkeys: () => call<Settings['hotkeys']>('hotkeys_defaults'),
   /** 当前窗口一次同时改位置和大小（逻辑像素） */
   /** 改窗口位置大小；`backdrop` 给了的话毛玻璃背板同时改成只铺窗口里的这一块（逻辑像素） */
   setBounds: (x: number, y: number, width: number, height: number, backdrop?: { x: number; y: number; width: number; height: number }) =>

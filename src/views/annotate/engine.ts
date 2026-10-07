@@ -134,6 +134,8 @@ export class AnnotationEngine {
   private listeners = new Set<() => void>();
   private start: Point | null = null;
   private lastDraftBounds: Rect | null = null;
+  /** 已提交的那层画布上现在有没有东西（没有就不用清） */
+  private committedDirty = false;
   private history: Annotation[][] = [];
   private transform: { handle: AnnotationHandle | 'move'; at: Point; orig: Annotation; moved: boolean } | null = null;
 
@@ -164,6 +166,7 @@ export class AnnotationEngine {
     this.clearCanvas(this.committed);
     this.committedEmpty = true;
     this.clearCanvas(this.drafting);
+    this.committedDirty = false;
     this.changed();
   }
 
@@ -631,6 +634,10 @@ export class AnnotationEngine {
     const c = this.committed;
     const ctx = c?.getContext('2d');
     if (!c || !ctx) return;
+    // 拖选区时每动一下都会走到这里（裁剪区变了）。画布和屏幕一样大，哪怕只是清空一遍，
+    // 浏览器也得把整块画布重新提交给合成器；上面本来就是空的、也没有要画的，就什么都别做
+    if (this.annotations.length === 0 && !this.committedDirty) return;
+    this.committedDirty = this.annotations.length > 0;
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.clearRect(0, 0, c.width, c.height);
     this.committedEmpty = this.annotations.length === 0;

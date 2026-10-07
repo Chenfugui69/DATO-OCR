@@ -47,6 +47,7 @@ impl AppError {
     }
 }
 
+#[cfg(windows)]
 impl From<xcap::XCapError> for AppError {
     fn from(err: xcap::XCapError) -> Self {
         Self::Capture(err.to_string())

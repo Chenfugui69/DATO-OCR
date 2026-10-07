@@ -14,7 +14,8 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = ["tray-icon", "image-png", "protocol-asset"] }
+# macos-private-api：macOS 上透明窗口（遮罩、面板、气泡）要用，和 tauri.conf.json 的 macOSPrivateApi 成对出现
+tauri = { version = "2", features = ["tray-icon", "image-png", "protocol-asset", "macos-private-api"] }
 tauri-plugin-global-shortcut = "2"
 tauri-plugin-single-instance = "2"
 tauri-plugin-dialog = "2"
@@ -29,8 +30,6 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 tracing-appender = "0.2"
 
-# 抓屏（Apache-2.0）。必须开 wgc：默认 GDI 路径在 4K 屏上要 260ms+。
-xcap = { version = "0.9", features = ["wgc"] }
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "bmp"] }
 # GIF 录制的编码（MIT / Apache-2.0；调色板量化用的 color_quant 是 MIT）
 gif = "0.14"
@@ -38,8 +37,9 @@ gif = "0.14"
 # 数据库：bundled 静态链接 SQLite（含 FTS5）
 rusqlite = { version = "0.32", features = ["bundled"] }
 
-# 翻译联网。Windows 上 native-tls 走系统 SChannel，不链接 OpenSSL，体积最小。
-reqwest = { version = "0.12", default-features = false, features = ["json", "native-tls", "gzip", "socks", "stream"] }
+# 翻译联网。Windows 上 native-tls 走系统 SChannel，不链接 OpenSSL，体积最小（macOS 上走系统的 Secure Transport）。
+# macos-system-configuration：读 macOS 的系统代理设置（Windows 的系统代理 reqwest 本来就会读）
+reqwest = { version = "0.12", default-features = false, features = ["json", "native-tls", "gzip", "socks", "stream", "macos-system-configuration"] }
 tokio = { version = "1", features = ["time", "sync", "net", "rt", "macros", "io-util"] }
 
 parking_lot = "0.12"
@@ -70,6 +70,8 @@ cbc = "0.1"
 sevenz-rust2 = { version = "0.23", default-features = false, features = ["util"] }
 
 [target.'cfg(windows)'.dependencies]
+# 抓屏（Apache-2.0）。必须开 wgc：默认 GDI 路径在 4K 屏上要 260ms+。
+xcap = { version = "0.9", features = ["wgc"] }
 windows = { version = "0.62", features = [
   "Win32_Foundation",
   "Win32_Graphics_Dwm",
@@ -113,7 +115,19 @@ windows = { version = "0.62", features = [
 windows-numerics = "0.3"
 
 [target.'cfg(target_os = "macos")'.dependencies]
-# 第一版留空，移植时填 objc2 / core-graphics / screencapturekit
+# 系统框架绑定，版本跟 tao / wry 用的保持一致（都是 MIT / Apache-2.0）
+objc2 = "0.6"
+objc2-foundation = "0.3"
+objc2-app-kit = "0.3"
+objc2-core-foundation = "0.3"
+objc2-core-graphics = "0.3"
+objc2-quartz-core = "0.3"
+objc2-vision = "0.3"
+block2 = "0.6"
+dispatch2 = "0.3"
+# 钥匙串里放一把主密钥，密钥表的内容用它做 AES-256-GCM
+security-framework = "3"
+aes-gcm = "0.10"
 
 [profile.release]
 opt-level = "s"

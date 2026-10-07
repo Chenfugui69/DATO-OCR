@@ -16,14 +16,28 @@ html[data-view='capture'] #root {
   touch-action: none;
 }
 
-/* 用 clip-path 挖洞而不是四个 div 拼四周（规格 02 §4）。没有过渡动画：截图要瞬间响应 */
-/* 压暗遮罩的一块（见 CaptureView 的 Mask）：位置用 transform，各自一层，拖动时不重绘 */
+/*
+ * 压暗遮罩：洞的上下左右各一块纯色。每块都是 1×1 的独立合成层，用 transform 的 scale 拉到位 ——
+ * 拖选区时只是合成器挪图层，不用重画（原来是全屏一块配 clip-path 挖洞，每动一下全屏重画）。
+ * 没有过渡动画：截图要瞬间响应
+ */
 .cap-mask {
   position: absolute;
   left: 0;
   top: 0;
-  pointer-events: none;
+  width: 1px;
+  height: 1px;
+  transform-origin: 0 0;
   will-change: transform;
+  pointer-events: none;
+}
+/* 圆角选区的四个角：大小固定，只挪位置 */
+.cap-mask-corner {
+  position: absolute;
+  left: 0;
+  top: 0;
+  will-change: transform;
+  pointer-events: none;
 }
 
 .cap-canvas {
@@ -34,30 +48,76 @@ html[data-view='capture'] #root {
   pointer-events: none;
 }
 
-/* 自动检测高亮：2px 实线 */
-/* 选区框样式由 .cap-root 上的 --cap-frame-* 变量决定（设置里可改：颜色、粗细、线型、圆角） */
-.cap-hover {
+/*
+ * 选区框 / 悬停高亮框：四条细边 + 四个角，每块两层（下面略宽的半透明暗边，上面是线），
+ * 见 CaptureView 的 FrameBox。颜色、线型由 .cap-root 上的 --cap-frame-* 变量决定（设置里可改），
+ * 粗细是 --cap-edge。拖选区时它们每一帧都在变，所以全是纯色，不带滤镜、阴影。
+ */
+.cap-ring {
   position: absolute;
-  box-sizing: border-box;
-  border: calc(var(--cap-frame-width) + 0.5px) var(--cap-frame-style) var(--cap-frame-color);
-  border-radius: var(--cap-frame-radius);
-  /* 内外各一圈很淡的深色细边：白框压在白色内容上也看得清。
-     不用 filter: drop-shadow —— 滤镜要离屏再模糊一遍，框一变大小就整块重做，拖起来很费 */
-  box-shadow:
-    0 0 0 0.75px rgba(0, 0, 0, 0.32),
-    inset 0 0 0 0.75px rgba(0, 0, 0, 0.32);
+  left: 0;
+  top: 0;
+  width: 0;
+  height: 0;
   pointer-events: none;
 }
-
-/* 选区边框画在选区外侧，不遮住边缘的真实像素 */
-.cap-frame {
+.cap-edge,
+.cap-corner {
   position: absolute;
-  outline: var(--cap-frame-width) var(--cap-frame-style) var(--cap-frame-color);
-  border-radius: var(--cap-frame-radius);
-  /* 外圈比描边多出一点点深色（垫在描边下面），白框压在白色内容上也看得清。
-     不再在里边描一圈：选区贴着屏幕边时描边在屏幕外，只剩里边那圈深色细线，看着像一条黑线 */
-  box-shadow: 0 0 0 calc(var(--cap-frame-width) + 0.75px) rgba(0, 0, 0, 0.32);
-  pointer-events: none;
+  left: 0;
+  top: 0;
+  box-sizing: content-box;
+  border: 0 var(--cap-frame-style) var(--cap-frame-color);
+}
+/* 实线的边：1×1 的合成层，用 scale 拉成细长条（和 .cap-mask 同一个办法），拖动时不重画 */
+.cap-edge--fill {
+  width: 1px;
+  height: 1px;
+  transform-origin: 0 0;
+  will-change: transform;
+  background: var(--cap-frame-color);
+}
+/* 暗边：一律纯色，线是虚线时它就是虚线底下一条淡淡的连续暗带 */
+.cap-edge--fill.cap-edge--halo {
+  background: rgba(0, 0, 0, 0.3);
+}
+.cap-corner--halo {
+  border-style: solid;
+  border-color: rgba(0, 0, 0, 0.3);
+}
+/* 虚线 / 点线的边：没法拉伸，用真实尺寸的 border 画 */
+.cap-edge--h {
+  height: 0;
+  border-top-width: var(--cap-edge);
+}
+.cap-edge--v {
+  width: 0;
+  border-left-width: var(--cap-edge);
+}
+/* 角块大小固定，只挪位置 */
+.cap-corner {
+  box-sizing: border-box;
+  will-change: transform;
+}
+.cap-corner--tl {
+  border-top-width: var(--cap-edge);
+  border-left-width: var(--cap-edge);
+  border-top-left-radius: 100%;
+}
+.cap-corner--tr {
+  border-top-width: var(--cap-edge);
+  border-right-width: var(--cap-edge);
+  border-top-right-radius: 100%;
+}
+.cap-corner--br {
+  border-bottom-width: var(--cap-edge);
+  border-right-width: var(--cap-edge);
+  border-bottom-right-radius: 100%;
+}
+.cap-corner--bl {
+  border-bottom-width: var(--cap-edge);
+  border-left-width: var(--cap-edge);
+  border-bottom-left-radius: 100%;
 }
 
 /* 8 个控制点：白色圆 + 框色描边 + 一圈阴影（框是白色时也看得见）；实际命中范围更大 */
@@ -96,7 +156,10 @@ html[data-view='capture'] #root {
   filter: brightness(1.08);
 }
 
-/* 尺寸提示：淡一点的小标签，不抢选区的视觉 */
+/*
+ * 尺寸提示：淡一点的小标签，不抢选区的视觉。拖动时它每一帧都在挪、数字也在变，所以不加
+ * backdrop-filter（每帧都得重算；遮罩窗口是透明的，底下的截图在另一个窗口里，本来也模糊不到）
+ */
 .cap-size {
   position: absolute;
   left: 0;
@@ -107,9 +170,10 @@ html[data-view='capture'] #root {
   letter-spacing: 0.01em;
   color: rgba(255, 255, 255, 0.7);
   background: rgba(0, 0, 0, 0.2);
-  backdrop-filter: blur(8px);
   pointer-events: none;
   white-space: nowrap;
+  /* 自己一层：跟着选区挪位置时不用重画 */
+  will-change: transform;
 }
 
 .cap-text-layer {
@@ -149,6 +213,8 @@ html[data-view='capture'] #root {
   left: 0;
   top: 0;
   width: 120px;
+  /* 自己一层：跟着鼠标挪位置时不用重画 */
+  will-change: transform;
   pointer-events: none;
   border-radius: var(--cn-radius-md);
   overflow: hidden;

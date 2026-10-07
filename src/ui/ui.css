@@ -552,6 +552,13 @@
   flex: none;
   padding-left: var(--cn-space-4);
 }
+/* macOS：系统的红黄绿灯叠在窗口左上角，标题从它右边开始 */
+[data-platform='mac'] .cn-titlebar {
+  padding-left: 78px;
+}
+[data-platform='mac'] .cn-titlebar__extra {
+  margin-right: var(--cn-space-3);
+}
 .cn-titlebar__title {
   font: var(--cn-text-title-3);
   color: var(--cn-label);

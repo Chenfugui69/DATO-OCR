@@ -138,13 +138,15 @@ pub struct HotkeySettings {
 
 impl Default for HotkeySettings {
     fn default() -> Self {
+        // 每个平台一套（Windows：F1 / F2 / F3；macOS：⌥1 / ⌥2 / ⌥3）
+        let keys = crate::platform::default_hotkeys();
         Self {
-            capture: "F1".into(),
-            longshot: "F2".into(),
-            ocr: "F3".into(),
-            clipboard: "Alt+V".into(),
-            translate: "Ctrl+Alt+T".into(),
-            instant: "Shift+F1".into(),
+            capture: keys.capture.into(),
+            longshot: keys.longshot.into(),
+            ocr: keys.ocr.into(),
+            clipboard: keys.clipboard.into(),
+            translate: keys.translate.into(),
+            instant: keys.instant.into(),
             ai: String::new(),
             extra: Map::new(),
         }
@@ -879,7 +881,10 @@ mod tests {
         let settings: Settings = serde_json::from_str(text).unwrap();
         assert_eq!(settings.capture.mask_opacity, 0.3);
         assert_eq!(settings.capture.snap_threshold, 8);
-        assert_eq!(settings.hotkeys.capture, "F1");
+        assert_eq!(
+            settings.hotkeys.capture,
+            crate::platform::default_hotkeys().capture
+        );
         assert_eq!(
             settings.capture.extra.get("futureFlag"),
             Some(&Value::Bool(true))

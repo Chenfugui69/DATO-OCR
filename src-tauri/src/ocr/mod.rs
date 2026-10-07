@@ -2,7 +2,8 @@
 //!
 //! 引擎生命周期：**懒启动**（第一次识别才拉起）→ **常驻复用** → **空闲回收**（默认 5
 //! 分钟）→ **崩溃自愈**（下次请求自动重启，连续失败 3 次后报错）→ 应用退出时杀掉。
-//! RapidOCR 不可用时退回 Windows 自带 OCR。可选下载 PaddleOCR（paddle.rs），选了它但失败时退回 RapidOCR。
+//! RapidOCR 不可用时退回系统自带 OCR（Windows.Media.Ocr；macOS 没有 RapidOCR，一直用 Vision）。
+//! 可选下载 PaddleOCR（paddle.rs，只有 Windows 版），选了它但失败时退回 RapidOCR。
 
 pub mod paddle;
 pub mod rapid;
@@ -262,11 +263,13 @@ pub fn recognize(
     };
 
     let started = Instant::now();
+    let system = platform::system_ocr_name();
     let paddle_result = (preferred == "paddle").then(|| run_engine(app, Engine::Paddle, input));
-    let (mut blocks, used) = if preferred == "system" {
-        (run_system(input)?, "Windows OCR")
-    } else if let Some(Ok(b)) = paddle_result {
+    let (mut blocks, used) = if let Some(Ok(b)) = paddle_result {
         (b, "PaddleOCR")
+    // 包里没带 RapidOCR（macOS 版、没跑过 fetch-ocr 的开发环境）就直接用系统的
+    } else if preferred == "system" || rapid::engine_dir(&st.paths).is_none() {
+        (run_system(input)?, system)
     } else {
         if let Some(Err(err)) = &paddle_result {
             tracing::warn!("PaddleOCR 失败，改用 RapidOCR：{err}");
@@ -275,7 +278,7 @@ pub fn recognize(
             Ok(b) => (b, "RapidOCR"),
             Err(err) => {
                 tracing::warn!("RapidOCR 失败，改用系统 OCR：{err}");
-                (run_system(input).map_err(|_| err)?, "Windows OCR")
+                (run_system(input).map_err(|_| err)?, system)
             }
         }
     };
@@ -306,7 +309,7 @@ pub fn ensure_window(app: &AppHandle) -> AppResult<tauri::WebviewWindow> {
     if let Some(w) = app.get_webview_window(WINDOW) {
         return Ok(w);
     }
-    let window = wm::builder(app, WINDOW)
+    let window = wm::framed_builder(app, WINDOW)
         .title("文字识别 - DATO OCR")
         .inner_size(960.0, 640.0)
         .min_inner_size(680.0, 440.0)

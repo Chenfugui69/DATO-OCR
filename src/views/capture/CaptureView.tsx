@@ -14,7 +14,7 @@ import { useTranslation } from 'react-i18next';
 
 import { broadcast, on } from '@/lib/events';
 import { formatColor, readableOn } from '@/lib/format';
-import { useElementSize } from '@/lib/hooks';
+import { CONTENT_INTERVAL, useElementSize, useThrottled } from '@/lib/hooks';
 import { capture, gif, reportError } from '@/lib/ipc';
 import { shotUrl, windowLabel } from '@/lib/platform';
 import type { CaptureIntent, FinishAction, FrameStyle } from '@/lib/types';
@@ -668,60 +668,163 @@ function onKeyDown(e: KeyboardEvent) {
 
 // ───────────────────────── 渲染 ─────────────────────────
 
-/**
- * 压暗遮罩：选区四周四块纯色矩形，圆角框再在洞的四个角各补一小块（径向渐变挖出圆弧）。
- *
- * 以前是一整屏的元素用 clip-path 挖洞：洞一动就得把整屏（4K 屏就是 800 多万像素）重新光栅化一遍，
- * 低配机拖选区时明显跟不上。现在每块都是纯色、各自一层，拖动只改位置和大小，合成器直接画，不用重绘。
- * 坐标都是物理像素换算过来的，正好落在设备像素上，四块拼缝处不会有亮线。
- */
+// 拖选区时这里每一帧都在变，所以遮罩和选区框都拆成小块、只靠 transform 摆位：
+//
+// - 压暗遮罩：洞的上下左右各一块纯色，都是 1×1 的独立合成层用 scale 拉到位，拖动时一个像素都
+//   不用重画。最早是一整块全屏元素配 clip-path 挖洞，每动一下全屏（4K 屏就是 800 多万像素）重画一遍。
+//   四块直接给宽高也不行：WebKit 里图层一变大小就整块重新光栅化。
+// - 选区框：四条细边（圆角时再加四个角）。一个带 outline / border 的元素范围就是整个选区，
+//   每动一下要把选区那么大的一块重新光栅化 —— 实测是拖动时最大的一项开销，选区越大越卡。
+//
+// Chromium（Windows）扛得住原来的写法；WebKit（macOS）在 4K / 5K、高刷新率的屏上会掉帧。
+// 坐标都是物理像素换算过来的，正好落在设备像素上，四块拼缝处不会有亮线。
+
+/** 压暗遮罩。`hole` 是不压暗的那块（选区或悬停高亮的窗口），本屏局部物理坐标。 */
 function Mask({
   hole,
   s,
   radius,
+  opacity,
   viewport,
-  color,
 }: {
   hole: Rect | null;
   s: number;
   radius: number;
+  opacity: number;
   viewport: { width: number; height: number };
-  color: string;
 }) {
-  const { width: W, height: H } = viewport;
-  const part = (x: number, y: number, w: number, h: number): React.CSSProperties => ({
-    background: color,
-    width: Math.max(0, w),
-    height: Math.max(0, h),
-    transform: `translate(${x}px, ${y}px)`,
-  });
-  if (!hole) return <div className="cap-mask" style={part(0, 0, W, H)} />;
+  // 完全不压暗（截图识字默认如此）就没什么可画的
+  if (opacity <= 0) return null;
+  const color = `rgba(0,0,0,${opacity})`;
+  const { width: w, height: h } = viewport;
+  const piece = (key: string, x: number, y: number, pw: number, ph: number) => (
+    <div key={key} className="cap-mask" style={{ background: color, transform: `translate(${x}px, ${y}px) scale(${Math.max(0, pw)}, ${Math.max(0, ph)})` }} />
+  );
+  if (!hole) return piece('all', 0, 0, w, h);
   const x1 = hole.x / s;
   const y1 = hole.y / s;
   const x2 = right(hole) / s;
   const y2 = bottom(hole) / s;
   // 圆角框配圆角洞，不然四个角会露出一小块没压暗的直角
-  const rr = Math.max(0, Math.min(radius, (x2 - x1) / 2, (y2 - y1) / 2));
-  const corner = (x: number, y: number, at: string): React.CSSProperties => ({
-    width: rr,
-    height: rr,
-    transform: `translate(${x}px, ${y}px)`,
-    background: `radial-gradient(circle at ${at}, transparent ${rr - 0.5}px, ${color} ${rr + 0.5}px)`,
-  });
+  const r = Math.min(radius, (x2 - x1) / 2, (y2 - y1) / 2);
+  const corner = (key: string, x: number, y: number, at: string) => (
+    <div
+      key={key}
+      className="cap-mask-corner"
+      style={{
+        width: r,
+        height: r,
+        transform: `translate(${x}px, ${y}px)`,
+        background: `radial-gradient(circle at ${at}, transparent ${r - 0.5}px, ${color} ${r + 0.5}px)`,
+      }}
+    />
+  );
   return (
     <>
-      <div className="cap-mask" style={part(0, 0, W, y1)} />
-      <div className="cap-mask" style={part(0, y2, W, H - y2)} />
-      <div className="cap-mask" style={part(0, y1, x1, y2 - y1)} />
-      <div className="cap-mask" style={part(x2, y1, W - x2, y2 - y1)} />
-      {rr > 0 && (
+      {piece('t', 0, 0, w, y1)}
+      {piece('b', 0, y2, w, h - y2)}
+      {piece('l', 0, y1, x1, y2 - y1)}
+      {piece('r', x2, y1, w - x2, y2 - y1)}
+      {r > 0 && (
         <>
-          <div className="cap-mask" style={corner(x1, y1, '100% 100%')} />
-          <div className="cap-mask" style={corner(x2 - rr, y1, '0 100%')} />
-          <div className="cap-mask" style={corner(x1, y2 - rr, '100% 0')} />
-          <div className="cap-mask" style={corner(x2 - rr, y2 - rr, '0 0')} />
+          {corner('tl', x1, y1, '100% 100%')}
+          {corner('tr', x2 - r, y1, '0 100%')}
+          {corner('br', x2 - r, y2 - r, '0 0')}
+          {corner('bl', x1, y2 - r, '100% 0')}
         </>
       )}
+    </>
+  );
+}
+
+/** 框外面那圈暗边的宽度（CSS 像素）。2x 屏上正好一个物理像素 */
+const HALO = 0.5;
+
+/**
+ * 选区框 / 悬停高亮框。`inside`：框画在矩形内侧（悬停高亮）；否则画在外侧，不遮住选区边缘的真实像素。
+ * 颜色、线型来自 .cap-root 上的 --cap-frame-* 变量，这里只管几何。
+ *
+ * 每条边、每个角都是两层：下面一条略宽的半透明暗边，上面才是线 —— 白框压在白色内容上也看得清。
+ * 实线的边和压暗遮罩一样，是 1×1 的合成层用 scale 拉到位，拖动时不重画；角块大小固定，只挪位置。
+ * 只有虚线 / 点线没法拉伸，那几条边用真实尺寸的 border 画，每帧要重画细细的一条。
+ *
+ * 试过又放弃的写法（WebKit 上都慢，量过）：
+ * - 一个带 outline 的元素：范围是整个选区，每帧重新光栅化这么大一块
+ * - 每小块各带一个 filter: drop-shadow 当暗边：八个滤镜的开销和上面那种差不多
+ * - 真实尺寸的小块各自 will-change：每帧给八个尺寸在变的图层重新分配缓冲，反而更慢
+ */
+function FrameBox({
+  rect,
+  s,
+  width,
+  radius,
+  solid,
+  inside,
+}: {
+  rect: Rect;
+  s: number;
+  width: number;
+  radius: number;
+  solid: boolean;
+  inside?: boolean;
+}) {
+  const x = rect.x / s;
+  const y = rect.y / s;
+  const w = rect.width / s;
+  const h = rect.height / s;
+  const t = width;
+  // 框的外沿
+  const ox = inside ? x : x - t;
+  const oy = inside ? y : y - t;
+  const ow = inside ? w : w + 2 * t;
+  const oh = inside ? h : h + 2 * t;
+  const r = Math.min(radius, w / 2, h / 2);
+  // 外沿的圆角半径；直角框没有角块，横边一直画到外角，竖边夹在两条横边之间
+  const ro = r > 0 ? (inside ? r : r + t) : 0;
+  const len = (v: number) => Math.max(0, v);
+
+  /** 一圈框的八块。`g` / `gi`：比线本身向外 / 向里多出多少（暗边才多出来，线本身是 0）。 */
+  const ring = (kind: 'halo' | 'line', g: number, gi: number) => {
+    const tt = t + g + gi;
+    const rr = ro > 0 ? ro + g : 0;
+    // 直角时横边要盖住外角，所以两头各多出 g；圆角时横边只到角块为止
+    const hx = ro > 0 ? ox + ro : ox - g;
+    const hLen = len(ro > 0 ? ow - 2 * ro : ow + 2 * g);
+    const vy = ro > 0 ? oy + ro : oy + t + gi;
+    const vLen = len(ro > 0 ? oh - 2 * ro : oh - 2 * (t + gi));
+    const stretch = kind === 'halo' || solid;
+    const edge = (key: string, dir: 'h' | 'v', px: number, py: number, length: number) =>
+      stretch ? (
+        <span
+          key={key}
+          className={`cap-edge cap-edge--fill cap-edge--${kind}`}
+          style={{ transform: `translate(${px}px, ${py}px) scale(${dir === 'h' ? length : tt}, ${dir === 'h' ? tt : length})` }}
+        />
+      ) : (
+        <span
+          key={key}
+          className={`cap-edge cap-edge--${dir}`}
+          style={{ [dir === 'h' ? 'width' : 'height']: length, transform: `translate(${px}px, ${py}px)` }}
+        />
+      );
+    const corner = (name: string, px: number, py: number) => (
+      <span key={name} className={`cap-corner cap-corner--${name} cap-corner--${kind}`} style={{ width: rr, height: rr, transform: `translate(${px}px, ${py}px)` }} />
+    );
+    return (
+      <div className="cap-ring" style={{ '--cap-edge': `${tt}px` } as React.CSSProperties}>
+        {edge('t', 'h', hx, oy - g, hLen)}
+        {edge('b', 'h', hx, oy + oh - t - gi, hLen)}
+        {edge('l', 'v', ox - g, vy, vLen)}
+        {edge('r', 'v', ox + ow - t - gi, vy, vLen)}
+        {rr > 0 && [corner('tl', ox - g, oy - g), corner('tr', ox + ow - ro, oy - g), corner('br', ox + ow - ro, oy + oh - ro), corner('bl', ox - g, oy + oh - ro)]}
+      </div>
+    );
+  };
+  return (
+    <>
+      {/* 画在选区外侧的框，暗边只往外多出一圈：选区贴着屏幕边时线在屏幕外，里边要是也有暗边，就只剩一条黑线 */}
+      {ring('halo', HALO, inside ? HALO : 0)}
+      {ring('line', 0, 0)}
     </>
   );
 }
@@ -739,14 +842,11 @@ function frameVars(f: FrameStyle | undefined): React.CSSProperties {
   } as React.CSSProperties;
 }
 
-function cssRect(r: Rect, s: number): React.CSSProperties {
-  return { left: r.x / s, top: r.y / s, width: r.width / s, height: r.height / s };
-}
-
 function SizeHint({ rect, s, viewport }: { rect: Rect; s: number; viewport: { width: number; height: number } }) {
   const ref = useRef<HTMLDivElement>(null);
   const size = useElementSize(ref, { width: 90, height: 22 });
-  const text = `${rect.width} × ${rect.height}`;
+  // 位置每帧跟着选区走；数字隔一会儿才换（每换一次都要重画文字）
+  const text = useThrottled(`${rect.width} × ${rect.height}`, CONTENT_INTERVAL);
   const pos = placeSizeHint({ x: rect.x / s, y: rect.y / s, width: rect.width / s, height: rect.height / s }, size, viewport);
   return (
     <div ref={ref} className="cap-size cn-numeric" style={{ transform: `translate(${pos.x}px, ${pos.y}px)` }}>
@@ -934,12 +1034,9 @@ export default function CaptureView() {
   const phase = useOverlay((x) => x.phase);
   const selection = useOverlay((x) => x.selection);
   const hover = useOverlay((x) => x.hover);
-  const cursor = useOverlay((x) => x.cursor);
   const cursorStyle = useOverlay((x) => x.cursorStyle);
   const tool = useOverlay((x) => x.tool);
   const options = useOverlay((x) => x.options);
-  const pixelsReady = useOverlay((x) => x.pixelsReady);
-  const colorFormat = useOverlay((x) => x.colorFormat);
   const [viewport, setViewport] = useState({ width: window.innerWidth, height: window.innerHeight });
 
   useEffect(() => {
@@ -1013,8 +1110,8 @@ export default function CaptureView() {
   const showMask = phase !== 'longshot-other' && phase !== 'gif-other';
   const frame = isTextIntent(session?.intent) ? session?.settings.ocrFrame : session?.settings.frame;
   const radius = phase === 'longshot' || phase === 'gif' ? 0 : (frame?.radius ?? 0);
-  const showMagnifier =
-    !!cursor && pixelsReady && !!pixels && session?.settings.showMagnifier !== false && (phase === 'detect' || phase === 'pressing' || phase === 'selecting');
+  const frameWidth = frame?.width ?? 1.5;
+  const frameSolid = (frame?.style ?? 'solid') === 'solid';
   const pw = session?.monitor.bounds.width ?? 1;
   const ph = session?.monitor.bounds.height ?? 1;
 
@@ -1034,19 +1131,19 @@ export default function CaptureView() {
       onDoubleClick={onDoubleClick}
       onContextMenu={onContextMenu}
     >
-      {showMask && <Mask hole={hole} s={s} radius={radius} viewport={viewport} color={`rgba(0,0,0,${opacity})`} />}
+      {showMask && <Mask hole={hole} s={s} radius={radius} opacity={opacity} viewport={viewport} />}
       <canvas ref={committed} className="cap-canvas" width={pw} height={ph} />
       <canvas ref={drafting} className="cap-canvas" width={pw} height={ph} />
 
       {(phase === 'detect' || phase === 'pressing') && hover && (
         <>
-          <div className="cap-hover" style={cssRect(hover, s)} />
+          <FrameBox rect={hover} s={s} width={frameWidth + 0.5} radius={radius} solid={frameSolid} inside />
           <SizeHint rect={hover} s={s} viewport={viewport} />
         </>
       )}
       {(phase === 'selecting' || phase === 'editing') && selection && (
         <>
-          <div className="cap-frame" style={cssRect(selection, s)} />
+          <FrameBox rect={selection} s={s} width={frameWidth} radius={radius} solid={frameSolid} />
           <SizeHint rect={selection} s={s} viewport={viewport} />
         </>
       )}
@@ -1062,16 +1159,30 @@ export default function CaptureView() {
       )}
       {phase === 'longshot' && selection && <LongshotUI rect={selection} s={s} viewport={viewport} />}
       {phase === 'gif' && selection && <GifUI rect={selection} s={s} viewport={viewport} />}
-      {showMagnifier && cursor && pixels && session && (
-        <Magnifier
-          pixels={pixels}
-          cursor={cursor}
-          origin={{ x: session.monitor.bounds.x, y: session.monitor.bounds.y }}
-          scale={s}
-          viewport={viewport}
-          format={colorFormat}
-        />
-      )}
+      <MagnifierLayer viewport={viewport} />
     </div>
+  );
+}
+
+/**
+ * 放大镜单独订阅鼠标位置：鼠标每动一下只重渲染它自己，不带着整个遮罩一起。
+ */
+function MagnifierLayer({ viewport }: { viewport: { width: number; height: number } }) {
+  const session = useOverlay((x) => x.session);
+  const phase = useOverlay((x) => x.phase);
+  const cursor = useOverlay((x) => x.cursor);
+  const pixelsReady = useOverlay((x) => x.pixelsReady);
+  const colorFormat = useOverlay((x) => x.colorFormat);
+  const shown = phase === 'detect' || phase === 'pressing' || phase === 'selecting';
+  if (!shown || !cursor || !pixelsReady || !pixels || !session || session.settings.showMagnifier === false) return null;
+  return (
+    <Magnifier
+      pixels={pixels}
+      cursor={cursor}
+      origin={{ x: session.monitor.bounds.x, y: session.monitor.bounds.y }}
+      scale={session.monitor.scaleFactor}
+      viewport={viewport}
+      format={colorFormat}
+    />
   );
 }

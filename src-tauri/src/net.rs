@@ -61,7 +61,7 @@ pub fn client(app: &AppHandle, purpose: Purpose) -> reqwest::Client {
                 }
             }
         }
-        // system：reqwest 默认读 HTTP(S)_PROXY 环境变量和 Windows 的系统代理设置
+        // system：reqwest 默认读 HTTP(S)_PROXY 环境变量和系统的代理设置（Windows / macOS）
         _ => builder,
     };
     let client = builder.build().unwrap_or_default();

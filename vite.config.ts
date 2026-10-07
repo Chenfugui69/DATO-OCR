@@ -20,8 +20,10 @@ export default defineConfig({
   },
   envPrefix: ['VITE_', 'TAURI_ENV_'],
   build: {
-    // WebView2 跟随 Edge 自动更新，目标可以很新
-    target: 'chrome110',
+    // Windows：WebView2 跟随 Edge 自动更新，目标可以很新。
+    // macOS：系统自带的 WebKit 跟着系统版本走，按最低支持的 macOS 13（Safari 16）出，
+    // esbuild 会顺带给 backdrop-filter 这类属性补上 -webkit- 前缀
+    target: process.env.TAURI_ENV_PLATFORM === 'darwin' ? 'safari16' : 'chrome110',
     minify: 'esbuild',
     sourcemap: false,
     chunkSizeWarningLimit: 800,

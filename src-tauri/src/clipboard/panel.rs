@@ -12,7 +12,7 @@ use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager};
 
 use crate::error::AppResult;
-use crate::platform::{self, WindowHandle};
+use crate::platform::{self, FloatingKind, WindowHandle};
 use crate::state::state;
 use crate::{events, wm};
 
@@ -37,16 +37,15 @@ pub fn prewarm(app: &AppHandle) {
     if app.get_webview_window(LABEL).is_some() {
         return;
     }
-    let built = wm::builder(app, LABEL)
+    let panel = wm::builder(app, LABEL)
         .transparent(true)
         .always_on_top(true)
         .skip_taskbar(true)
         .resizable(false)
         .shadow(false)
         .focused(false)
-        .inner_size(1200.0, BOTTOM_HEIGHT)
-        .build();
-    match built {
+        .inner_size(1200.0, BOTTOM_HEIGHT);
+    match platform::build_floating(panel, FloatingKind::Panel) {
         Ok(window) => {
             platform::set_exclude_from_capture(&window, true);
             wm::track_glass(&window);
@@ -118,20 +117,17 @@ fn show(app: &AppHandle) -> AppResult<()> {
                 )?,
                 // 悬浮 + 毛玻璃：窗口本身四周缩进，和不开毛玻璃时的卡片位置一样
                 (false, true) => {
-                    wm::place_on_monitor(
-                        &window,
-                        &monitor,
-                        width - BOTTOM_PAD * 2.0,
-                        BOTTOM_HEIGHT - BOTTOM_PAD * 2.0,
-                        wm::Anchor::BottomFull,
-                    )?;
                     let wa = monitor.work_area;
                     let pad = (BOTTOM_PAD * s).round() as i32;
+                    let w = ((width - BOTTOM_PAD * 2.0) * s).round() as i32;
                     let h = ((BOTTOM_HEIGHT - BOTTOM_PAD * 2.0) * s).round() as i32;
-                    window.set_position(tauri::PhysicalPosition::new(
+                    platform::place_window(
+                        &window,
                         wa.x + pad,
                         wa.bottom() - pad - h,
-                    ))?;
+                        w.max(1) as u32,
+                        h.max(1) as u32,
+                    )?;
                 }
                 _ => wm::place_on_monitor(
                     &window,
@@ -145,7 +141,7 @@ fn show(app: &AppHandle) -> AppResult<()> {
     }
     let _ = app.emit_to(LABEL, events::CLIPBOARD_PANEL_SHOW, PanelShow { style });
     window.show()?;
-    window.set_focus()?;
+    platform::take_focus(&window)?;
     // 面板开着的时候允许被截图（用户就是想截它）；藏起来时再排除 —— 不排除的隐藏窗口会被
     // WGC 画成一块带标题栏的白块
     platform::set_exclude_from_capture(&window, false);

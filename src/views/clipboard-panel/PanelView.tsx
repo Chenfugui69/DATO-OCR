@@ -15,7 +15,7 @@ import { useTranslation } from 'react-i18next';
 import { useEvent } from '@/lib/events';
 import { clipboard, system, translate } from '@/lib/ipc';
 import { useSettings, useSettingsStore } from '@/lib/settings';
-import { assetUrl } from '@/lib/platform';
+import { assetUrl, modKey } from '@/lib/platform';
 import { useClipItems, useLiveInvalidation } from '@/lib/queries';
 import type { ClipDetail, ClipItem, ClipType } from '@/lib/types';
 import { EmptyState, IconButton, SearchField, Skeleton } from '@/ui/controls';
@@ -297,7 +297,7 @@ export default function PanelView() {
         if (!item) return;
         if (e.shiftKey) {
           void clipboard.copy(item.id).then(() => notify.success(t('clip.copied')), notify.error);
-        } else paste(item, e.ctrlKey);
+        } else paste(item, modKey(e));
         return;
       }
       if (e.key === 'Tab') {
@@ -314,7 +314,7 @@ export default function PanelView() {
         return;
       }
       if (searching) return;
-      if (/^[1-9]$/.test(e.key) && !e.ctrlKey && !e.altKey) {
+      if (/^[1-9]$/.test(e.key) && !modKey(e) && !e.altKey) {
         e.preventDefault();
         paste(items[Number(e.key) - 1]);
         return;
@@ -330,12 +330,12 @@ export default function PanelView() {
         void clipboard.remove([item.id]).catch(notify.error);
         return;
       }
-      if (e.ctrlKey && e.key.toLowerCase() === 'p' && item) {
+      if (modKey(e) && e.key.toLowerCase() === 'p' && item) {
         e.preventDefault();
         void clipboard.setPinned(item.id, !item.pinned).then(() => qc.invalidateQueries({ queryKey: ['clips'] }));
         return;
       }
-      if (e.ctrlKey && e.key.toLowerCase() === 'd' && item) {
+      if (modKey(e) && e.key.toLowerCase() === 'd' && item) {
         e.preventDefault();
         void clipboard.setFavorite(item.id, !item.favorite).then(() => qc.invalidateQueries({ queryKey: ['clips'] }));
         return;

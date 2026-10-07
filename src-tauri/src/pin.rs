@@ -10,9 +10,10 @@ use std::sync::Arc;
 use image::RgbaImage;
 use parking_lot::Mutex;
 use serde::Serialize;
-use tauri::{AppHandle, Manager, PhysicalPosition, PhysicalSize};
+use tauri::{AppHandle, Manager};
 
 use crate::error::{AppError, AppResult};
+use crate::platform::{self, FloatingKind};
 use crate::state::state;
 use crate::wm;
 
@@ -77,7 +78,7 @@ pub fn create(
     let ui_app = app.clone();
     let ui_label = label.clone();
     app.run_on_main_thread(move || {
-        let built = wm::builder(&ui_app, &ui_label)
+        let pinned = wm::builder(&ui_app, &ui_label)
             .transparent(true)
             .always_on_top(true)
             .skip_taskbar(true)
@@ -91,18 +92,18 @@ pub fn create(
             .inner_size(
                 f64::from(w) / scale + MARGIN * 2.0,
                 f64::from(h) / scale + MARGIN * 2.0,
-            )
-            .build();
-        match built {
+            );
+        match platform::build_floating(pinned, FloatingKind::Panel) {
             Ok(window) => {
-                let _ = window.set_size(PhysicalSize::new(
+                let _ = platform::place_window(
+                    &window,
+                    at.0 - margin_px,
+                    at.1 - margin_px,
                     w + 2 * margin_px as u32,
                     h + 2 * margin_px as u32,
-                ));
-                let _ =
-                    window.set_position(PhysicalPosition::new(at.0 - margin_px, at.1 - margin_px));
+                );
                 let _ = window.show();
-                let _ = window.set_focus();
+                let _ = platform::take_focus(&window);
             }
             Err(err) => {
                 tracing::error!("创建贴图窗口失败：{err}");

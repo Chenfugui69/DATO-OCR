@@ -36,6 +36,22 @@ pub struct HotkeyStatus {
     pub error: Option<String>,
 }
 
+impl HotkeyAction {
+    /// 命令行里的名字（`--action=capture`）。
+    pub fn parse(name: &str) -> Option<Self> {
+        Some(match name {
+            "capture" => Self::Capture,
+            "longshot" => Self::Longshot,
+            "ocr" => Self::Ocr,
+            "clipboard" => Self::Clipboard,
+            "translate" => Self::Translate,
+            "instant" => Self::Instant,
+            "ai" => Self::Ai,
+            _ => return None,
+        })
+    }
+}
+
 #[derive(Default)]
 pub struct HotkeyRegistry {
     map: Mutex<HashMap<u32, HotkeyAction>>,

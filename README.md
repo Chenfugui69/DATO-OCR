@@ -2,7 +2,7 @@
 
 一款体积小巧、以体验为先的桌面截图工具：截图标注、贴图、长截图、文字识别、翻译、剪贴板历史。
 
-Windows 优先（Windows 10 2004+），macOS 已留好平台抽象层，后续移植。界面遵循 Apple 设计语言。
+Windows 优先（Windows 10 2004+）；macOS 版（13+）已完成移植，部分功能还没真机验证。界面遵循 Apple 设计语言。
 
 ---
 
@@ -26,7 +26,12 @@ Windows 优先（Windows 10 2004+），macOS 已留好平台抽象层，后续�
 | 检查更新：国内（Gitee）/ 国外（GitHub）两个渠道，设置里提示新版本和更新简介，下载后验签再安装 | 设置 → 更新 | ✅ 本地模拟更新服务验证；还没发过真版本 |
 
 **还没验证的**：双显示器（尤其混合 DPI、副屏负坐标）、在 Chrome / 微信 / VS Code / Excel 里长截图、
-安装包装到中文路径。macOS 只有桩代码。详见 [`docs/实现交接.md`](docs/实现交接.md) 第 5 节。
+安装包装到中文路径。详见 [`docs/实现交接.md`](docs/实现交接.md) 第 5 节。
+
+**macOS**：能编译、启动、出包；截图遮罩、剪贴板面板、系统识字已在真机上跑通，框选标注、长截图、划词翻译、
+选中即粘贴还要真人验证。默认热键是 ⌥1 截图 / ⌥2 长截图 / ⌥3 识字 / ⌥⇧1 瞬间截屏（F1–F3 在笔记本上要按 fn）。
+首次使用要在"系统设置 → 隐私与安全性"里给「屏幕录制」和「辅助功能」权限（设置页里有入口），给完重启应用。
+详见 [`docs/实现交接.md`](docs/实现交接.md) 第 9 节。
 
 ## 文档
 
@@ -48,8 +53,10 @@ Windows 优先（Windows 10 2004+），macOS 已留好平台抽象层，后续�
 ### 环境要求
 
 - Node 20+（自带 corepack，不需要全局装 pnpm；版本锁在 `package.json` 的 `packageManager`）
-- Rust 1.82+，MSVC 工具链
+- Rust 1.82+（Windows 上用 MSVC 工具链）
 - Windows 10 2004+（`WDA_EXCLUDEFROMCAPTURE` 和 WGC 抓屏都要求这个版本）
+- 或 macOS 13+，装了 Xcode 或命令行工具。**项目别放在 exFAT / FAT 的盘上编译**，至少编译产物不能
+  （原因和绕法见交接文档 9.4）
 
 ### 第一次拉下代码
 
@@ -60,12 +67,15 @@ corepack pnpm fetch-ocr      # 下载识字引擎 RapidOCR-json 到 src-tauri/re
 
 `fetch-ocr` 会校验每个文件的 SHA-256；GitHub 慢的话用环境变量 `CHENOCR_OCR_URL` 指向镜像。
 **不先跑它，`tauri build` 会因为找不到资源目录而失败**，`tauri dev` 下识字会退回系统 OCR。
+macOS 不用跑 `fetch-ocr`：识字用系统自带的 Vision，包里不带引擎。
 
 ### 日常
 
 ```bash
 corepack pnpm tauri dev      # 开发（Vite 1420 端口 + 调试版 Rust）
-corepack pnpm tauri build    # 出 NSIS 安装包：src-tauri/target/release/bundle/nsis/
+corepack pnpm tauri build    # Windows 出 NSIS 安装包：src-tauri/target/release/bundle/nsis/
+corepack pnpm build:mac      # macOS 出 .app：…/release/bundle/macos/DATO OCR.app
+                             # 比直接 tauri build 多一步本机签名：不然每打一次包，系统授权就要重给一遍（交接文档 9.4）
 ```
 
 ### 发版（检查更新用）
@@ -104,7 +114,11 @@ cargo test --manifest-path src-tauri/Cargo.toml -- --ignored --nocapture
   只绑回环时只有本机程序连得上，所以自动同意不会放外人进来。
 - `CHENOCR_TEST_UPDATE_URL=http://127.0.0.1:端口/latest.json`：检查更新只查这个地址（允许 http），启动 3 秒后就查。
 - `CHENOCR_TEST_UPDATE_NO_INSTALL=1`：点"更新"只下载、验签，不运行安装包、不退出。
-- 日志在 `%APPDATA%\DATO OCR\logs\`，开发模式同时打到终端。前端未捕获的错误也会转进日志。
+- 日志在 `%APPDATA%\DATO OCR\logs\`（macOS：`~/Library/Application Support/DATO OCR/logs/`），开发模式同时打到终端。前端未捕获的错误也会转进日志。
+- `chenocr --action=capture`（还有 `instant` / `longshot` / `ocr` / `clipboard` / `translate` / `ai` / `cancel`）：
+  让已经在跑的实例直接执行一个功能，等同按热键。脚本和自动化测试用。
+- 调试版另有 `--eval=窗口标签:脚本.js`（在页面里执行脚本）和 `CHENOCR_FAKE_MONITOR`（假装多一块屏），
+  macOS 上量遮罩流畅度用 `scripts/test/mac-overlay-bench.sh`，见交接文档 9.5。
 
 ## 代码结构
 
@@ -115,14 +129,14 @@ src/                          前端（React 18 + TypeScript）
   ui/                         基础控件（基于 Radix 原语，自绘 Apple 风格）
   lib/ipc.ts                  所有 Rust 命令的类型化封装
 src-tauri/src/                后端（Rust）
-  platform/                   唯一允许出现平台相关代码的地方（windows/ 实现，macos/ 留桩）
+  platform/                   唯一允许出现平台相关代码的地方（windows/ 和 macos/ 两套实现）
   capture/ longshot/ ocr/ translate/ clipboard/ …   各功能模块，与规格文档一一对应
   storage/                    SQLite（截图库、识字记录、剪贴板、加密的密钥）
 scripts/fetch-ocr.mjs         下载识字引擎
 scripts/test/                 真机测试用的 PowerShell 小工具（模拟键鼠、截屏、测试目标窗口），见交接文档第 7 节
 ```
 
-数据都在 `%APPDATA%\DATO OCR\`：`chenocr.db`、`screenshots/`、`clipboard/`、`ocr/`、`logs/`、`settings.json`。
+数据都在 `%APPDATA%\DATO OCR\`（macOS：`~/Library/Application Support/DATO OCR/`）：`chenocr.db`、`screenshots/`、`clipboard/`、`ocr/`、`logs/`、`settings.json`。
 
 ## 核心决策速查
 
@@ -130,11 +144,11 @@ scripts/test/                 真机测试用的 PowerShell 小工具（模拟�
 |---|---|
 | 技术框架 | Tauri v2 + React + TypeScript |
 | 截图交互 | 对齐微信 Windows 版手感 |
-| 界面风格 | Apple 设计语言，外框用 Windows 原生 Mica / 亚克力 |
-| 文字识别 | RapidOCR-json 离线（随包约 32MB），失败时退回 Windows 系统 OCR |
+| 界面风格 | Apple 设计语言，外框用系统原生材质（Windows 的 Mica / 亚克力，macOS 的毛玻璃） |
+| 文字识别 | Windows：RapidOCR-json 离线（随包约 32MB），失败时退回系统 OCR；macOS：系统自带的 Vision |
 | 翻译 | 内置免费源（必应、腾讯、谷歌）+ 可自填 DeepL / OpenAI 兼容密钥；用户排序，第一个是默认源；可走系统 / 自定义代理 |
 | 长截图 | 只做手动滚动，自动拼接 |
 | 剪贴板 | 默认全量记录，本地存储，底部横向卡片面板 |
-| AI 对话 | OpenAI 兼容 / Anthropic 接口，用户自填地址和密钥，密钥 DPAPI 加密 |
+| AI 对话 | OpenAI 兼容 / Anthropic 接口，用户自填地址和密钥，密钥加密保存（Windows DPAPI；macOS 钥匙串里的主密钥） |
 | 依赖许可 | 不引入 GPL / AGPL |
 | 开源协议 | 闭源免费 |

@@ -9,7 +9,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import { pin } from '@/lib/ipc';
-import { shotUrl, windowLabel } from '@/lib/platform';
+import { modKey, shotUrl, windowLabel } from '@/lib/platform';
 import type { PinInfo } from '@/lib/types';
 import { notify } from '@/ui/overlays';
 
@@ -110,8 +110,8 @@ export default function PinView() {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') close();
-      else if (e.ctrlKey && e.key.toLowerCase() === 'c') void pin.copy(LABEL).catch(notify.error);
-      else if (e.ctrlKey && e.key.toLowerCase() === 's') void pin.save(LABEL).catch(notify.error);
+      else if (modKey(e) && e.key.toLowerCase() === 'c') void pin.copy(LABEL).catch(notify.error);
+      else if (modKey(e) && e.key.toLowerCase() === 's') void pin.save(LABEL).catch(notify.error);
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
@@ -126,7 +126,7 @@ export default function PinView() {
       style={{ padding: info.margin }}
       onWheel={(e) => {
         if (collapsed) return;
-        if (e.ctrlKey) {
+        if (modKey(e)) {
           setOpacity((o) => Math.min(1, Math.max(0.2, Math.round((o + (e.deltaY < 0 ? 0.1 : -0.1)) * 10) / 10)));
         } else {
           const next = Math.min(5, Math.max(0.2, Math.round((zoomRef.current + (e.deltaY < 0 ? 0.1 : -0.1)) * 10) / 10));

@@ -6,10 +6,10 @@
 //! 遮罩窗口必须**启动时建好并隐藏**，热键路径上只 show：WebView2 建一个窗口要
 //! 400–1000ms，放在热键之后 150ms 的预算直接爆掉。
 
-use tauri::{AppHandle, Manager, PhysicalPosition, PhysicalSize, WebviewWindow};
+use tauri::{AppHandle, Manager, WebviewWindow};
 
 use crate::error::{AppError, AppResult};
-use crate::platform::{self, MonitorId, MonitorInfo};
+use crate::platform::{self, FloatingKind, MonitorId, MonitorInfo};
 use crate::wm;
 
 pub const LABEL_PREFIX: &str = "capture-";
@@ -80,7 +80,7 @@ fn ensure_one(app: &AppHandle, info: &MonitorInfo) -> AppResult<WebviewWindow> {
     } else {
         1.0
     };
-    let window = wm::builder(app, &label)
+    let overlay = wm::builder(app, &label)
         .position(f64::from(info.bounds.x) / s, f64::from(info.bounds.y) / s)
         .inner_size(
             f64::from(info.bounds.width) / s,
@@ -94,8 +94,8 @@ fn ensure_one(app: &AppHandle, info: &MonitorInfo) -> AppResult<WebviewWindow> {
         .minimizable(false)
         .shadow(false)
         // 焦点在 show 时再抢。预建阶段抢焦点会把用户正在打字的窗口顶掉
-        .focused(false)
-        .build()?;
+        .focused(false);
+    let window = platform::build_floating(overlay, FloatingKind::Overlay)?;
     place(&window, info)?;
     platform::set_exclude_from_capture(&window, true);
     Ok(window)
@@ -103,11 +103,8 @@ fn ensure_one(app: &AppHandle, info: &MonitorInfo) -> AppResult<WebviewWindow> {
 
 /// 用物理像素精确摆放，避免逻辑换算带来的 1px 错位和模糊。
 fn place(window: &WebviewWindow, info: &MonitorInfo) -> AppResult<()> {
-    window.set_position(PhysicalPosition::new(info.bounds.x, info.bounds.y))?;
-    window.set_size(PhysicalSize::new(info.bounds.width, info.bounds.height))?;
-    // 先设尺寸再设位置偶尔会被 DWM 挪回去，再确认一次
-    window.set_position(PhysicalPosition::new(info.bounds.x, info.bounds.y))?;
-    Ok(())
+    let b = info.bounds;
+    platform::place_window(window, b.x, b.y, b.width, b.height)
 }
 
 /// 底图与遮罩同一帧显示。**UI 线程。**
@@ -126,7 +123,7 @@ pub fn show_with_backdrop(app: &AppHandle, monitor: MonitorId, focus: bool) -> A
     window.show()?;
     platform::reveal_for_tests(&window, true);
     if focus {
-        window.set_focus()?;
+        platform::take_focus(&window)?;
     }
     Ok(())
 }

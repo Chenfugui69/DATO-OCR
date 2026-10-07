@@ -18,7 +18,7 @@ use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager};
 
 use crate::error::AppResult;
-use crate::platform::{self, PhysicalRect, SelectionEvent, SelectionWatchGuard};
+use crate::platform::{self, FloatingKind, PhysicalRect, SelectionEvent, SelectionWatchGuard};
 use crate::state::state;
 use crate::{clipboard, events, wm};
 
@@ -136,7 +136,7 @@ fn popup_size(app: &AppHandle) -> (f64, f64) {
 /// 气泡、悬浮按钮常驻但隐藏（同剪贴板面板），用的时候只是摆位 + show，瞬间出现。
 pub fn prewarm(app: &AppHandle) {
     if app.get_webview_window(WINDOW).is_none() {
-        let built = wm::builder(app, WINDOW)
+        let popup = wm::builder(app, WINDOW)
             .transparent(true)
             .always_on_top(true)
             .skip_taskbar(true)
@@ -145,9 +145,8 @@ pub fn prewarm(app: &AppHandle) {
             .min_inner_size(320.0, 200.0)
             .shadow(false)
             .focused(false)
-            .inner_size(460.0, 300.0)
-            .build();
-        match built {
+            .inner_size(460.0, 300.0);
+        match platform::build_floating(popup, FloatingKind::Panel) {
             Ok(window) => {
                 wm::track_glass(&window);
                 apply_popup_material(app);
@@ -170,16 +169,15 @@ fn prewarm_button(app: &AppHandle) {
     if app.get_webview_window(BUTTON_WINDOW).is_some() {
         return;
     }
-    let built = wm::builder(app, BUTTON_WINDOW)
+    let button = wm::builder(app, BUTTON_WINDOW)
         .transparent(true)
         .always_on_top(true)
         .skip_taskbar(true)
         .resizable(false)
         .shadow(false)
         .focused(false)
-        .inner_size(BUTTON_SIZE, BUTTON_SIZE)
-        .build();
-    match built {
+        .inner_size(BUTTON_SIZE, BUTTON_SIZE);
+    match platform::build_floating(button, FloatingKind::Panel) {
         Ok(window) => {
             // 点它、显示它都不能抢走用户正在选字的那个窗口的焦点
             platform::set_no_activate(&window);
@@ -204,8 +202,10 @@ pub fn show_popup(app: &AppHandle, text: String, at: Option<(i32, i32)>) {
         };
         let mut reserve = 0.0;
         if let Some(monitor) = monitor {
-            let _ = wm::place_on_monitor(&window, &monitor, w, h, anchor);
-            reserve = reserve_above(&app, &window, &monitor, h);
+            let placed = wm::rect_on_monitor(&monitor, w, h, anchor);
+            let _ =
+                platform::place_window(&window, placed.x, placed.y, placed.width, placed.height);
+            reserve = reserve_above(&app, &window, &monitor, placed, h);
         }
         *RESERVE.lock() = reserve;
         let _ = app.emit_to(
@@ -214,7 +214,7 @@ pub fn show_popup(app: &AppHandle, text: String, at: Option<(i32, i32)>) {
             TranslatePopup { text, reserve },
         );
         let _ = window.show();
-        let _ = window.set_focus();
+        let _ = platform::take_focus(&window);
     });
 }
 
@@ -226,6 +226,7 @@ fn reserve_above(
     app: &AppHandle,
     window: &tauri::WebviewWindow,
     monitor: &platform::MonitorInfo,
+    placed: PhysicalRect,
     h: f64,
 ) -> f64 {
     platform::set_rect_region(window, None);
@@ -239,19 +240,17 @@ fn reserve_above(
     // 和页面里展开抽屉的算法一致：翻译区露出一半，加上抽屉的高度
     let trans = ((h - pad * 2.0) / 2.0).round().max(110.0);
     let want = (pad * 2.0 + trans + f64::from(popup.drawer_height) - h).max(0.0);
-    let (Ok(pos), Ok(size)) = (window.outer_position(), window.outer_size()) else {
-        return 0.0;
-    };
-    let room = (f64::from(pos.y - monitor.work_area.y) / s).max(0.0);
+    let room = (f64::from(placed.y - monitor.work_area.y) / s).max(0.0);
     let reserve = want.min(room).floor();
     if reserve < 1.0 {
         return 0.0;
     }
     let rp = (reserve * s).round() as i32;
+    let size = placed;
     if platform::set_bounds(
         window,
-        pos.x,
-        pos.y - rp,
+        placed.x,
+        placed.y - rp,
         size.width,
         size.height + rp as u32,
     )
@@ -383,8 +382,7 @@ fn show_button(app: &AppHandle, anchor: PhysicalRect, position: &str) {
         let Some(window) = ui.get_webview_window(BUTTON_WINDOW) else {
             return;
         };
-        let _ = window.set_size(tauri::PhysicalSize::new(rect.width, rect.height));
-        let _ = window.set_position(tauri::PhysicalPosition::new(rect.x, rect.y));
+        let _ = platform::place_window(&window, rect.x, rect.y, rect.width, rect.height);
         let _ = ui.emit_to(BUTTON_WINDOW, events::SELECTION_BUTTON_SHOW, generation);
         let _ = platform::show_without_activate(&window);
         platform::reveal_for_tests(&window, true);

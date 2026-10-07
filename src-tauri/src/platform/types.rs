@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use image::RgbaImage;
 use serde::{Deserialize, Serialize};
 
-/// 不透明窗口句柄。Windows 上是 HWND，macOS 上将是 CGWindowID。
+/// 不透明窗口句柄。Windows 上是 HWND，macOS 上是 进程号 << 32 | CGWindowID。
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct WindowHandle(pub u64);
@@ -148,7 +148,7 @@ pub struct SystemVisuals {
     pub transparency_enabled: bool,
     pub power_saver: bool,
     pub reduced_motion: bool,
-    /// 系统支持 Mica（Win11 22H2+）
+    /// 系统窗口材质可用（Windows 上是 Mica，Win11 22H2+；macOS 上一直有）
     pub mica_supported: bool,
 }
 
@@ -182,6 +182,42 @@ pub enum HookKey {
     Enter,
     Escape,
     Backspace,
+}
+
+/// 浮层的种类（见 `platform::build_floating`）。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FloatingKind {
+    /// 截图遮罩：盖住整块屏幕，包括菜单栏和程序坞
+    Overlay,
+    /// 面板、气泡、贴图、提示
+    Panel,
+}
+
+/// 各功能的默认热键（global-hotkey 的写法）。每个平台一套，见 `platform::default_hotkeys`。
+pub struct DefaultHotkeys {
+    pub capture: &'static str,
+    pub longshot: &'static str,
+    pub ocr: &'static str,
+    pub clipboard: &'static str,
+    pub translate: &'static str,
+    pub instant: &'static str,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum Permission {
+    ScreenCapture,
+    Accessibility,
+}
+
+/// 要用户手动授予的系统权限。`None` = 这个平台没有这项权限、不用管。
+#[derive(Clone, Copy, Debug, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Permissions {
+    /// 屏幕录制：没有就截不到别的程序的窗口
+    pub screen_capture: Option<bool>,
+    /// 辅助功能：模拟粘贴 / 复制、全局拦截按键
+    pub accessibility: Option<bool>,
 }
 
 /// 系统自带 OCR 的一行结果（物理像素，相对输入图像）。

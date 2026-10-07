@@ -415,6 +415,7 @@ const zhCN = {
     openData: '打开数据文件夹',
     section: {
       general: '通用',
+      permissions: '系统权限',
       capture: '截图',
       longshot: '长截图',
       ocr: '文字识别',
@@ -428,6 +429,15 @@ const zhCN = {
       storage: '存储',
       update: '更新',
       about: '关于',
+    },
+    permissions: {
+      screen: '屏幕录制',
+      screenDesc: '截图、长截图、识字都要它。没有的话只能截到桌面背景',
+      accessibility: '辅助功能',
+      accessibilityDesc: '选中即粘贴、划词翻译取字、长截图时全局响应 Enter / Esc 要它',
+      granted: '已授权',
+      grant: '去授权',
+      note: '在系统设置里打开 DATO OCR 的开关后，要退出并重新打开 DATO OCR 才生效。如果开关明明开着、这里却还是没授权（重装或更新过应用会这样）：把那一项关掉再打开，或者选中后点"−"删掉，再回来点"去授权"。',
     },
     general: {
       autoStart: '开机自动启动',

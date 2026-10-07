@@ -8,7 +8,8 @@ import globals from 'globals';
 // - no-floating-promises / no-misused-promises：未 await 的 IPC 调用把错误吞掉
 // - exhaustive-deps：effect 漏依赖导致窗口状态不同步
 export default [
-  { ignores: ['dist/**', 'node_modules/**', 'src-tauri/**', '.pnpm-store/**', 'scripts/**'] },
+  // `._*`：macOS 在 exFAT / 网络盘上给每个文件生成的伴生文件，不是源码
+  { ignores: ['dist/**', 'node_modules/**', 'src-tauri/**', '.pnpm-store/**', 'scripts/**', '**/._*'] },
   js.configs.recommended,
   {
     files: ['src/**/*.{ts,tsx}'],

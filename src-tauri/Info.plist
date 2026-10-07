@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- 局域网同步要在本地网络里广播 / 查找设备（mDNS）、和其他设备直连，系统第一次会弹窗问用户 -->
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>DATO OCR 的局域网同步需要在本地网络中查找并连接你的其他设备。</string>
+	<key>NSBonjourServices</key>
+	<array>
+		<string>_datocor._tcp</string>
+	</array>
+</dict>
+</plist>

@@ -14,7 +14,7 @@ import { useTranslation } from 'react-i18next';
 
 import { useEvent } from '@/lib/events';
 import { capture, ocr } from '@/lib/ipc';
-import { assetUrl } from '@/lib/platform';
+import { assetUrl, modKey } from '@/lib/platform';
 import { useSettings, useSettingsStore } from '@/lib/settings';
 import type { OcrJob } from '@/lib/types';
 import { Button, EmptyState, Skeleton, Spinner, Switch } from '@/ui/controls';
@@ -142,10 +142,10 @@ export default function OcrView() {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const editing = (e.target as HTMLElement | null)?.isContentEditable;
-      if (e.ctrlKey && e.key.toLowerCase() === 'w') {
+      if (modKey(e) && e.key.toLowerCase() === 'w') {
         e.preventDefault();
         void getCurrentWindow().close();
-      } else if (e.ctrlKey && e.key.toLowerCase() === 'c' && !editing && !window.getSelection()?.toString()) {
+      } else if (modKey(e) && e.key.toLowerCase() === 'c' && !editing && !window.getSelection()?.toString()) {
         e.preventDefault();
         copyAll();
       }

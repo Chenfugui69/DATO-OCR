@@ -59,10 +59,26 @@ pub fn run() {
     let builder = tauri::Builder::default()
         // 单实例必须第一个注册：第二次启动只是把已有实例的主窗口叫出来。
         // `--page=settings:translate` 这样的参数可以直接跳到某一页（快捷方式、测试用）；
-        // `--translate=文字` 在鼠标旁边弹出划词面板翻译这段文字（脚本、快捷指令、测试用）
+        // `--translate=文字` 在鼠标旁边弹出划词面板翻译这段文字（脚本、快捷指令、测试用）；
+        // `--action=capture` 直接触发一个功能、`--action=cancel` 取消正在进行的截图，
+        // 都不叫主窗口（快捷方式、脚本、自动化测试用）
         .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
             // 开机自启 / 静默启动撞上已经在跑的实例：什么都不做（不能把主窗口弹出来）
             if args.iter().any(|a| a == "--autostart" || a == "--hidden") {
+                return;
+            }
+            if cfg!(debug_assertions) {
+                if let Some(spec) = args.iter().find_map(|a| a.strip_prefix("--eval=")) {
+                    debug_eval(app, spec);
+                    return;
+                }
+            }
+            if let Some(action) = args.iter().find_map(|a| a.strip_prefix("--action=")) {
+                match hotkeys::HotkeyAction::parse(action) {
+                    Some(action) => hotkeys::dispatch(app, action),
+                    None if action == "cancel" => capture::cancel_current(app),
+                    None => tracing::warn!(action, "不认识的 --action"),
+                }
                 return;
             }
             if let Some(text) = args.iter().find_map(|a| a.strip_prefix("--translate=")) {
@@ -186,6 +202,7 @@ pub fn run() {
             commands::system::hotkeys_status,
             commands::system::hotkeys_suspend,
             commands::system::hotkeys_resume,
+            commands::system::hotkeys_defaults,
             commands::system::hotkey_validate,
             commands::system::secrets_status,
             commands::system::secret_set,
@@ -200,6 +217,8 @@ pub fn run() {
             commands::system::window_backdrop,
             commands::system::window_is_foreground,
             commands::system::window_set_region,
+            commands::system::permissions_status,
+            commands::system::permission_request,
             commands::system::quit_app,
             commands::system::report_error,
         ]);
@@ -220,8 +239,33 @@ pub fn run() {
         // 所有窗口都关了也不退出：常驻托盘
         RunEvent::ExitRequested { api, code, .. } if code.is_none() => api.prevent_exit(),
         RunEvent::Exit => shutdown(app),
+        // macOS：主窗口关到菜单栏之后，点程序坞图标把它叫回来
+        event if platform::is_reopen_event(&event) => wm::show_main(app, None),
         _ => {}
     });
+}
+
+/// 调试版专用：`--eval=窗口标签:脚本文件`，在指定窗口的页面里执行一段脚本。
+///
+/// 自动化测试用：macOS 上没有「辅助功能」权限就模拟不了鼠标键盘，只能在页面里合成指针事件；
+/// 量拖动帧率也靠它。正式版里没有这个入口。
+fn debug_eval(app: &AppHandle, spec: &str) {
+    let Some((label, path)) = spec.split_once(':') else {
+        tracing::warn!(spec, "--eval 的写法是 窗口标签:脚本文件");
+        return;
+    };
+    let result = std::fs::read_to_string(path)
+        .map_err(|e| e.to_string())
+        .and_then(|js| {
+            app.get_webview_window(label)
+                .ok_or_else(|| format!("没有窗口 {label}"))?
+                .eval(js)
+                .map_err(|e| e.to_string())
+        });
+    match result {
+        Ok(()) => tracing::info!(label, path, "已执行调试脚本"),
+        Err(err) => tracing::warn!(label, path, "执行调试脚本失败：{err}"),
+    }
 }
 
 fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
@@ -289,7 +333,9 @@ fn on_ready(app: &AppHandle) {
         wm::apply_window_effects(app, &main);
         // 开机自启时安静地待在托盘里；手动启动时显示主窗口
         let silent = std::env::args().any(|a| a == "--autostart" || a == "--hidden");
-        if !silent {
+        if silent {
+            platform::after_silent_start();
+        } else {
             let _ = main.show();
             let _ = main.set_focus();
         }

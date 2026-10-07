@@ -9,6 +9,7 @@ import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import { system, translate } from '@/lib/ipc';
+import { accelLabel, isMac } from '@/lib/platform';
 import type { ProviderId, Settings } from '@/lib/types';
 import { Button, IconButton, Segmented, Select, Slider, Switch, TextField } from '@/ui/controls';
 import { notify, promptDialog } from '@/ui/overlays';
@@ -151,7 +152,7 @@ export function TranslateSettingsGroups({ settings, set }: { settings: Settings;
         })}
       </Group>
 
-      <Group id="selection" title={t('settings.section.selection')} note={t('settings.selection.note', { hotkey: settings.hotkeys.translate })}>
+      <Group id="selection" title={t('settings.section.selection')} note={t('settings.selection.note', { hotkey: accelLabel(settings.hotkeys.translate) })}>
         <Row title={t('settings.selection.showButton')} desc={t('settings.selection.showButtonDesc')}>
           <Switch checked={sel.showButton} onChange={(v) => set((d) => void (d.translate.selection.showButton = v))} />
         </Row>
@@ -168,8 +169,8 @@ export function TranslateSettingsGroups({ settings, set }: { settings: Settings;
             value={sel.modifier}
             options={[
               { value: 'none', label: t('settings.selection.modifierNone') },
-              { value: 'alt', label: 'Alt' },
-              { value: 'ctrl', label: 'Ctrl' },
+              { value: 'alt', label: isMac ? '⌥ Option' : 'Alt' },
+              { value: 'ctrl', label: isMac ? '⌃ Control' : 'Ctrl' },
             ]}
             onChange={(v) => set((d) => void (d.translate.selection.modifier = v))}
           />

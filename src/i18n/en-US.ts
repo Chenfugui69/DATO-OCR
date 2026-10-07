@@ -386,6 +386,7 @@ const enUS: Dict = {
     openData: 'Open data folder',
     section: {
       general: 'General',
+      permissions: 'Permissions',
       capture: 'Capture',
       longshot: 'Scrolling Capture',
       ocr: 'Text Recognition',
@@ -399,6 +400,15 @@ const enUS: Dict = {
       storage: 'Storage',
       update: 'Updates',
       about: 'About',
+    },
+    permissions: {
+      screen: 'Screen Recording',
+      screenDesc: 'Needed for capture, scrolling capture and text recognition. Without it only the wallpaper is captured',
+      accessibility: 'Accessibility',
+      accessibilityDesc: 'Needed to paste on select, read the selection for translation, and respond to Enter / Esc anywhere during scrolling capture',
+      granted: 'Granted',
+      grant: 'Grant…',
+      note: 'After turning on DATO OCR in System Settings, quit and reopen DATO OCR for it to take effect. If the switch is already on but it still shows as not granted here (this happens after reinstalling or updating the app): turn it off and on again, or select it, click "−" to remove it, then come back and click "Grant…".',
     },
     general: {
       autoStart: 'Launch at login',

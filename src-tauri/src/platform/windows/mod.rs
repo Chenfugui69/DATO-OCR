@@ -18,6 +18,24 @@ pub mod window_enum;
 
 mod util;
 
+pub use super::generic::{
+    after_silent_start, is_reopen_event, menu_label, permissions, request_permission,
+};
+use super::types::DefaultHotkeys;
+
+pub const DEFAULT_HOTKEYS: DefaultHotkeys = DefaultHotkeys {
+    capture: "F1",
+    longshot: "F2",
+    ocr: "F3",
+    clipboard: "Alt+V",
+    translate: "Ctrl+Alt+T",
+    instant: "Shift+F1",
+};
+pub const SYSTEM_OCR_NAME: &str = "Windows OCR";
+pub const PADDLE_OCR_SUPPORTED: bool = true;
+pub const TRAY_MENU_ON_LEFT_CLICK: bool = false;
+pub const TRAY_ICON_IS_TEMPLATE: bool = false;
+
 use windows::Win32::UI::HiDpi::{
     SetProcessDpiAwarenessContext, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2,
 };

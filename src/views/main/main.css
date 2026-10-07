@@ -34,6 +34,11 @@ html[data-view='main'][data-glass='off'] body {
   padding: 0 8px;
   flex: none;
 }
+/* macOS：系统的红黄绿灯叠在侧边栏左上角，品牌从它右边开始 */
+[data-platform='mac'] .sidebar__brand {
+  padding-left: 76px;
+  white-space: nowrap;
+}
 .sidebar__logo {
   width: 22px;
   height: 22px;

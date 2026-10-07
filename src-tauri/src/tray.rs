@@ -6,18 +6,13 @@ use tauri::AppHandle;
 
 use crate::error::AppResult;
 use crate::hotkeys::{self, HotkeyAction};
+use crate::platform;
 use crate::state::state;
 use crate::wm;
 
 pub fn build(app: &AppHandle) -> AppResult<()> {
     let hk = state(app).settings.read().hotkeys.clone();
-    let label = |text: &str, accel: &str| {
-        if accel.is_empty() {
-            text.to_string()
-        } else {
-            format!("{text}\t{accel}")
-        }
-    };
+    let label = platform::menu_label;
     let capture = MenuItem::with_id(
         app,
         "capture",
@@ -63,7 +58,7 @@ pub fn build(app: &AppHandle) -> AppResult<()> {
     let mut builder = TrayIconBuilder::with_id("main-tray")
         .tooltip("DATO OCR")
         .menu(&menu)
-        .show_menu_on_left_click(false)
+        .show_menu_on_left_click(platform::tray_menu_on_left_click())
         .on_menu_event(|app, event| match event.id.as_ref() {
             "capture" => hotkeys::dispatch(app, HotkeyAction::Capture),
             "instant" => hotkeys::dispatch(app, HotkeyAction::Instant),
@@ -77,6 +72,9 @@ pub fn build(app: &AppHandle) -> AppResult<()> {
             _ => {}
         })
         .on_tray_icon_event(|tray, event| {
+            if platform::tray_menu_on_left_click() {
+                return;
+            }
             if let TrayIconEvent::Click {
                 button: MouseButton::Left,
                 button_state: MouseButtonState::Up,
@@ -86,7 +84,12 @@ pub fn build(app: &AppHandle) -> AppResult<()> {
                 wm::show_main(tray.app_handle(), None);
             }
         });
-    if let Some(icon) = app.default_window_icon() {
+    if platform::tray_icon_is_template() {
+        // 菜单栏里用单色图标（只看透明度），系统按菜单栏的深浅自动上色
+        builder = builder
+            .icon(tauri::include_image!("icons/tray.png"))
+            .icon_as_template(true);
+    } else if let Some(icon) = app.default_window_icon() {
         builder = builder.icon(icon.clone());
     }
     builder.build(app)?;

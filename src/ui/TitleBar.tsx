@@ -1,10 +1,13 @@
 // 自绘标题栏（规格 06 §4.6）。
 // Windows 上用 Windows 自己的窗口按钮样式（右上角 46 宽、关闭悬停变红）——
 // 不在 Windows 上放 macOS 的红黄绿灯，那是画虎不成。这是唯一允许平台差异化的地方。
+// macOS 上窗口按钮是系统画的红黄绿灯（叠在页面左上角），这里只留出拖动区域，不画按钮。
 
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { useEffect, useState, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
+
+import { isMac } from '@/lib/platform';
 
 function MinimizeGlyph() {
   return (
@@ -73,28 +76,30 @@ export function TitleBar({
       )}
       <div className="cn-titlebar__spacer" data-tauri-drag-region />
       {extra && <div className="cn-titlebar__extra">{extra}</div>}
-      <div className="cn-caption">
-        <button type="button" aria-label={t('window.minimize')} onClick={() => void win.minimize()}>
-          <MinimizeGlyph />
-        </button>
-        {maximizable && (
+      {!isMac && (
+        <div className="cn-caption">
+          <button type="button" aria-label={t('window.minimize')} onClick={() => void win.minimize()}>
+            <MinimizeGlyph />
+          </button>
+          {maximizable && (
+            <button
+              type="button"
+              aria-label={maximized ? t('window.restore') : t('window.maximize')}
+              onClick={() => void win.toggleMaximize()}
+            >
+              <MaximizeGlyph restored={maximized} />
+            </button>
+          )}
           <button
             type="button"
-            aria-label={maximized ? t('window.restore') : t('window.maximize')}
-            onClick={() => void win.toggleMaximize()}
+            className="cn-caption__close"
+            aria-label={t('window.close')}
+            onClick={() => (onClose ? onClose() : void win.close())}
           >
-            <MaximizeGlyph restored={maximized} />
+            <CloseGlyph />
           </button>
-        )}
-        <button
-          type="button"
-          className="cn-caption__close"
-          aria-label={t('window.close')}
-          onClick={() => (onClose ? onClose() : void win.close())}
-        >
-          <CloseGlyph />
-        </button>
-      </div>
+        </div>
+      )}
     </header>
   );
 }

@@ -7,6 +7,8 @@ import clsx from 'clsx';
 import { Check, ChevronsUpDown, Search, X, type LucideIcon } from 'lucide-react';
 import { forwardRef, type ButtonHTMLAttributes, type InputHTMLAttributes, type ReactNode } from 'react';
 
+import { keyLabel } from '@/lib/platform';
+
 export function Icon({ icon: C, size = 16, className }: { icon: LucideIcon; size?: number; className?: string }) {
   return <C size={size} strokeWidth={1.5} absoluteStrokeWidth className={className} aria-hidden />;
 }
@@ -273,7 +275,7 @@ export function Kbd({ keys }: { keys: string }) {
     <span className="cn-kbd-group">
       {parts.map((k, i) => (
         <kbd key={i} className="cn-kbd">
-          {k === 'Super' ? 'Win' : k}
+          {keyLabel(k)}
         </kbd>
       ))}
     </span>

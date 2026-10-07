@@ -126,6 +126,12 @@ pub async fn hotkeys_resume(app: AppHandle) -> AppResult<Vec<HotkeyStatus>> {
     rx.await.map_err(|_| AppError::msg("注册热键失败"))
 }
 
+/// 这个平台的默认热键（设置页"恢复默认"用）。
+#[tauri::command]
+pub async fn hotkeys_defaults() -> AppResult<crate::settings::HotkeySettings> {
+    Ok(Default::default())
+}
+
 #[tauri::command]
 pub async fn hotkey_validate(accelerator: String) -> AppResult<()> {
     hotkeys::validate(&accelerator).map_err(AppError::Msg)
@@ -286,21 +292,16 @@ pub async fn window_set_bounds(
     height: f64,
     backdrop: Option<BackdropRect>,
 ) -> AppResult<()> {
-    let s = window.scale_factor()?;
-    let (px, py) = ((x * s).round() as i32, (y * s).round() as i32);
-    let (pw, ph) = (
-        (width * s).round().max(1.0) as u32,
-        (height * s).round().max(1.0) as u32,
-    );
     let Some(b) = backdrop else {
-        return crate::platform::set_bounds(&window, px, py, pw, ph);
+        return crate::platform::set_bounds_logical(&window, x, y, width, height);
     };
     // 毛玻璃面板展开 / 收起：窗口挪动和背板范围在 UI 线程上一起改，系统合成时是同一帧
+    let s = window.scale_factor()?;
     let (tx, rx) = tokio::sync::oneshot::channel();
     let w = window.clone();
     window.run_on_main_thread(move || {
         crate::platform::set_backdrop_rect(&w, Some(b.physical(s)), 0);
-        let _ = tx.send(crate::platform::set_bounds(&w, px, py, pw, ph));
+        let _ = tx.send(crate::platform::set_bounds_logical(&w, x, y, width, height));
     })?;
     rx.await
         .map_err(|_| crate::error::AppError::msg("窗口操作被取消"))?
@@ -361,6 +362,19 @@ pub async fn window_backdrop(
     Ok(())
 }
 
+/// 要用户手动授予的系统权限（macOS 的屏幕录制、辅助功能）。别的平台两项都是 null。
+#[tauri::command]
+pub async fn permissions_status() -> AppResult<crate::platform::Permissions> {
+    Ok(crate::platform::permissions())
+}
+
+/// 弹系统的授权引导并打开对应的系统设置页。
+#[tauri::command]
+pub async fn permission_request(which: crate::platform::Permission) -> AppResult<()> {
+    crate::platform::request_permission(which);
+    Ok(())
+}
+
 #[tauri::command]
 pub async fn quit_app(app: AppHandle) -> AppResult<()> {
     crate::quit(&app);
@@ -377,6 +391,5 @@ pub fn report_error(window: tauri::Window, scope: String, message: String) {
 /// 调用方窗口现在是不是前台窗口（剪贴板面板关掉右键菜单后用它判断要不要收起）。
 #[tauri::command]
 pub async fn window_is_foreground(window: tauri::WebviewWindow) -> AppResult<bool> {
-    let own = crate::platform::native_handle(&window)?;
-    Ok(crate::platform::foreground_window().is_some_and(|h| h.0 == own))
+    Ok(crate::platform::window_is_foreground(&window))
 }

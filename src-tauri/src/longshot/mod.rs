@@ -161,7 +161,7 @@ pub fn start(
         // 这样选区落在 DATO OCR 自己的窗口上也能找对。
         let target = platform::window_at(cx, cy).or(fallback);
         if let Some(target) = target {
-            if let Err(err) = platform::focus_window(target) {
+            if let Err(err) = platform::route_scroll_to(target) {
                 tracing::debug!("长截图：把焦点交给目标窗口失败：{err}");
             }
         }
@@ -247,7 +247,7 @@ fn update_interactive(app: &AppHandle, x: i32, y: i32) {
         // 离开按钮区域时把焦点还给被滚动的窗口（点过按钮后焦点会落在遮罩上）
         if !inside {
             if let Some(target) = active.target {
-                let _ = platform::focus_window(target);
+                let _ = platform::route_scroll_to(target);
             }
         }
     }

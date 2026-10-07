@@ -7,17 +7,19 @@
 //! 效果相同 —— macOS 移植时只需在 `macos/` 里补齐同名函数，上层零改动 ——
 //! 但省掉了 trait object 和一堆只有一个实现的样板。
 //!
-//! | 能力 | Windows | macOS（移植时） |
+//! | 能力 | Windows | macOS |
 //! |---|---|---|
-//! | 抓屏 | xcap + WGC | ScreenCaptureKit，需「屏幕录制」权限 |
+//! | 抓屏 | xcap + WGC | CGWindowListCreateImage，需「屏幕录制」权限 |
 //! | 窗口枚举 | EnumWindows + DWM 扩展边框 | CGWindowListCopyWindowInfo |
 //! | 冻结底图层 | 分层窗口 + UpdateLayeredWindow | NSWindow + CALayer |
+//! | 浮层窗口 | 置顶窗口 | 不激活应用的 NSPanel |
 //! | 剪贴板 | AddClipboardFormatListener | NSPasteboard changeCount 轮询 |
 //! | 输入模拟 | SendInput | CGEvent，需「辅助功能」权限 |
-//! | 全局钩子 | WH_MOUSE_LL / WH_KEYBOARD_LL | CGEventTap |
-//! | 密钥 | DPAPI | Keychain |
+//! | 全局钩子 | WH_MOUSE_LL / WH_KEYBOARD_LL | NSEvent 监听 + CGEventTap |
+//! | 密钥 | DPAPI | 钥匙串里的主密钥 + AES-GCM |
 //! | 系统 OCR | Windows.Media.Ocr | Vision.framework |
 
+mod generic;
 pub mod types;
 
 pub use types::*;
@@ -36,13 +38,54 @@ use std::path::Path;
 use std::sync::mpsc::Sender;
 
 use image::RgbaImage;
-use tauri::WebviewWindow;
+use tauri::utils::config::WindowEffectsConfig;
+use tauri::{AppHandle, Manager, Runtime, WebviewWindow, WebviewWindowBuilder};
 
 use crate::error::AppResult;
 
 /// 进程启动最早期调用：声明 Per-Monitor V2 DPI 感知等。
 pub fn init_process() {
     sys::init_process()
+}
+
+/// 静默启动（不显示主窗口）完成后调用：别让一个没有窗口的应用占着前台。
+pub fn after_silent_start() {
+    sys::after_silent_start()
+}
+
+/// 用户点了程序坞图标要求重新打开应用（只有 macOS 有这个事件）。
+pub fn is_reopen_event(event: &tauri::RunEvent) -> bool {
+    sys::is_reopen_event(event)
+}
+
+/// 这个平台的默认热键。
+pub fn default_hotkeys() -> &'static DefaultHotkeys {
+    &sys::DEFAULT_HOTKEYS
+}
+
+/// 托盘菜单项的文字：功能名后面带上快捷键，按平台的习惯写。
+pub fn menu_label(text: &str, accelerator: &str) -> String {
+    sys::menu_label(text, accelerator)
+}
+
+/// 左键点托盘图标是不是直接弹菜单（macOS 的习惯）。false = 左键打开主窗口、右键弹菜单。
+pub fn tray_menu_on_left_click() -> bool {
+    sys::TRAY_MENU_ON_LEFT_CLICK
+}
+
+/// 托盘图标是不是单色的"模板图"，由系统按菜单栏深浅自动上色（macOS）。
+pub fn tray_icon_is_template() -> bool {
+    sys::TRAY_ICON_IS_TEMPLATE
+}
+
+/// 要用户手动授予的系统权限的当前状态（macOS 的屏幕录制、辅助功能）。
+pub fn permissions() -> Permissions {
+    sys::permissions()
+}
+
+/// 弹出系统的授权引导 / 打开对应的系统设置页。
+pub fn request_permission(which: Permission) {
+    sys::request_permission(which)
 }
 
 // ───────────────────────── 抓屏 ─────────────────────────
@@ -60,7 +103,8 @@ pub fn capture_monitor(id: MonitorId) -> AppResult<RgbaImage> {
     sys::capture::capture_monitor(id)
 }
 
-/// 连续录一块屏（GIF 用）。`next` 取新画面，画面不变时超时返回 None；drop 时停止。
+/// 连续录一块屏里的一个区域（GIF 用）。`start(显示器, 区域)`：区域是这块屏内的物理像素；
+/// `next` 取这个区域的新画面（不透明 RGBA），没有新画面时等到超时返回 None；drop 时停止。
 pub use sys::capture::ScreenRecorder;
 
 /// 预先支付首次抓屏的设备初始化开销（冷 137ms vs 热 49ms），结果丢弃。
@@ -115,6 +159,11 @@ pub fn focus_window(window: WindowHandle) -> AppResult<()> {
     sys::input::focus_window(window)
 }
 
+/// 长截图：让滚轮发给这个窗口。Windows 上要把焦点交给它；macOS 的滚轮跟着鼠标走，不用动。
+pub fn route_scroll_to(window: WindowHandle) -> AppResult<()> {
+    sys::input::route_scroll_to(window)
+}
+
 pub fn cursor_position() -> Option<(i32, i32)> {
     sys::input::cursor_position()
 }
@@ -140,7 +189,49 @@ pub fn set_no_activate(window: &WebviewWindow) {
     sys::effects::set_no_activate(window);
 }
 
-/// 一次同时改窗口位置和大小（物理像素）。
+/// 建一个浮层窗口：能浮在别的程序（包括全屏的）上面，收键盘时不把用户正在用的程序切走。
+/// 浮层一律用它建，不要直接 `builder.build()`（macOS 上窗口的种类在创建那一刻就定了）。
+pub fn build_floating(
+    builder: WebviewWindowBuilder<'_, tauri::Wry, AppHandle>,
+    kind: FloatingKind,
+) -> AppResult<WebviewWindow> {
+    sys::effects::build_floating(builder, kind)
+}
+
+/// 这个窗口现在是不是用户正在用的那个（收键盘的那个）。
+pub fn window_is_foreground(window: &WebviewWindow) -> bool {
+    sys::effects::is_foreground(window)
+}
+
+/// 把键盘焦点交给窗口（窗口要已经显示）。浮层拿焦点不会把整个应用切到前台。
+pub fn take_focus(window: &WebviewWindow) -> AppResult<()> {
+    sys::effects::take_focus(window)
+}
+
+/// 摆放窗口：外框左上角的屏幕物理坐标 + 内容区的物理尺寸。
+pub fn place_window(
+    window: &WebviewWindow,
+    x: i32,
+    y: i32,
+    width: u32,
+    height: u32,
+) -> AppResult<()> {
+    sys::effects::place_window(window, x, y, width, height)
+}
+
+/// 带标题栏的"正经窗口"（识字、编辑、AI）用什么外框，在建窗时套上。
+pub fn frame_window<'a, R: Runtime, M: Manager<R>>(
+    builder: WebviewWindowBuilder<'a, R, M>,
+) -> WebviewWindowBuilder<'a, R, M> {
+    sys::effects::frame_window(builder)
+}
+
+/// 主窗口这类窗口的系统材质；`glass` 为 false 时不用材质。
+pub fn window_effects(glass: bool) -> Option<WindowEffectsConfig> {
+    sys::effects::window_effects(glass)
+}
+
+/// 一次同时改窗口位置和大小（屏幕物理像素，和 `MonitorInfo` 同一套坐标）。
 pub fn set_bounds(
     window: &WebviewWindow,
     x: i32,
@@ -149,6 +240,17 @@ pub fn set_bounds(
     height: u32,
 ) -> AppResult<()> {
     sys::effects::set_bounds(window, x, y, width, height)
+}
+
+/// 同上，单位是逻辑像素（和前端 `window.screenX` 同一套坐标）。
+pub fn set_bounds_logical(
+    window: &WebviewWindow,
+    x: f64,
+    y: f64,
+    width: f64,
+    height: f64,
+) -> AppResult<()> {
+    sys::effects::set_bounds_logical(window, x, y, width, height)
 }
 
 /// 把窗口裁成圆角矩形（物理像素半径，0 = 不裁）。
@@ -337,6 +439,16 @@ pub fn tie_to_current_process(child: &std::process::Child) {
 
 pub fn system_ocr_available() -> bool {
     sys::ocr::available()
+}
+
+/// 系统 OCR 引擎的名字（识字结果里显示）。
+pub fn system_ocr_name() -> &'static str {
+    sys::SYSTEM_OCR_NAME
+}
+
+/// 这个系统上有没有可下载的 PaddleOCR 引擎。
+pub fn paddle_ocr_supported() -> bool {
+    sys::PADDLE_OCR_SUPPORTED
 }
 
 pub fn system_ocr(image: &RgbaImage) -> AppResult<Vec<SysOcrLine>> {

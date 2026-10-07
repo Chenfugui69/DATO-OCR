@@ -10,6 +10,8 @@ import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import { create } from 'zustand';
 
+import { shortcutLabel } from '@/lib/platform';
+
 import { Button, Icon, TextField } from './controls';
 
 // ───────────────────────── Tooltip ─────────────────────────
@@ -39,7 +41,7 @@ export function Tooltip({
       <RadixTooltip.Portal>
         <RadixTooltip.Content className="cn-tooltip" side={side} sideOffset={6} collisionPadding={8}>
           {content}
-          {shortcut && <span className="cn-tooltip__kbd">{shortcut}</span>}
+          {shortcut && <span className="cn-tooltip__kbd">{shortcutLabel(shortcut)}</span>}
         </RadixTooltip.Content>
       </RadixTooltip.Portal>
     </RadixTooltip.Root>
@@ -94,7 +96,7 @@ function renderItems(P: Primitive, items: MenuItemSpec[]): ReactNode {
           item.icon && <Icon icon={item.icon} size={14} />
         )}
         {item.label}
-        {item.shortcut && <span className="cn-menu__shortcut">{item.shortcut}</span>}
+        {item.shortcut && <span className="cn-menu__shortcut">{shortcutLabel(item.shortcut)}</span>}
       </P.Item>
     );
   });

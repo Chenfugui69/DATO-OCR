@@ -219,10 +219,9 @@ fn record(ctx: RecordCtx, encoder: std::thread::JoinHandle<AppResult<Stats>>) {
     let app = ctx.app.clone();
     // 等底图隐藏、遮罩换好界面
     std::thread::sleep(Duration::from_millis(150));
-    let outcome = match ScreenRecorder::start(ctx.monitor.id) {
+    let outcome = match ScreenRecorder::start(ctx.monitor.id, ctx.local) {
         Ok(recorder) => {
             run(&ctx, &recorder);
-            drop(recorder);
             Ok(())
         }
         Err(err) => Err(err),
@@ -299,14 +298,9 @@ fn run(ctx: &RecordCtx, recorder: &ScreenRecorder) {
         }
         // 等到下一拍，期间来的新画面只留最新的
         let wait = next_tick.saturating_duration_since(Instant::now());
-        if let Some(full) = recorder.next(wait.max(Duration::from_millis(1))) {
-            match imaging::crop_opaque(&full, ctx.local) {
-                Ok(img) => {
-                    clean = Some(img);
-                    changed = true;
-                }
-                Err(err) => tracing::debug!("GIF 裁帧失败：{err}"),
-            }
+        if let Some(img) = recorder.next(wait.max(Duration::from_millis(1))) {
+            clean = Some(img);
+            changed = true;
         }
         let now = Instant::now();
         if now < next_tick {

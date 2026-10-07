@@ -5,14 +5,11 @@
 
 use serde::Serialize;
 use tauri::window::{Effect, EffectsBuilder};
-use tauri::{
-    AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize, WebviewUrl, WebviewWindow,
-    WebviewWindowBuilder,
-};
+use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
 
 use crate::error::AppResult;
 use crate::events;
-use crate::platform::{self, MonitorInfo};
+use crate::platform::{self, FloatingKind, MonitorInfo, PhysicalRect};
 use crate::state::state;
 
 pub const MAIN: &str = "main";
@@ -27,6 +24,15 @@ pub fn builder<'a>(
         .title("DATO OCR")
         .decorations(false)
         .visible(false)
+}
+
+/// 带标题栏的"正经窗口"（识字、编辑、AI）的构建器：外框按平台的习惯来
+/// （Windows 无边框、页面自己画标题栏；macOS 用系统的红黄绿灯）。
+pub fn framed_builder<'a>(
+    app: &'a AppHandle,
+    label: &'a str,
+) -> WebviewWindowBuilder<'a, tauri::Wry, AppHandle> {
+    platform::frame_window(builder(app, label))
 }
 
 pub fn show_main(app: &AppHandle, page: Option<&str>) {
@@ -76,6 +82,12 @@ pub fn place_on_monitor(
     h: f64,
     anchor: Anchor,
 ) -> AppResult<()> {
+    let r = rect_on_monitor(monitor, w, h, anchor);
+    platform::place_window(window, r.x, r.y, r.width, r.height)
+}
+
+/// `place_on_monitor` 会把窗口摆在哪（屏幕物理像素）。
+pub fn rect_on_monitor(monitor: &MonitorInfo, w: f64, h: f64, anchor: Anchor) -> PhysicalRect {
     let s = monitor.scale_factor.max(0.5);
     let (pw, ph) = ((w * s).round() as i32, (h * s).round() as i32);
     let wa = monitor.work_area;
@@ -103,9 +115,7 @@ pub fn place_on_monitor(
             (x, y)
         }
     };
-    window.set_size(PhysicalSize::new(pw.max(1) as u32, ph.max(1) as u32))?;
-    window.set_position(PhysicalPosition::new(x, y))?;
-    Ok(())
+    PhysicalRect::new(x, y, pw.max(1) as u32, ph.max(1) as u32)
 }
 
 #[derive(Clone, Copy)]
@@ -123,7 +133,7 @@ pub enum Anchor {
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct VisualCapabilities {
-    /// 主窗口是否启用了系统材质（Mica）。false 时前端必须画不透明底色。
+    /// 主窗口是否启用了系统材质（Windows 的 Mica、macOS 的毛玻璃）。false 时前端必须画不透明底色。
     pub glass: bool,
     pub backdrop: &'static str,
     pub dark_mode: bool,
@@ -151,15 +161,10 @@ pub fn visual_capabilities(app: &AppHandle) -> VisualCapabilities {
     }
 }
 
-/// 按当前能力给窗口加/去 Mica（主窗口、识字窗口这类"正经窗口"）。
+/// 按当前能力给窗口加/去系统材质（主窗口、识字窗口这类"正经窗口"）。
 pub fn apply_window_effects(app: &AppHandle, window: &WebviewWindow) {
     let caps = visual_capabilities(app);
-    let result = if caps.glass {
-        window.set_effects(EffectsBuilder::new().effect(Effect::Mica).build())
-    } else {
-        window.set_effects(None)
-    };
-    if let Err(err) = result {
+    if let Err(err) = window.set_effects(platform::window_effects(caps.glass)) {
         tracing::warn!(label = window.label(), "设置窗口材质失败：{err}");
     }
 }
@@ -262,16 +267,15 @@ pub fn prewarm_toast(app: &AppHandle) {
     if app.get_webview_window(TOAST).is_some() {
         return;
     }
-    let built = builder(app, TOAST)
+    let toast = builder(app, TOAST)
         .transparent(true)
         .always_on_top(true)
         .skip_taskbar(true)
         .resizable(false)
         .shadow(false)
         .focused(false)
-        .inner_size(360.0, 220.0)
-        .build();
-    match built {
+        .inner_size(360.0, 220.0);
+    match platform::build_floating(toast, FloatingKind::Panel) {
         Ok(window) => {
             let _ = window.set_ignore_cursor_events(true);
             platform::set_exclude_from_capture(&window, true);
