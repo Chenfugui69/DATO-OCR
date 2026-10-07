@@ -1,0 +1,52 @@
+{
+  "added": [
+    "新增 macOS 版（Apple 芯片的 Mac）",
+    "新增有道翻译：免费，国内可以直接用",
+    "识字完成后自动把文字复制好，不用再点一下（可以在设置里关掉）",
+    "可以下载更准的识字引擎 PaddleOCR：手写体、艺术字、复杂排版认得更准",
+    "划词翻译面板里的原文可以直接改，改完自动重新翻译",
+    "划词翻译面板可以置顶，点面板外面也不收起",
+    "划词翻译面板四条边都能拖动改大小，每个翻译结果可以折叠",
+    "剪贴板面板可以选单击粘贴还是双击粘贴",
+    "录好的 GIF 在剪贴板里显示成一张卡片"
+  ],
+  "improved": [
+    "软件改名为 DATO OCR，原来的数据和设置自动保留",
+    "拖动截图选区更流畅",
+    "截图工具条重新设计，二级工具条对准对应的按钮",
+    "截图框的拖柄对准框线、更好抓，尺寸提示更淡、不挡视线",
+    "翻译结果前面显示翻译服务的图标"
+  ],
+  "fixed": [
+    "毛玻璃面板的圆角外面多出一块方形",
+    "划词翻译面板展开问 AI 时会闪一下、跳一下",
+    "拖边框改划词翻译面板的大小时，面板被收起",
+    "剪贴板面板点过右键之后，点别处收不起来"
+  ],
+  "en": {
+    "added": [
+      "New macOS version (Apple silicon Macs)",
+      "Youdao Translate: free, works without a proxy in mainland China",
+      "Recognized text is copied automatically (can be turned off in Settings)",
+      "Optional high-accuracy OCR engine (PaddleOCR) for handwriting, stylized fonts and complex layouts",
+      "Edit the source text right in the translation popup; it re-translates when you finish",
+      "Pin the translation popup so it stays open when you click elsewhere",
+      "Resize the translation popup from any edge, and collapse individual results",
+      "Choose single-click or double-click to paste from the clipboard panel",
+      "Recorded GIFs show up as a card in the clipboard"
+    ],
+    "improved": [
+      "Renamed to DATO OCR; your data and settings are kept",
+      "Smoother dragging when selecting a screenshot area",
+      "Redesigned capture toolbar; sub-toolbars line up with their buttons",
+      "Selection handles sit on the frame and are easier to grab; the size label is subtler",
+      "Translation results show the service's icon"
+    ],
+    "fixed": [
+      "A square patch of frosted glass showed outside the rounded corners of glass panels",
+      "The translation popup flickered and jumped when opening Ask AI",
+      "Resizing the translation popup by its edge closed it",
+      "The clipboard panel stayed open after a right-click when clicking elsewhere"
+    ]
+  }
+}
