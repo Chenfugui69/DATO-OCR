@@ -1,7 +1,9 @@
 //! 长截图（规格 03）：**只做手动滚动**（铁律 5）。
 //!
-//! 框好区域后，遮罩变成鼠标穿透、底图隐藏，露出真实桌面；用户自己滚动滚轮，全局低级
-//! 钩子听到滚轮后防抖 160ms（等目标程序滚动动画结束）抓一帧、拼接、刷新预览。
+//! 框好区域后，遮罩变成鼠标穿透、底图隐藏，露出真实桌面；用户自己滚动滚轮。全局低级
+//! 钩子听到滚轮就开始**连续跟拍**：滚动过程中不停抓帧（Windows 用 WGC 连续录屏，只拷贝
+//! 最新一帧），交给拼接器挑关键帧并入（见 `stitch` 模块文档）。不用滚一下停一下，
+//! 一口气从头滚到尾就行；滚轮停下、画面停稳后这一次滚动才算结束（撤销按一次滚动算）。
 //!
 //! 遮罩穿透后拿不到键盘焦点，所以 Enter / Esc / Backspace 由钩子截获。提示条和预览条
 //! 上的按钮要能点：鼠标移进它们的区域时临时关掉穿透，移出再打开。
@@ -26,7 +28,7 @@ use crate::error::{AppError, AppResult};
 use crate::platform::{self, HookEvent, HookKey, InputHookGuard, MonitorInfo, PhysicalRect};
 use crate::state::state;
 use crate::{editor, events, imaging, library, wm};
-use stitch::{Step, Stitcher};
+use stitch::{Committed, Motion, Step, Stitcher};
 
 pub const PREVIEW_ID: &str = "longshot-preview";
 /// 预览条宽度（逻辑像素）
@@ -49,7 +51,6 @@ struct Active {
     local: PhysicalRect,
     stitcher: Stitcher,
     dir: PathBuf,
-    next_index: usize,
     thumbs: std::collections::HashMap<usize, RgbaImage>,
     thumb_scale: f64,
     failures: u32,
@@ -127,7 +128,6 @@ pub fn start(
         local,
         stitcher: Stitcher::new(),
         dir,
-        next_index: 0,
         thumbs: Default::default(),
         thumb_scale: thumb_scale.min(1.0),
         failures: 0,
@@ -178,32 +178,102 @@ pub fn start(
     Ok(())
 }
 
-/// 滚轮停下后最多补拍几次。很多控件（浏览器、RichEdit、WinUI）是平滑滚动，
-/// 滚轮事件停了画面还在动；补拍到画面不再变化为止，最后一屏才不会漏。
+/// 收尾时最多补拍几次：用户滚完立刻按 Enter，平滑滚动可能还在动。
 const MAX_SETTLE_STEPS: u8 = 8;
+/// 跟拍的最短间隔（抓帧 + 比对一次大约 20～40ms，实际帧率由它决定）
+const SAMPLE_INTERVAL: Duration = Duration::from_millis(30);
+/// 滚轮停了这么久还没停稳（画面里有动画、一直对不上）也结束这一次滚动
+const MAX_GESTURE_TAIL: Duration = Duration::from_millis(1500);
+
+/// 一次滚动（从第一下滚轮到画面停稳）。
+struct Gesture {
+    last_wheel: Instant,
+    last_motion: Instant,
+    /// 这次滚动里并入过新内容 / 拍到过已拍的位置
+    added: bool,
+    revisited: bool,
+    /// 当前对不上（滚太快）
+    lost: bool,
+}
+
+/// 抓帧来源：优先连续录屏（只拷贝最新一帧，比每次新建抓屏会话快得多），起不来就退回单次抓屏。
+enum Grabber {
+    Recorder(platform::ScreenRecorder),
+    Snapshot(platform::MonitorId, PhysicalRect),
+}
+
+impl Grabber {
+    /// 现在的画面；None = 上次取过之后没变化（或抓失败）。
+    fn grab(&self) -> Option<RgbaImage> {
+        match self {
+            Self::Recorder(r) => r.latest(),
+            Self::Snapshot(id, local) => grab_snapshot(*id, *local),
+        }
+    }
+}
+
+fn grab_snapshot(monitor: platform::MonitorId, local: PhysicalRect) -> Option<RgbaImage> {
+    match platform::capture_monitor(monitor).and_then(|img| imaging::crop_opaque(&img, local)) {
+        Ok(f) => Some(f),
+        Err(err) => {
+            tracing::warn!("长截图抓帧失败：{err}");
+            None
+        }
+    }
+}
 
 fn worker(app: AppHandle, rx: Receiver<HookEvent>, debounce: Duration) {
     // 等底图隐藏、遮罩换好界面再拍第一帧
     std::thread::sleep(Duration::from_millis(180));
-    step(&app, false);
-    let mut pending: Option<Instant> = None;
-    // (上次拍摄时间, 已补拍次数)
-    let mut settling: Option<(Instant, u8)> = None;
+    let Some((monitor, local)) = state(&app)
+        .longshot
+        .active
+        .lock()
+        .as_ref()
+        .map(|a| (a.monitor.id, a.local))
+    else {
+        return;
+    };
+    let grabber = match platform::ScreenRecorder::start(monitor, local) {
+        Ok(r) => Grabber::Recorder(r),
+        Err(err) => {
+            tracing::warn!("长截图：连续录屏起不来，改用单次抓屏：{err}");
+            Grabber::Snapshot(monitor, local)
+        }
+    };
+    // 第一帧单独抓：画面静止时录屏不出帧
+    if let Some(frame) = grab_snapshot(monitor, local) {
+        feed(&app, frame, None);
+    }
+    let mut gesture: Option<Gesture> = None;
+    let mut last_sample = Instant::now();
     loop {
         if !state(&app).longshot.is_active() {
             break;
         }
-        let due = pending.or(settling.map(|(t, _)| t));
-        let timeout = match due {
-            Some(t) => debounce
-                .saturating_sub(t.elapsed())
-                .max(Duration::from_millis(1)),
-            None => Duration::from_millis(250),
+        let timeout = if gesture.is_some() {
+            SAMPLE_INTERVAL
+                .saturating_sub(last_sample.elapsed())
+                .max(Duration::from_millis(1))
+        } else {
+            Duration::from_millis(250)
         };
         match rx.recv_timeout(timeout) {
             Ok(HookEvent::Wheel { .. }) => {
-                pending = Some(Instant::now());
-                settling = None;
+                let now = Instant::now();
+                let g = gesture.get_or_insert_with(|| {
+                    if let Some(a) = state(&app).longshot.active.lock().as_mut() {
+                        a.stitcher.begin_group();
+                    }
+                    Gesture {
+                        last_wheel: now,
+                        last_motion: now,
+                        added: false,
+                        revisited: false,
+                        lost: false,
+                    }
+                });
+                g.last_wheel = now;
             }
             Ok(HookEvent::MouseMove { x, y }) => update_interactive(&app, x, y),
             Ok(HookEvent::Key(HookKey::Enter)) => {
@@ -216,20 +286,143 @@ fn worker(app: AppHandle, rx: Receiver<HookEvent>, debounce: Duration) {
                 break;
             }
             Ok(HookEvent::Key(HookKey::Backspace)) => undo(&app),
-            Err(RecvTimeoutError::Timeout) => {
-                if pending.is_some_and(|t| t.elapsed() >= debounce) {
-                    pending = None;
-                    settling = step(&app, false).then(|| (Instant::now(), 0));
-                } else if let Some((t, n)) = settling {
-                    if t.elapsed() >= debounce {
-                        let moved = step(&app, true);
-                        settling =
-                            (moved && n + 1 < MAX_SETTLE_STEPS).then(|| (Instant::now(), n + 1));
-                    }
-                }
-            }
+            Err(RecvTimeoutError::Timeout) => {}
             Err(RecvTimeoutError::Disconnected) => break,
         }
+        let Some(g) = gesture.as_mut() else {
+            // 没在滚动：把录屏积压的帧清掉
+            if let Grabber::Recorder(r) = &grabber {
+                r.drain();
+            }
+            continue;
+        };
+        // 滚轮事件很密的时候 recv 不会超时，按间隔在这里抓
+        if last_sample.elapsed() < SAMPLE_INTERVAL {
+            continue;
+        }
+        last_sample = Instant::now();
+        if let Some(frame) = grabber.grab() {
+            match feed(&app, frame, Some(&mut *g)) {
+                Some(Motion::Still) => {}
+                Some(_) => g.last_motion = Instant::now(),
+                None => {
+                    // 太长了，不再采集
+                    gesture = None;
+                    continue;
+                }
+            }
+        }
+        let quiet = g.last_wheel.elapsed();
+        if (quiet >= debounce && g.last_motion.elapsed() >= debounce) || quiet >= MAX_GESTURE_TAIL {
+            end_gesture(&app, g);
+            gesture = None;
+        }
+    }
+}
+
+/// 喂一帧给拼接器，并入的帧落盘、刷新预览。返回 None 表示长图已经太长、不再采集。
+fn feed(app: &AppHandle, frame: RgbaImage, gesture: Option<&mut Gesture>) -> Option<Motion> {
+    let st = state(app);
+    let (motion, status) = {
+        let mut guard = st.longshot.active.lock();
+        let a = guard.as_mut()?;
+        if a.stitcher.total_height() >= a.max_height {
+            drop(guard);
+            emit_progress(app, "toolong");
+            return None;
+        }
+        let fed = a.stitcher.feed(frame);
+        let mut status = None;
+        let mut steps = Vec::new();
+        for c in fed.committed {
+            steps.push(c.step);
+            status = Some(keep(a, c));
+        }
+        if let Some(g) = gesture {
+            for step in steps {
+                match step {
+                    Step::Added { .. } => g.added = true,
+                    Step::Revisited => g.revisited = true,
+                    _ => {}
+                }
+            }
+            if fed.motion == Motion::Lost {
+                if !g.lost {
+                    // 刚对不上时提示一次；往回滚到能接上的位置会自己恢复
+                    a.failures += 1;
+                    status = Some("failed");
+                }
+                g.lost = true;
+            } else {
+                g.lost = false;
+            }
+        }
+        (fed.motion, status)
+    };
+    if let Some(status) = status {
+        emit_progress(app, status);
+    }
+    Some(motion)
+}
+
+/// 并入的帧：原图落盘、做缩略图，丢掉撤销也用不到的旧帧。返回要显示的状态。
+fn keep(a: &mut Active, c: Committed) -> &'static str {
+    if let Err(err) = std::fs::write(frame_path(&a.dir, c.index), c.frame.as_raw()) {
+        tracing::warn!("保存长截图帧失败：{err}");
+    }
+    let (tw, th) = (
+        ((f64::from(c.frame.width()) * a.thumb_scale).round() as u32).max(1),
+        ((f64::from(c.frame.height()) * a.thumb_scale).round() as u32).max(1),
+    );
+    a.thumbs
+        .insert(c.index, image::imageops::thumbnail(&c.frame, tw, th));
+    let used = a.stitcher.referenced_frames();
+    let dir = &a.dir;
+    a.thumbs.retain(|i, _| {
+        let keep = used.contains(i);
+        if !keep {
+            let _ = std::fs::remove_file(frame_path(dir, *i));
+        }
+        keep
+    });
+    a.failures = 0;
+    a.still = 0;
+    if a.stitcher.total_height() >= a.max_height {
+        return "toolong";
+    }
+    match c.step {
+        Step::First => "first",
+        Step::Added { .. } => "added",
+        _ => "revisited",
+    }
+}
+
+/// 一次滚动结束：候选帧并入；什么都没变的话按"到底了 / 没对上"提示。
+fn end_gesture(app: &AppHandle, g: &mut Gesture) {
+    let st = state(app);
+    let status = {
+        let mut guard = st.longshot.active.lock();
+        let Some(a) = guard.as_mut() else { return };
+        if let Some(c) = a.stitcher.settle() {
+            match c.step {
+                Step::Added { .. } => g.added = true,
+                Step::Revisited => g.revisited = true,
+                _ => {}
+            }
+            Some(keep(a, c))
+        } else if g.lost {
+            // 停在了对不上的位置，提示已经发过了
+            None
+        } else if !g.added && !g.revisited {
+            // 一次没动可能只是页面在加载下一批内容，连续两次才提示"到底了"
+            a.still += 1;
+            (a.still >= 2).then_some("bottom")
+        } else {
+            None
+        }
+    };
+    if let Some(status) = status {
+        emit_progress(app, status);
     }
 }
 
@@ -268,83 +461,6 @@ fn frame_path(dir: &std::path::Path, index: usize) -> PathBuf {
     dir.join(format!("{index}.rgba"))
 }
 
-/// 抓一帧 → 拼接 → 刷新预览。返回画面是否有新内容（补拍据此决定要不要继续）。
-/// quiet：补拍时"没变化 / 没对上"不算用户可见的状态，不刷新提示。
-fn step(app: &AppHandle, quiet: bool) -> bool {
-    let (monitor, local) = {
-        let st = state(app);
-        let guard = st.longshot.active.lock();
-        let Some(a) = guard.as_ref() else {
-            return false;
-        };
-        if a.stitcher.total_height() >= a.max_height {
-            drop(guard);
-            emit_progress(app, "toolong");
-            return false;
-        }
-        (a.monitor.id, a.local)
-    };
-    let frame = match platform::capture_monitor(monitor)
-        .and_then(|img| imaging::crop_opaque(&img, local))
-    {
-        Ok(f) => f,
-        Err(err) => {
-            tracing::warn!("长截图抓帧失败：{err}");
-            return false;
-        }
-    };
-    let st = state(app);
-    let status = {
-        let mut guard = st.longshot.active.lock();
-        let Some(a) = guard.as_mut() else {
-            return false;
-        };
-        let index = a.next_index;
-        a.next_index += 1;
-        let outcome = a.stitcher.push(&frame, index);
-        match outcome {
-            Step::First | Step::Added { .. } | Step::Revisited => {
-                if let Err(err) = std::fs::write(frame_path(&a.dir, index), frame.as_raw()) {
-                    tracing::warn!("保存长截图帧失败：{err}");
-                }
-                let (tw, th) = (
-                    ((f64::from(frame.width()) * a.thumb_scale).round() as u32).max(1),
-                    ((f64::from(frame.height()) * a.thumb_scale).round() as u32).max(1),
-                );
-                a.thumbs
-                    .insert(index, image::imageops::thumbnail(&frame, tw, th));
-                a.failures = 0;
-                a.still = 0;
-                if a.stitcher.total_height() >= a.max_height {
-                    "toolong"
-                } else {
-                    match outcome {
-                        Step::First => "first",
-                        Step::Added { .. } => "added",
-                        _ => "revisited",
-                    }
-                }
-            }
-            Step::NoChange if quiet => return false,
-            Step::NoChange => {
-                // 一次没动可能只是页面在加载下一批内容，连续两次才提示"到底了"
-                a.still += 1;
-                if a.still < 2 {
-                    return false;
-                }
-                "bottom"
-            }
-            Step::Failed if quiet => return false,
-            Step::Failed => {
-                a.failures += 1;
-                "failed"
-            }
-        }
-    };
-    emit_progress(app, status);
-    matches!(status, "first" | "added" | "revisited")
-}
-
 fn build_preview(a: &Active) -> Option<RgbaImage> {
     let s = a.thumb_scale;
     let (header, footer) = a.stitcher.bands();
@@ -375,8 +491,7 @@ fn build_preview(a: &Active) -> Option<RgbaImage> {
         }
     }
     if footer > 0 {
-        let last = a.thumbs.keys().max()?;
-        let t = a.thumbs.get(last)?;
+        let t = a.thumbs.get(&a.stitcher.last_frame()?)?;
         let h = t.height();
         let fy = ((f64::from(footer) * s).round() as u32).min(h);
         let part = image::imageops::crop_imm(t, 0, h - fy, t.width(), fy).to_image();
@@ -417,7 +532,7 @@ pub fn undo(app: &AppHandle) {
         let st = state(app);
         let mut guard = st.longshot.active.lock();
         let Some(a) = guard.as_mut() else { return };
-        if a.stitcher.frame_count() <= 1 {
+        if !a.stitcher.can_undo() {
             return;
         }
         a.stitcher.undo();
@@ -455,11 +570,30 @@ fn stop_ui(app: &AppHandle) {
 pub fn finish(app: &AppHandle) {
     // 收尾前按当前画面补拍，直到画面停稳：用户滚完立刻按 Enter 时，平滑滚动可能还在动，
     // 最后一屏还没被拍到
-    for _ in 0..MAX_SETTLE_STEPS {
-        if !step(app, true) {
-            break;
+    let target = state(app)
+        .longshot
+        .active
+        .lock()
+        .as_ref()
+        .map(|a| (a.monitor.id, a.local));
+    if let Some((monitor, local)) = target {
+        for _ in 0..MAX_SETTLE_STEPS {
+            let Some(frame) = grab_snapshot(monitor, local) else {
+                break;
+            };
+            if feed(app, frame, None).is_none_or(|m| m == Motion::Still) {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(120));
         }
-        std::thread::sleep(Duration::from_millis(120));
+        let mut g = Gesture {
+            last_wheel: Instant::now(),
+            last_motion: Instant::now(),
+            added: true,
+            revisited: false,
+            lost: false,
+        };
+        end_gesture(app, &mut g);
     }
     let Some(active) = take(app) else { return };
     let session = active.session_id;

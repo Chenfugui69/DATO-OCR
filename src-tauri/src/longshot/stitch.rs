@@ -25,8 +25,16 @@
 //! 重叠区处处相同，只要求**大部分行**对得上（`VERIFY_GOOD_FRACTION`）。并入时以新帧为准：
 //! 新帧覆盖它和已有内容重叠的那一段，长图里留下的是最后加载好的样子；视口里固定位置的
 //! 悬浮按钮（"回到顶部"之类）也因此只在最后一帧出现一次。
+//!
+//! # 连续跟拍
+//!
+//! 采集端在用户滚动的过程中不停地抓帧（不等滚轮停下），每帧都 `feed` 进来，和上一张
+//! **已并入**的帧比位移。位移不到内容区一半的先记成候选不并入；位移够大就并入，成为新的
+//! 比对基准（关键帧）。某一帧已经对不上了（一下滚出去太远），先把手上的候选并入再拿它
+//! 重新比 —— 候选离当前画面更近。这样一口气从头滚到尾也能接上，帧数却只有每半屏一张。
+//! 滚动停下时 `settle` 把候选并入，最后一屏不会漏。
 
-use std::collections::VecDeque;
+use std::collections::{HashSet, VecDeque};
 
 use image::RgbaImage;
 
@@ -50,6 +58,9 @@ const SAME_ROW_MAD: f64 = 2.0;
 const MIN_VARIANCE: f64 = 25.0;
 const MAX_TEMPLATE_TRIES: usize = 8;
 const MIN_BAND: usize = 16;
+/// 连续跟拍时，位移达到内容区高度的这个比例就并入成关键帧。留一半余量：下一帧就算比
+/// 这一帧又滚出去大半屏，也还能对上。
+const KEYFRAME_FRACTION: f64 = 0.5;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Slice {
@@ -70,6 +81,47 @@ pub enum Step {
     NoChange,
     /// 对不上（滚太快、动态内容、换了窗口…）
     Failed,
+}
+
+/// 连续跟拍时这一帧画面的状态。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Motion {
+    /// 和上一次看到的画面一样（滚动已停 / 没在动）
+    Still,
+    /// 画面在动，且和已拍内容对得上
+    Moving,
+    /// 对不上：一下滚出去超过一屏，或画面里有大片动态内容
+    Lost,
+}
+
+/// 并入长图的一帧。调用方按 `index` 保存原图，合成时 `compose` 按它取回。
+pub struct Committed {
+    pub index: usize,
+    pub frame: RgbaImage,
+    pub step: Step,
+}
+
+pub struct Fed {
+    pub motion: Motion,
+    pub committed: Vec<Committed>,
+}
+
+/// 一帧和上一张已并入帧的比对结果，并入时直接用，不再重算。
+pub struct Prepared {
+    gray: Gray,
+    kind: Kind,
+}
+
+#[derive(Clone, Copy)]
+enum Kind {
+    First,
+    NoChange,
+    Failed,
+    Shift {
+        dy: i64,
+        header: usize,
+        footer: usize,
+    },
 }
 
 /// 降采样灰度图，行主序。
@@ -202,6 +254,7 @@ struct Snapshot {
     view_top: i64,
     prev: Option<Gray>,
     last_frame: Option<usize>,
+    frames: usize,
 }
 
 pub struct Stitcher {
@@ -215,7 +268,18 @@ pub struct Stitcher {
     view_top: i64,
     prev: Option<Gray>,
     last_frame: Option<usize>,
+    /// 已并入的帧数
+    frames: usize,
+    /// 撤销点：每个元素是一次撤销要回到的状态
     history: Vec<Snapshot>,
+    /// 成组撤销：`begin_group` 之后的多次并入只留一个撤销点（一次滚动算一组）
+    grouping: bool,
+    group_saved: bool,
+    /// 连续跟拍：还没并入的候选帧（相对 `prev` 已经比好了）
+    pending: Option<(RgbaImage, Prepared)>,
+    /// 连续跟拍：上一次看到的画面相对 `prev` 的位移（None = 对不上），用来判断画面停没停
+    observed: Option<i64>,
+    next_index: usize,
     /// 最近一次并入的接缝位置（长图坐标），预览条上画一条线方便发现拼歪
     pub last_seam: Option<u32>,
 }
@@ -239,13 +303,23 @@ impl Stitcher {
             view_top: 0,
             prev: None,
             last_frame: None,
+            frames: 0,
             history: Vec::new(),
+            grouping: false,
+            group_saved: false,
+            pending: None,
+            observed: None,
+            next_index: 0,
             last_seam: None,
         }
     }
 
     pub fn frame_count(&self) -> usize {
-        self.history.len()
+        self.frames
+    }
+
+    pub fn last_frame(&self) -> Option<usize> {
+        self.last_frame
     }
 
     pub fn total_height(&self) -> u32 {
@@ -269,11 +343,34 @@ impl Stitcher {
             view_top: self.view_top,
             prev: self.prev.clone(),
             last_frame: self.last_frame,
+            frames: self.frames,
         }
     }
 
-    /// 撤销最后一次并入（Backspace）。返回是否还有帧。
+    fn save_undo_point(&mut self, before: Snapshot) {
+        if self.grouping && self.group_saved {
+            return;
+        }
+        self.history.push(before);
+        self.group_saved = true;
+    }
+
+    /// 开始新的一组：之后的并入在撤销时算一步，直到下一次 `begin_group`。
+    pub fn begin_group(&mut self) {
+        self.grouping = true;
+        self.group_saved = false;
+    }
+
+    /// 还有没有可撤销的（第一帧不撤）。
+    pub fn can_undo(&self) -> bool {
+        self.history.len() > 1
+    }
+
+    /// 撤销最后一次并入（成组时撤销最后一组，Backspace）。返回是否还有帧。
     pub fn undo(&mut self) -> bool {
+        self.pending = None;
+        self.observed = None;
+        self.group_saved = false;
         if let Some(s) = self.history.pop() {
             self.header = s.header;
             self.footer = s.footer;
@@ -283,55 +380,79 @@ impl Stitcher {
             self.view_top = s.view_top;
             self.prev = s.prev;
             self.last_frame = s.last_frame;
+            self.frames = s.frames;
             self.last_seam = None;
         }
         !self.history.is_empty()
     }
 
+    /// 当前状态和所有撤销点用到的帧。其余的帧可以丢掉了。
+    pub fn referenced_frames(&self) -> HashSet<usize> {
+        let mut set: HashSet<usize> = self.slices.iter().map(|s| s.frame).collect();
+        set.extend(self.last_frame);
+        for snap in &self.history {
+            set.extend(snap.slices.iter().map(|s| s.frame));
+            set.extend(snap.last_frame);
+        }
+        set
+    }
+
     /// 并入一帧。`index` 是调用方保存这帧所用的编号，合成时按它取回原图。
+    #[cfg(test)]
     pub fn push(&mut self, frame: &RgbaImage, index: usize) -> Step {
+        let p = self.prepare(frame);
+        self.commit(frame, p, index)
+    }
+
+    /// 和上一张已并入的帧比位移，不改状态。
+    pub fn prepare(&self, frame: &RgbaImage) -> Prepared {
         let gray = Gray::from_rgba(frame);
         let Some(prev) = self.prev.as_ref() else {
-            self.width = frame.width();
-            self.height = frame.height();
-            self.history.push(self.snapshot());
-            self.slices.push_back(Slice {
-                frame: index,
-                src_y: 0,
-                height: frame.height(),
-            });
-            self.content_len = frame.height();
-            self.view_top = 0;
-            self.prev = Some(gray);
-            self.last_frame = Some(index);
-            return Step::First;
+            return Prepared {
+                gray,
+                kind: Kind::First,
+            };
         };
-        if frame.width() != self.width || frame.height() != self.height {
-            return Step::Failed;
-        }
-        let h = gray.h;
-
-        // 整帧几乎一样 → 没滚动
-        let identical = (0..h).all(|y| row_mad(prev.row(y), gray.row(y)) < SAME_ROW_MAD);
-        if identical {
-            return Step::NoChange;
-        }
-
-        let (header, footer) = if self.bands_known {
-            (self.header, self.footer)
+        let kind = if frame.width() != self.width || frame.height() != self.height {
+            Kind::Failed
         } else {
-            detect_bands(prev, &gray)
+            analyze(
+                prev,
+                &gray,
+                self.bands_known.then_some((self.header, self.footer)),
+            )
         };
-        let content = h.saturating_sub(header + footer);
-        if content < TEMPLATE_H * 2 {
-            return Step::Failed;
-        }
-        let Some(dy) = find_shift(prev, &gray, header, content) else {
-            return Step::Failed;
+        Prepared { gray, kind }
+    }
+
+    /// 按 `prepare` 的结果并入。`p` 必须是对着当前 `prev` 算的。
+    fn commit(&mut self, frame: &RgbaImage, p: Prepared, index: usize) -> Step {
+        self.pending = None;
+        self.next_index = self.next_index.max(index + 1);
+        let Prepared { gray, kind } = p;
+        let (dy, header, footer) = match kind {
+            Kind::NoChange => return Step::NoChange,
+            Kind::Failed => return Step::Failed,
+            Kind::First => {
+                self.width = frame.width();
+                self.height = frame.height();
+                let before = self.snapshot();
+                self.save_undo_point(before);
+                self.slices.push_back(Slice {
+                    frame: index,
+                    src_y: 0,
+                    height: frame.height(),
+                });
+                self.content_len = frame.height();
+                self.view_top = 0;
+                self.prev = Some(gray);
+                self.last_frame = Some(index);
+                self.frames += 1;
+                return Step::First;
+            }
+            Kind::Shift { dy, header, footer } => (dy, header, footer),
         };
-        if dy == 0 {
-            return Step::NoChange;
-        }
+        let content = gray.h.saturating_sub(header + footer);
 
         let before = self.snapshot();
         if !self.bands_known {
@@ -379,13 +500,92 @@ impl Stitcher {
             self.last_seam = Some(self.header as u32 + rows);
             added = rows;
         }
-        self.history.push(before);
+        self.save_undo_point(before);
         self.prev = Some(gray);
         self.last_frame = Some(index);
+        self.frames += 1;
         if added > 0 {
             Step::Added { rows: added }
         } else {
             Step::Revisited
+        }
+    }
+
+    /// 连续跟拍：滚动过程中抓到的每一帧都喂进来，按需并入（见模块文档）。
+    pub fn feed(&mut self, frame: RgbaImage) -> Fed {
+        let mut committed = Vec::new();
+        let p = self.prepare(&frame);
+        let motion = self.follow(frame, p, &mut committed, true);
+        Fed { motion, committed }
+    }
+
+    /// 滚动停了：把候选帧并入。
+    pub fn settle(&mut self) -> Option<Committed> {
+        let (frame, p) = self.pending.take()?;
+        let mut out = Vec::new();
+        self.commit_new(frame, p, &mut out);
+        self.observed = Some(0);
+        out.pop()
+    }
+
+    fn commit_new(&mut self, frame: RgbaImage, p: Prepared, out: &mut Vec<Committed>) {
+        let index = self.next_index;
+        let step = self.commit(&frame, p, index);
+        out.push(Committed { index, frame, step });
+    }
+
+    fn follow(
+        &mut self,
+        frame: RgbaImage,
+        p: Prepared,
+        out: &mut Vec<Committed>,
+        retry: bool,
+    ) -> Motion {
+        match p.kind {
+            Kind::First => {
+                self.commit_new(frame, p, out);
+                self.observed = Some(0);
+                Motion::Moving
+            }
+            Kind::NoChange => {
+                // 回到了上一张已并入帧的位置，候选作废
+                self.pending = None;
+                let moved = self.observed != Some(0);
+                self.observed = Some(0);
+                if moved {
+                    Motion::Moving
+                } else {
+                    Motion::Still
+                }
+            }
+            Kind::Shift { dy, header, footer } => {
+                let moved = self.observed != Some(dy);
+                let content = p.gray.h.saturating_sub(header + footer) as f64;
+                if dy.unsigned_abs() as f64 >= content * KEYFRAME_FRACTION {
+                    self.commit_new(frame, p, out);
+                    self.observed = Some(0);
+                } else {
+                    self.pending = Some((frame, p));
+                    self.observed = Some(dy);
+                }
+                if moved {
+                    Motion::Moving
+                } else {
+                    Motion::Still
+                }
+            }
+            Kind::Failed => {
+                // 一下滚太远了：先并入候选（它离现在的画面更近），再拿它比一次
+                if retry {
+                    if let Some((pf, pp)) = self.pending.take() {
+                        self.commit_new(pf, pp, out);
+                        let p = self.prepare(&frame);
+                        return self.follow(frame, p, out, false);
+                    }
+                }
+                self.observed = None;
+                Motion::Lost
+            }
         }
     }
 
@@ -454,6 +654,25 @@ impl Stitcher {
 
     pub fn bands(&self) -> (u32, u32) {
         (self.header as u32, self.footer as u32)
+    }
+}
+
+/// `curr` 相对 `prev` 的变化。`bands`：已经测出来的固定头尾。
+fn analyze(prev: &Gray, curr: &Gray, bands: Option<(usize, usize)>) -> Kind {
+    let h = curr.h;
+    // 整帧几乎一样 → 没滚动
+    if (0..h).all(|y| row_mad(prev.row(y), curr.row(y)) < SAME_ROW_MAD) {
+        return Kind::NoChange;
+    }
+    let (header, footer) = bands.unwrap_or_else(|| detect_bands(prev, curr));
+    let content = h.saturating_sub(header + footer);
+    if content < TEMPLATE_H * 2 {
+        return Kind::Failed;
+    }
+    match find_shift(prev, curr, header, content) {
+        None => Kind::Failed,
+        Some(0) => Kind::NoChange,
+        Some(dy) => Kind::Shift { dy, header, footer },
     }
 }
 
@@ -835,6 +1054,106 @@ mod tests {
         assert_eq!(steps[3], Step::Revisited);
         assert_eq!(steps[4], Step::Added { rows: 200 });
         assert!(compose(&s, &frames) == window(&full, 0, 1000));
+    }
+
+    /// 喂一串帧，最后 settle，返回并入的帧（按 index 存，合成时取回）。
+    fn follow_frames(
+        s: &mut Stitcher,
+        frames: &[RgbaImage],
+    ) -> (Vec<Motion>, Vec<Option<RgbaImage>>) {
+        let mut store: Vec<Option<RgbaImage>> = Vec::new();
+        let keep = |c: Committed, store: &mut Vec<Option<RgbaImage>>| {
+            assert!(
+                matches!(c.step, Step::First | Step::Added { .. } | Step::Revisited),
+                "{:?}",
+                c.step
+            );
+            if store.len() <= c.index {
+                store.resize(c.index + 1, None);
+            }
+            store[c.index] = Some(c.frame);
+        };
+        let mut motions = Vec::new();
+        for f in frames {
+            let fed = s.feed(f.clone());
+            motions.push(fed.motion);
+            for c in fed.committed {
+                keep(c, &mut store);
+            }
+        }
+        if let Some(c) = s.settle() {
+            keep(c, &mut store);
+        }
+        (motions, store)
+    }
+
+    /// 一口气从头滚到尾：每拍只挪几十行，只有关键帧被并入，结果和原页面一致。
+    #[test]
+    fn continuous_scroll_reconstructs_original() {
+        let full = page(600, 2400, 8);
+        let tops: Vec<u32> = (0..=2000).step_by(37).chain([2000, 2000]).collect();
+        let frames: Vec<_> = tops.iter().map(|&t| window(&full, t, 400)).collect();
+        let mut s = Stitcher::new();
+        let (motions, store) = follow_frames(&mut s, &frames);
+        assert!(!motions.contains(&Motion::Lost), "{motions:?}");
+        // 最后一帧和倒数第二帧一样：画面停了
+        assert_eq!(motions.last(), Some(&Motion::Still));
+        // 每半屏左右一张，远少于抓到的帧数
+        assert!(s.frame_count() <= 2000 / 200 + 2, "{}", s.frame_count());
+        let out = s.compose(|i| store.get(i).cloned().flatten()).unwrap();
+        assert!(out == full, "{:?}", out.dimensions());
+    }
+
+    /// 某一拍一下滚出去超过一屏（相对上一张关键帧），退回用候选帧接上。
+    #[test]
+    fn falls_back_to_pending_when_jump_is_too_far() {
+        let full = page(500, 1400, 9);
+        let frames: Vec<_> = [0, 150, 480, 820, 1000]
+            .iter()
+            .map(|&t| window(&full, t, 400))
+            .collect();
+        let mut s = Stitcher::new();
+        let (motions, store) = follow_frames(&mut s, &frames);
+        assert!(!motions.contains(&Motion::Lost), "{motions:?}");
+        let out = s.compose(|i| store.get(i).cloned().flatten()).unwrap();
+        assert!(out == window(&full, 0, 1400), "{:?}", out.dimensions());
+    }
+
+    #[test]
+    fn too_fast_is_lost_then_recovers() {
+        let full = page(500, 2000, 10);
+        let frames: Vec<_> = [0, 900, 250, 450]
+            .iter()
+            .map(|&t| window(&full, t, 400))
+            .collect();
+        let mut s = Stitcher::new();
+        let (motions, store) = follow_frames(&mut s, &frames);
+        assert_eq!(motions[1], Motion::Lost);
+        assert_eq!(motions[2], Motion::Moving);
+        let out = s.compose(|i| store.get(i).cloned().flatten()).unwrap();
+        assert!(out == window(&full, 0, 850));
+    }
+
+    /// 成组撤销：一次滚动并入的多帧一起撤掉，用不到的帧不再被引用。
+    #[test]
+    fn grouped_undo_reverts_whole_gesture() {
+        let full = page(500, 2000, 11);
+        let mut s = Stitcher::new();
+        let first = [window(&full, 0, 400), window(&full, 120, 400)];
+        follow_frames(&mut s, &first);
+        let h = s.total_height();
+        let refs = s.referenced_frames();
+        s.begin_group();
+        let second: Vec<_> = (160..=1200)
+            .step_by(60)
+            .map(|t| window(&full, t, 400))
+            .collect();
+        follow_frames(&mut s, &second);
+        assert!(s.frame_count() > 3);
+        assert!(s.can_undo());
+        s.undo();
+        assert_eq!(s.total_height(), h);
+        assert_eq!(s.referenced_frames(), refs);
     }
 
     #[test]

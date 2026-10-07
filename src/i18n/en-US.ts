@@ -60,11 +60,11 @@ const enUS: Dict = {
   longshot: {
     start: 'Scroll the mouse wheel to start',
     collecting: 'Keep scrolling · {{frames}} frames · {{height}}px',
-    failed: "This frame didn't match — scroll back a little and try again",
+    failed: 'Scrolled too fast to match — scroll back a little and it picks up again',
     failedDynamic: 'Still not matching — pause animated content and try again',
     bottom: 'The page stopped moving. If it is still loading, wait and scroll again; if this is the end, press Enter',
     tooLong: 'Reached {{height}}px — consider finishing',
-    undo: 'Undo last frame',
+    undo: 'Undo last scroll',
     done: 'Done',
     meta: '{{frames}} frames · {{width}} × {{height}}',
   },
@@ -456,9 +456,9 @@ const enUS: Dict = {
       rightClickCancel: 'Clear selection first',
     },
     longshot: {
-      note: 'Scrolling capture is manual: select an area, scroll with your mouse wheel and DATO OCR stitches the frames.',
-      debounce: 'Wait after scrolling',
-      debounceDesc: 'Increase if frames show motion blur',
+      note: 'Scrolling capture is manual: select an area and scroll with your mouse wheel, all the way in one go if you like. DATO OCR captures while you scroll and stitches the frames.',
+      debounce: 'Pause detection',
+      debounceDesc: 'How long the wheel and screen must be still to end one scroll (undo works per scroll). Increase if the last screen is sometimes missed',
       maxHeight: 'Maximum height',
     },
     ocr: {

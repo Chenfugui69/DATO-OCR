@@ -87,6 +87,14 @@ impl ScreenRecorder {
         let image = capture_rect(self.points, self.size).ok()?;
         crate::imaging::crop_opaque(&image, self.crop).ok()
     }
+
+    /// 现在的画面。这里没有帧队列，每次都现抓，画面没变也会返回（由上层比对）。
+    pub fn latest(&self) -> Option<RgbaImage> {
+        self.next(std::time::Duration::ZERO)
+    }
+
+    /// 没有帧队列，没什么可清的。
+    pub fn drain(&self) {}
 }
 
 /// 第一次抓屏要和系统的录屏服务建立连接（实测冷 ~550ms、热 ~15ms），启动时先空抓一次。

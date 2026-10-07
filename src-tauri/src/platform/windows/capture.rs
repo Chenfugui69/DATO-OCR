@@ -103,6 +103,25 @@ impl ScreenRecorder {
     /// 取一帧新画面（只有 `region` 那一块，不透明 RGBA）。画面没变化时等到超时返回 None。
     pub fn next(&self, timeout: std::time::Duration) -> Option<RgbaImage> {
         let frame = self.rx.recv_timeout(timeout).ok()?;
+        self.crop(frame)
+    }
+
+    /// 取最新的一帧，积压的旧帧直接丢掉（长截图跟拍要的是"现在"的画面）。
+    /// 上次取过之后画面没变化就返回 None。
+    pub fn latest(&self) -> Option<RgbaImage> {
+        let mut frame = None;
+        while let Ok(f) = self.rx.try_recv() {
+            frame = Some(f);
+        }
+        self.crop(frame?)
+    }
+
+    /// 丢掉积压的帧（不用的时候也要清，不然画面一直在变时队列会越积越多）。
+    pub fn drain(&self) {
+        while self.rx.try_recv().is_ok() {}
+    }
+
+    fn crop(&self, frame: xcap::Frame) -> Option<RgbaImage> {
         // WGC 给的是整块屏，alpha 没有语义；裁出区域时顺手补成不透明
         let full = RgbaImage::from_raw(frame.width, frame.height, frame.raw)?;
         match crate::imaging::crop_opaque(&full, self.region) {
