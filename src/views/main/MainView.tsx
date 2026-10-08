@@ -10,6 +10,7 @@ import { useTranslation } from 'react-i18next';
 import { useEvent } from '@/lib/events';
 import { capture, clipboard } from '@/lib/ipc';
 import { useLiveInvalidation } from '@/lib/queries';
+import { BrandMark } from '@/ui/BrandMark';
 import { notify } from '@/ui/overlays';
 import { TitleBar } from '@/ui/TitleBar';
 
@@ -55,10 +56,10 @@ export default function MainView() {
       <aside className="sidebar">
         <div className="sidebar__brand" data-tauri-drag-region>
           <span className="sidebar__logo">
-            <Crop size={13} strokeWidth={2.2} />
+            <BrandMark size={16} />
           </span>
           <span className="sidebar__name" data-tauri-drag-region>
-            DATO OCR
+            DATO
           </span>
         </div>
         <div className="sidebar__quick">

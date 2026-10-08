@@ -146,7 +146,7 @@ pub fn register_all(app: &AppHandle) -> Vec<HotkeyStatus> {
                     action,
                     accelerator: accel,
                     ok: false,
-                    error: Some(err),
+                    error: Some(crate::i18n::text(err)),
                 });
             }
         }

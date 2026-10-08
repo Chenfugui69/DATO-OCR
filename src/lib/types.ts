@@ -89,6 +89,10 @@ export interface Settings {
     panelBlur: boolean;
     /** 底部样式贴边：直角、紧贴屏幕底部 */
     panelDocked: boolean;
+    /** 底部样式盖在程序坞上面、贴着屏幕最底下（macOS） */
+    panelOverDock: boolean;
+    /** 面板弹出 / 收起的动画 */
+    panelAnimation: boolean;
     /** 面板里点一下就粘贴（默认双击粘贴） */
     singleClickPaste: boolean;
     maxTextMb: number;

@@ -5,6 +5,7 @@ import { ChevronDown, KeyRound, Plus, Radar, RotateCcw, Trash2, X } from 'lucide
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
+import i18n from '@/i18n';
 import { ai } from '@/lib/ipc';
 import { THINKING_LEVELS, type AiProvider, type QuickPrompt, type Settings } from '@/lib/types';
 import { Button, IconButton, Segmented, Select, Slider, Switch, TextField } from '@/ui/controls';
@@ -13,17 +14,20 @@ import { DropdownMenu, notify, promptDialog } from '@/ui/overlays';
 import { Group, Row } from './settingsParts';
 
 /** 常见服务商的预设：只是帮用户填好名称、格式和接口地址。 */
-const PRESETS: { name: string; kind: AiProvider['kind']; baseUrl: string }[] = [
+const PRESETS: { name: string; en?: string; kind: AiProvider['kind']; baseUrl: string }[] = [
   { name: 'OpenAI', kind: 'openai', baseUrl: 'https://api.openai.com/v1' },
   { name: 'Anthropic', kind: 'anthropic', baseUrl: 'https://api.anthropic.com' },
   { name: 'DeepSeek', kind: 'openai', baseUrl: 'https://api.deepseek.com/v1' },
-  { name: '通义千问', kind: 'openai', baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1' },
+  { name: '通义千问', en: 'Qwen (Tongyi)', kind: 'openai', baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1' },
   { name: 'Kimi', kind: 'openai', baseUrl: 'https://api.moonshot.cn/v1' },
-  { name: '智谱 GLM', kind: 'openai', baseUrl: 'https://open.bigmodel.cn/api/paas/v4' },
-  { name: '硅基流动', kind: 'openai', baseUrl: 'https://api.siliconflow.cn/v1' },
+  { name: '智谱 GLM', en: 'Zhipu GLM', kind: 'openai', baseUrl: 'https://open.bigmodel.cn/api/paas/v4' },
+  { name: '硅基流动', en: 'SiliconFlow', kind: 'openai', baseUrl: 'https://api.siliconflow.cn/v1' },
   { name: 'OpenRouter', kind: 'openai', baseUrl: 'https://openrouter.ai/api/v1' },
   { name: 'Ollama', kind: 'openai', baseUrl: 'http://localhost:11434/v1' },
 ];
+
+/** 预设在当前界面语言下叫什么 */
+const presetName = (p: (typeof PRESETS)[number]) => (i18n.language.startsWith('en') && p.en ? p.en : p.name);
 
 const newId = () => crypto.randomUUID().replace(/-/g, '').slice(0, 10);
 
@@ -45,7 +49,7 @@ export function AiSettingsGroups({ settings, set }: { settings: Settings; set: (
     set((d) => {
       d.ai.providers.push({
         id: newId(),
-        name: preset?.name ?? t('settings.ai.customProvider'),
+        name: preset ? presetName(preset) : t('settings.ai.customProvider'),
         kind: preset?.kind ?? 'openai',
         baseUrl: preset?.baseUrl ?? '',
         models: [],
@@ -171,7 +175,7 @@ export function AiSettingsGroups({ settings, set }: { settings: Settings; set: (
           <DropdownMenu
             align="end"
             items={[
-              ...PRESETS.map((preset) => ({ label: preset.name, onSelect: () => addProvider(preset) })),
+              ...PRESETS.map((preset) => ({ label: presetName(preset), onSelect: () => addProvider(preset) })),
               { separator: true as const },
               { label: t('settings.ai.customProvider'), onSelect: () => addProvider() },
             ]}

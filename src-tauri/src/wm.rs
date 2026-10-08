@@ -241,6 +241,19 @@ pub fn track_glass(window: &WebviewWindow) {
     });
 }
 
+/// 改了界面语言：已经开着的窗口，标题跟着换。
+pub fn retitle(app: &AppHandle) {
+    for (label, title) in [
+        (crate::ai::WINDOW, "AI 对话 - DATO OCR"),
+        (crate::editor::WINDOW, "编辑图片 - DATO OCR"),
+        (crate::ocr::WINDOW, "文字识别 - DATO OCR"),
+    ] {
+        if let Some(window) = app.get_webview_window(label) {
+            let _ = window.set_title(&crate::i18n::localize(title));
+        }
+    }
+}
+
 /// 带系统材质的窗口标签。
 const GLASS_WINDOWS: &[&str] = &[MAIN, "ocr", "editor"];
 
@@ -286,7 +299,7 @@ pub fn prewarm_toast(app: &AppHandle) {
 
 /// 屏幕右下角的轻提示（规格 06 §4.7）。不是系统通知：系统通知有延迟还会进通知中心。
 pub fn toast(app: &AppHandle, kind: &'static str, message: impl Into<String>) {
-    let message = message.into();
+    let message = crate::i18n::text(message.into());
     let app = app.clone();
     let _ = app.clone().run_on_main_thread(move || {
         let Some(window) = app.get_webview_window(TOAST) else {

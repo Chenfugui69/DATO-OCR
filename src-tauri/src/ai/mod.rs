@@ -404,7 +404,7 @@ pub async fn chat(app: AppHandle, req: ChatRequest, channel: Channel<ChatEvent>)
                     text: text.to_string(),
                 },
                 Piece::Notice(message) => ChatEvent::Notice {
-                    message: message.to_string(),
+                    message: crate::i18n::text(message),
                 },
             });
         };
@@ -438,7 +438,7 @@ pub async fn chat(app: AppHandle, req: ChatRequest, channel: Channel<ChatEvent>)
                 // 日志只记模型和错误，不记对话内容
                 tracing::warn!(model = %params.model, "AI 对话失败：{err}");
                 ChatEvent::Error {
-                    message: err.to_string(),
+                    message: crate::i18n::text(&err),
                 }
             }
         });
@@ -508,7 +508,7 @@ pub fn open_window(app: &AppHandle, mut context: AiContext) {
         let window = match ui.get_webview_window(WINDOW) {
             Some(w) => w,
             None => match wm::framed_builder(&ui, WINDOW)
-                .title("AI 对话 - DATO OCR")
+                .title(crate::i18n::localize("AI 对话 - DATO OCR"))
                 .resizable(true)
                 .transparent(true)
                 .shadow(true)

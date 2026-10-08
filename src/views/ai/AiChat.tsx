@@ -10,6 +10,8 @@ import { ArrowUp, Brain, ChevronRight, Copy, FileText, ImageIcon, RotateCw, Sett
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 
+import i18n from '@/i18n';
+
 import { ai, capture, system } from '@/lib/ipc';
 import { renderMarkdown } from '@/lib/markdown';
 import { assetUrl, shotUrl } from '@/lib/platform';
@@ -37,9 +39,9 @@ export function imageUrl(img: ChatImage): string | undefined {
 function compose(question: string, context: ChatContext | null, template?: string): string {
   const text = context?.text?.trim();
   // 只带了截图没有文字时，快捷提问照样能用：{text} 指向图片
-  if (template) return template.split('{text}').join(text ?? (context?.images.length ? '（见附图）' : ''));
+  if (template) return template.split('{text}').join(text ?? (context?.images.length ? i18n.t('ai.seeImage') : ''));
   if (!text) return question;
-  return `以下是参考内容：\n\n<context>\n${text}\n</context>\n\n${question}`;
+  return `${i18n.t('ai.contextIntro')}\n\n<context>\n${text}\n</context>\n\n${question}`;
 }
 
 /** 思考深度：顶栏上的小胶囊，点开是一条分档滑杆。改了就存进设置，所有对话窗口一起变。 */

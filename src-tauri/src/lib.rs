@@ -19,6 +19,8 @@ mod error;
 mod events;
 mod gif_record;
 mod hotkeys;
+mod i18n;
+mod i18n_en;
 mod image_store;
 mod imaging;
 mod library;
@@ -219,6 +221,7 @@ pub fn run() {
             commands::system::window_is_foreground,
             commands::system::window_set_region,
             commands::system::permissions_status,
+            commands::system::ui_language,
             commands::system::permission_request,
             commands::system::quit_app,
             commands::system::report_error,
@@ -274,7 +277,12 @@ fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     let _ = APP.set(handle.clone());
 
     let paths = AppPaths::resolve(&handle)?;
-    let settings = Settings::load(&paths.settings_file());
+    // 先按系统语言定一次：第一次运行时设置的默认内容（AI 预设提示词）要按它生成
+    i18n::set_language("system");
+    let mut settings = Settings::load(&paths.settings_file());
+    i18n::set_language(&settings.general.language);
+    // 没改过的 AI 默认提示词跟着界面语言走（系统语言变了、或者上次是另一种语言）
+    settings.ai.follow_language(i18n::english());
     let log_guard = logging::init(&paths.logs(), false);
     tracing::info!(version = %app.package_info().version, data = %paths.root().display(), "DATO OCR 启动");
     if let Some(old) = &paths.migrated_from {
@@ -330,6 +338,7 @@ fn on_ready(app: &AppHandle) {
     let ui = app.clone();
     std::thread::spawn(move || after_rename(&ui));
 
+    platform::apply_theme(app, &state(app).settings.read().appearance.theme);
     if let Some(main) = app.get_webview_window(wm::MAIN) {
         wm::apply_window_effects(app, &main);
         // 开机自启时安静地待在托盘里；手动启动时显示主窗口

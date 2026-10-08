@@ -38,7 +38,9 @@ pub(crate) fn update_settings_with(
 }
 
 #[tauri::command]
-pub async fn settings_set(app: AppHandle, settings: Settings) -> AppResult<Settings> {
+pub async fn settings_set(app: AppHandle, mut settings: Settings) -> AppResult<Settings> {
+    crate::i18n::set_language(&settings.general.language);
+    settings.ai.follow_language(crate::i18n::english());
     let st = state(&app);
     let (before, next) = {
         let _guard = SETTINGS_LOCK.lock();
@@ -47,7 +49,11 @@ pub async fn settings_set(app: AppHandle, settings: Settings) -> AppResult<Setti
         (before, next)
     };
 
-    if before.hotkeys != next.hotkeys {
+    crate::i18n::set_language(&next.general.language);
+    if before.general.language != next.general.language {
+        wm::retitle(&app);
+    }
+    if before.hotkeys != next.hotkeys || before.general.language != next.general.language {
         let ui = app.clone();
         app.run_on_main_thread(move || {
             hotkeys::register_all(&ui);
@@ -88,7 +94,11 @@ pub async fn settings_set(app: AppHandle, settings: Settings) -> AppResult<Setti
     }
     if before.appearance != next.appearance {
         let ui = app.clone();
-        app.run_on_main_thread(move || wm::refresh_visuals(&ui))?;
+        let theme = next.appearance.theme.clone();
+        app.run_on_main_thread(move || {
+            crate::platform::apply_theme(&ui, &theme);
+            wm::refresh_visuals(&ui);
+        })?;
     }
     Ok(next)
 }
@@ -360,6 +370,14 @@ pub async fn window_backdrop(
         crate::platform::set_backdrop_rect(&w, rect.map(|r| r.physical(s)), ms);
     })?;
     Ok(())
+}
+
+/// 界面实际用的语言（设置是「跟随系统」时由这里按系统语言定，前后端用同一个结果）。
+#[tauri::command]
+pub async fn ui_language(app: AppHandle) -> AppResult<&'static str> {
+    Ok(crate::i18n::resolve(
+        &state(&app).settings.read().general.language,
+    ))
 }
 
 /// 要用户手动授予的系统权限（macOS 的屏幕录制、辅助功能）。别的平台两项都是 null。

@@ -310,7 +310,7 @@ pub fn ensure_window(app: &AppHandle) -> AppResult<tauri::WebviewWindow> {
         return Ok(w);
     }
     let window = wm::framed_builder(app, WINDOW)
-        .title("文字识别 - DATO OCR")
+        .title(crate::i18n::localize("文字识别 - DATO OCR"))
         .inner_size(960.0, 640.0)
         .min_inner_size(680.0, 440.0)
         .resizable(true)
@@ -452,7 +452,7 @@ fn run_job(
             }
             Err(err) => {
                 job.status = "error".into();
-                job.error = Some(err.to_string());
+                job.error = Some(crate::i18n::text(&err));
             }
         }
         // 用户可能已经开了新任务，旧任务的结果只更新缓存不抢显示

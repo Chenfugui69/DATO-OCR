@@ -272,7 +272,7 @@ pub async fn check(app: &AppHandle, manual: bool) -> AppResult<UpdateStatus> {
             set(app, |s| {
                 s.checking = false;
                 s.last_check = Some(now);
-                s.error = Some(friendly(&err));
+                s.error = Some(crate::i18n::text(friendly(&err)));
             });
         }
     }
@@ -385,7 +385,7 @@ pub async fn install(app: &AppHandle) -> AppResult<()> {
         set(app, |s| {
             s.stage = None;
             s.progress = None;
-            s.error = Some(err.to_string());
+            s.error = Some(crate::i18n::text(err));
         });
     }
     result

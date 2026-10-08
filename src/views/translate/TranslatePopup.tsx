@@ -785,8 +785,9 @@ html[data-view='translate'], html[data-view='translate'] body { background: tran
                 background: rgba(var(--ask-rgb), max(var(--pop-alpha), 0.8));
                 -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px); }
 /* 多个翻译源那一列的滚动条放进右边的留白里，而且位置一直留着：以前一出滚动条卡片就被挤窄 10px，
-   左右留白不一样宽 */
-.pop-pane--translate .tr-box__cards { margin-right: -10px; scrollbar-gutter: stable; }
+   左右留白不一样宽。用 overflow-y: scroll 占住这 10px（轨道是透明的，内容不够长时看不见滚动条）：
+   scrollbar-gutter 在 WebKit（macOS）里对自定义样式的滚动条不起作用，没出滚动条时卡片会一直顶到右边 */
+.pop-pane--translate .tr-box__cards { margin-right: -10px; overflow-x: hidden; overflow-y: scroll; scrollbar-gutter: stable; }
 .has-ask .tr-box { padding-bottom: 46px; }
 .has-ask .tr-box:has(.tr-box__cards) { padding-bottom: 0; }
 .has-ask .tr-box__cards { padding-bottom: 46px; }

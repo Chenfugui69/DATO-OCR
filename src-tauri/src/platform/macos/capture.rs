@@ -20,12 +20,22 @@ pub fn list_monitors() -> AppResult<Vec<MonitorInfo>> {
 
 pub fn capture_all() -> AppResult<Vec<(MonitorInfo, RgbaImage)>> {
     permissions::ensure_screen_capture()?;
-    let mut shots = Vec::new();
-    for (screen, info) in enumerate()? {
-        let image = capture_one(&screen)?;
-        shots.push((info, image));
-    }
-    Ok(shots)
+    // 每块屏一个线程同时抓：一块接一块抓的话，两块屏（尤其带一块 5K 的）热键按下去要等一百多毫秒
+    let screens = enumerate()?;
+    std::thread::scope(|scope| {
+        let jobs: Vec<_> = screens
+            .into_iter()
+            .map(|(screen, info)| {
+                scope.spawn(move || capture_one(&screen).map(|image| (info, image)))
+            })
+            .collect();
+        jobs.into_iter()
+            .map(|job| {
+                job.join()
+                    .unwrap_or_else(|_| Err(AppError::Capture("抓屏线程异常退出".into())))
+            })
+            .collect()
+    })
 }
 
 pub fn capture_monitor(id: MonitorId) -> AppResult<RgbaImage> {

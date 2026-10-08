@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <!-- DATO OCR 图标：左边散开的点是图片里的像素，往右连成线 = 认出来的字 -->
+  <defs>
+    <linearGradient id="m" gradientUnits="userSpaceOnUse" x1="232" y1="0" x2="800" y2="0"><stop offset="0" stop-color="#E9FF5A"/><stop offset="1" stop-color="#2DF5B0"/></linearGradient>
+    <radialGradient id="b" cx="0.3" cy="0.15" r="1.1"><stop offset="0" stop-color="#2A2D36"/><stop offset="1" stop-color="#0C0D10"/></radialGradient>
+  </defs>
+  <rect x="32" y="32" width="960" height="960" rx="216" fill="url(#b)"/>
+  <g>
+    <circle cx="272" cy="352" r="38" fill="url(#m)" opacity="0.38"/>
+    <path d="M 376 352 H 760" stroke="url(#m)" stroke-width="76" stroke-linecap="round" fill="none"/>
+    <circle cx="272" cy="512" r="38" fill="url(#m)" opacity="0.38"/>
+    <circle cx="376" cy="512" r="38" fill="url(#m)" opacity="0.58"/>
+    <circle cx="480" cy="512" r="38" fill="url(#m)" opacity="0.78"/>
+    <path d="M 584 512 H 664" stroke="url(#m)" stroke-width="76" stroke-linecap="round" fill="none"/>
+    <circle cx="272" cy="672" r="38" fill="url(#m)" opacity="0.38"/>
+    <circle cx="376" cy="672" r="38" fill="url(#m)" opacity="0.58"/>
+    <path d="M 480 672 H 728" stroke="url(#m)" stroke-width="76" stroke-linecap="round" fill="none"/>
+  </g>
+</svg>

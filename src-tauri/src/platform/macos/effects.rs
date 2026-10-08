@@ -41,6 +41,8 @@ use crate::platform::{FloatingKind, PhysicalRect};
 pub const OVERLAY_LEVEL: isize = 1000;
 /// 普通浮层（面板、气泡、贴图、提示）：和系统的浮动面板同一档
 const PANEL_LEVEL: isize = 3;
+/// 要盖住程序坞（20）的浮层：和菜单栏上的状态项同一档
+const ABOVE_DOCK_LEVEL: isize = 25;
 
 // ───────────────────────── 浮层 = 不激活应用的面板 ─────────────────────────
 //
@@ -207,6 +209,13 @@ pub fn build_floating(
 /// 窗口上有属性监听时对象的类是 KVO 的动态子类，所以要问"是不是这个类或它的子类"，不能比类名。
 fn is_panel(ns: &NSWindow) -> bool {
     panel_class().is_some_and(|class| ns.isKindOfClass(class))
+}
+
+/// 浮层盖不盖在程序坞上面：程序坞的窗口层级比普通浮层高，要盖住它得再往上提一档。
+pub fn set_above_dock(window: &WebviewWindow, above: bool) {
+    with_window(window, move |ns, _| {
+        ns.setLevel(if above { ABOVE_DOCK_LEVEL } else { PANEL_LEVEL });
+    });
 }
 
 /// 浮层拿键盘焦点时应用并不在前台（系统的"前台窗口"还是别的程序的），所以看的是它是不是焦点窗口。
@@ -513,6 +522,49 @@ thread_local! {
     static PENDING_FRAME: RefCell<HashMap<isize, CGRect>> = RefCell::new(HashMap::new());
 }
 
+/// 外框左上角 + 内容区大小（全局点坐标）→ 系统要的窗口外框。
+fn frame_for(ns: &NSWindow, points: CGRect) -> CGRect {
+    let content = geometry::flip(points);
+    let frame = ns.frameRectForContentRect(content);
+    // 标题栏叠在内容上的窗口，内容区就是整个外框；按左上角对齐
+    geometry::rect(
+        frame.origin.x,
+        content.origin.y + content.size.height - frame.size.height,
+        frame.size.width,
+        frame.size.height,
+    )
+}
+
+/// 面板的滑入滑出在 macOS 上是挪窗口本身：毛玻璃背板是窗口的一部分，页面里的动画带不动它。
+pub const SLIDES_WINDOWS: bool = true;
+
+/// 把窗口从现在的位置滑到 `to`（屏幕物理像素）。
+pub fn slide_window(window: &WebviewWindow, to: PhysicalRect, ms: u32) {
+    let points = geometry::rect_to_points(to);
+    with_window(window, move |ns, _| {
+        let frame = frame_for(ns, points);
+        NSAnimationContext::beginGrouping();
+        let ctx = NSAnimationContext::currentContext();
+        ctx.setDuration(f64::from(ms) / 1000.0);
+        // 和页面里面板用的缓动（--cn-ease-sheet）一样
+        ctx.setTimingFunction(Some(&CAMediaTimingFunction::functionWithControlPoints(
+            0.32, 0.72, 0.0, 1.0,
+        )));
+        ns.animator().setFrame_display(frame, true);
+        NSAnimationContext::endGrouping();
+    });
+}
+
+/// 应用里选了浅色 / 深色时，原生层（毛玻璃材质、菜单）也得是那个外观，不然系统是深色、应用选了浅色，
+/// 毛玻璃还是深色的，上面压着浅色主题的深色字，看不清。选"跟随系统"就交还给系统。
+pub fn apply_theme(app: &AppHandle, theme: &str) {
+    app.set_theme(match theme {
+        "light" => Some(tauri::Theme::Light),
+        "dark" => Some(tauri::Theme::Dark),
+        _ => None,
+    });
+}
+
 /// `points`：外框左上角 + 内容区大小，全局点坐标。
 fn set_frame(ns: &NSWindow, points: CGRect) {
     // 还有一次没执行的"再摆一次"：让它摆到最新要的位置，别把这次的盖回去
@@ -521,16 +573,7 @@ fn set_frame(ns: &NSWindow, points: CGRect) {
             *slot = points;
         }
     });
-    let content = geometry::flip(points);
-    let frame = ns.frameRectForContentRect(content);
-    // 标题栏叠在内容上的窗口，内容区就是整个外框；按左上角对齐
-    let frame = geometry::rect(
-        frame.origin.x,
-        content.origin.y + content.size.height - frame.size.height,
-        frame.size.width,
-        frame.size.height,
-    );
-    ns.setFrame_display(frame, true);
+    ns.setFrame_display(frame_for(ns, points), true);
 }
 
 /// 一次同时改位置和大小（屏幕物理像素），同步生效。

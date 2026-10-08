@@ -299,7 +299,7 @@ fn ensure_server(app: &AppHandle, port: u16) {
         }
         Err(err) => {
             tracing::warn!("局域网同步服务启动失败：{err}");
-            lan.error = Some(err.to_string());
+            lan.error = Some(crate::i18n::text(&err));
             lan.config = None;
         }
     }
@@ -921,7 +921,7 @@ pub fn join(app: &AppHandle, code: String, address: Option<String>) -> AppResult
             }
             Err(err) => {
                 j.phase = "error".into();
-                j.error = Some(err.to_string());
+                j.error = Some(crate::i18n::text(&err));
             }
         });
     });

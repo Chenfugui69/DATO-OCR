@@ -78,7 +78,8 @@ impl Serialize for AppError {
         use serde::ser::SerializeStruct;
         let mut s = serializer.serialize_struct("AppError", 2)?;
         s.serialize_field("code", self.code())?;
-        s.serialize_field("message", &self.to_string())?;
+        // 英文界面下换成英文（见 i18n.rs）
+        s.serialize_field("message", &crate::i18n::text(self))?;
         s.end()
     }
 }

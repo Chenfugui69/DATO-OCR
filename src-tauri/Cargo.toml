@@ -68,6 +68,8 @@ aes = "0.8"
 cbc = "0.1"
 # PaddleOCR 引擎包是 7z（LZMA2 + BCJ2）。纯 Rust 解压（Apache-2.0）
 sevenz-rust2 = { version = "0.23", default-features = false, features = ["util"] }
+# 读系统的界面语言（界面语言设成「跟随系统」时用）
+sys-locale = "0.3"
 
 [target.'cfg(windows)'.dependencies]
 # 抓屏（Apache-2.0）。必须开 wgc：默认 GDI 路径在 4K 屏上要 260ms+。

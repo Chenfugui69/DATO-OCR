@@ -124,7 +124,7 @@ pub fn list_providers(app: &AppHandle) -> Vec<ProviderInfo> {
                 _ => true,
             };
             ProviderInfo {
-                name: provider_name(&p.id).into(),
+                name: crate::i18n::text(provider_name(&p.id)),
                 free: is_free(&p.id),
                 configured,
                 enabled: p.enabled,

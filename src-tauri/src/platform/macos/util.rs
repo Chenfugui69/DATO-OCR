@@ -115,6 +115,46 @@ pub fn cgimage_from_rgba(image: &RgbaImage, opaque: bool) -> Option<CgImage> {
     }
 }
 
+unsafe extern "C" fn release_shared(info: *mut c_void, _data: *const c_void, _size: usize) {
+    // SAFETY: info 是 `cgimage_sharing` 里 Arc::into_raw 出来的。
+    drop(unsafe { std::sync::Arc::from_raw(info.cast::<RgbaImage>().cast_const()) });
+}
+
+/// 整屏画面 → CGImage，不拷像素：CGImage 和调用方共同持有这张图（5K 屏一张 59MB，拷一遍要十几毫秒）。
+/// alpha 忽略。
+pub fn cgimage_sharing(image: &std::sync::Arc<RgbaImage>) -> Option<CgImage> {
+    let (w, h) = (image.width() as usize, image.height() as usize);
+    if w == 0 || h == 0 {
+        return None;
+    }
+    let (ptr, len) = (image.as_raw().as_ptr(), image.as_raw().len());
+    let info = std::sync::Arc::into_raw(image.clone()).cast_mut();
+    // SAFETY: 像素在 Arc 里不会移动也不会被改，provider 释放时（release_shared）才放掉这份引用。
+    unsafe {
+        let provider =
+            ffi::CGDataProviderCreateWithData(info.cast(), ptr.cast(), len, Some(release_shared));
+        if provider.is_null() {
+            drop(std::sync::Arc::from_raw(info.cast_const()));
+            return None;
+        }
+        let cg = ffi::CGImageCreate(
+            w,
+            h,
+            8,
+            32,
+            w * 4,
+            srgb(),
+            ffi::kCGImageAlphaNoneSkipLast,
+            provider,
+            std::ptr::null(),
+            false,
+            0,
+        );
+        ffi::CGDataProviderRelease(provider);
+        (!cg.is_null()).then_some(CgImage(cg))
+    }
+}
+
 /// 把 CGImage 画进 `width`×`height` 的 sRGB 位图，顺带完成色彩转换和缩放。
 ///
 /// 屏幕抓回来的像素在显示器自己的色彩空间里（MacBook 是 Display P3），不转的话取色器
@@ -134,6 +174,12 @@ pub fn rgba_from_cgimage(
     }
     let (w, h) = (width as usize, height as usize);
     let mut buf = vec![0u8; w * h * 4];
+    // SAFETY: image 非空。
+    let same_size =
+        unsafe { ffi::CGImageGetWidth(image) == w && ffi::CGImageGetHeight(image) == h };
+    if opaque && same_size && h >= BANDS * 64 {
+        return draw_in_bands(image, w, h, buf).and_then(|b| RgbaImage::from_raw(width, height, b));
+    }
     let alpha = if opaque {
         ffi::kCGImageAlphaNoneSkipLast
     } else {
@@ -146,7 +192,6 @@ pub fn rgba_from_cgimage(
         if ctx.is_null() {
             return None;
         }
-        let same_size = ffi::CGImageGetWidth(image) == w && ffi::CGImageGetHeight(image) == h;
         ffi::CGContextSetBlendMode(ctx, ffi::kCGBlendModeCopy);
         ffi::CGContextSetInterpolationQuality(
             ctx,
@@ -176,9 +221,77 @@ pub fn rgba_from_cgimage(
     RgbaImage::from_raw(width, height, buf)
 }
 
+/// 整屏画面分成几条横带并行转换。
+const BANDS: usize = 4;
+
+/// 整屏画面转 sRGB 是热键到遮罩出现这段时间里最慢的一步（5K 屏单线程要六七十毫秒），
+/// 所以横着切成几条、每条一个线程各画各的：每条是一个只盖住自己那几行的位图上下文，
+/// 把整张图往下挪到对应位置画进去。像素一比一、不插值，拼缝处没有痕迹。
+fn draw_in_bands(image: ffi::CGImageRef, w: usize, h: usize, mut buf: Vec<u8>) -> Option<Vec<u8>> {
+    struct Shared(ffi::CGImageRef);
+    // SAFETY: CGImage 不可变，可以多个线程同时画；每个线程用自己的上下文、写自己那一段内存。
+    unsafe impl Sync for Shared {}
+    let shared = Shared(image);
+    let rows = h.div_ceil(BANDS);
+    let ok = std::thread::scope(|scope| {
+        let jobs: Vec<_> = buf
+            .chunks_mut(rows * w * 4)
+            .enumerate()
+            .map(|(i, band)| {
+                let shared = &shared;
+                scope.spawn(move || {
+                    let band_rows = band.len() / (w * 4);
+                    // 这条带的底边离整张图底边多远（位图上下文的原点在左下角）
+                    let below = h - (i * rows + band_rows);
+                    // SAFETY: 上下文直接写进 band（行宽 w*4、band_rows 行），绘制期间 band 不被移动。
+                    unsafe {
+                        let ctx = ffi::CGBitmapContextCreate(
+                            band.as_mut_ptr().cast(),
+                            w,
+                            band_rows,
+                            8,
+                            w * 4,
+                            srgb(),
+                            ffi::kCGImageAlphaNoneSkipLast,
+                        );
+                        if ctx.is_null() {
+                            return false;
+                        }
+                        ffi::CGContextSetBlendMode(ctx, ffi::kCGBlendModeCopy);
+                        ffi::CGContextSetInterpolationQuality(ctx, ffi::kCGInterpolationNone);
+                        let rect = ffi::CGRect::new(
+                            ffi::CGPoint::new(0.0, -(below as f64)),
+                            ffi::CGSize::new(w as f64, h as f64),
+                        );
+                        ffi::CGContextDrawImage(ctx, rect, shared.0);
+                        ffi::CGContextRelease(ctx);
+                    }
+                    true
+                })
+            })
+            .collect();
+        jobs.into_iter().all(|j| j.join().unwrap_or(false))
+    });
+    ok.then_some(buf)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 分带并行转换出来的整屏画面和原图逐像素一致（带和带之间没有错行、没有缝）。
+    #[test]
+    fn banded_conversion_matches_the_source() {
+        let (w, h) = (97u32, 1031u32);
+        let src = RgbaImage::from_fn(w, h, |x, y| {
+            image::Rgba([(x * 7 + y) as u8, (y * 3) as u8, (x ^ y) as u8, 255])
+        });
+        let cg = cgimage_from_rgba(&src, true).unwrap();
+        let out = rgba_from_cgimage(cg.0, w, h, true).unwrap();
+        for (a, b) in src.pixels().zip(out.pixels()) {
+            assert_eq!(a.0[..3], b.0[..3]);
+        }
+    }
 
     #[test]
     fn handle_roundtrip() {

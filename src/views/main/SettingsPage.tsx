@@ -2,7 +2,7 @@
 // 分组：通用 · 截图 · 长截图 · 文字识别 · 翻译 · 剪贴板 · 快捷键 · 外观 · 存储 · 关于
 
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Crop, FolderOpen, RotateCcw } from 'lucide-react';
+import { FolderOpen, RotateCcw } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
@@ -13,6 +13,7 @@ import { accelLabel, isMac } from '@/lib/platform';
 import { useSettings, useSettingsStore } from '@/lib/settings';
 import { currentVisuals } from '@/lib/theme';
 import type { EngineStatus, HotkeyAction, PaddleDownload, Permissions, Settings } from '@/lib/types';
+import { BrandMark } from '@/ui/BrandMark';
 import { Button, Segmented, Select, Slider, Switch, TextField } from '@/ui/controls';
 import { HotkeyInput } from '@/ui/HotkeyInput';
 import { confirmDialog, notify } from '@/ui/overlays';
@@ -96,6 +97,7 @@ export function SettingsPage({ section }: { section: string | null }) {
               <Select
                 value={settings.general.language}
                 options={[
+                  { value: 'system', label: t('settings.general.languageSystem') },
                   { value: 'zh-CN', label: '简体中文' },
                   { value: 'en-US', label: 'English' },
                 ]}
@@ -343,6 +345,14 @@ export function SettingsPage({ section }: { section: string | null }) {
                 <Switch checked={cb.panelDocked} onChange={(v) => set((d) => void (d.clipboard.panelDocked = v))} />
               </Row>
             )}
+            {isMac && cb.panelStyle === 'bottom' && (
+              <Row title={t('settings.clipboard.overDock')} desc={t('settings.clipboard.overDockDesc')}>
+                <Switch checked={cb.panelOverDock} onChange={(v) => set((d) => void (d.clipboard.panelOverDock = v))} />
+              </Row>
+            )}
+            <Row title={t('settings.clipboard.animation')} desc={t('settings.clipboard.animationDesc')}>
+              <Switch checked={cb.panelAnimation} onChange={(v) => set((d) => void (d.clipboard.panelAnimation = v))} />
+            </Row>
             <Row title={t('settings.clipboard.blur')} desc={t('settings.clipboard.blurDesc')}>
               <Switch checked={cb.panelBlur} onChange={(v) => set((d) => void (d.clipboard.panelBlur = v))} />
             </Row>
@@ -557,7 +567,7 @@ export function SettingsPage({ section }: { section: string | null }) {
           <Group id="about" title={t('settings.section.about')} note={t('settings.about.privacy')}>
             <div className="about">
               <span className="about__logo">
-                <Crop size={26} strokeWidth={2} />
+                <BrandMark size={38} />
               </span>
               <div>
                 <div style={{ font: 'var(--cn-text-title-2)' }}>DATO OCR</div>

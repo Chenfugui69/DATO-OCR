@@ -114,7 +114,7 @@ pub async fn clipboard_clear(app: AppHandle, scope: String) -> AppResult<usize> 
 #[tauri::command]
 pub async fn clipboard_panel_hide(app: AppHandle) -> AppResult<()> {
     let ui = app.clone();
-    app.run_on_main_thread(move || panel::hide(&ui))?;
+    app.run_on_main_thread(move || panel::dismiss(&ui))?;
     Ok(())
 }
 

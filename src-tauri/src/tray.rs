@@ -13,39 +13,41 @@ use crate::wm;
 pub fn build(app: &AppHandle) -> AppResult<()> {
     let hk = state(app).settings.read().hotkeys.clone();
     let label = platform::menu_label;
+    // 菜单上的字跟着界面语言（改语言后会重建菜单）
+    let tr = crate::i18n::localize;
     let capture = MenuItem::with_id(
         app,
         "capture",
-        label("截图", &hk.capture),
+        label(&tr("截图"), &hk.capture),
         true,
         None::<&str>,
     )?;
     let instant = MenuItem::with_id(
         app,
         "instant",
-        label("瞬间截屏", &hk.instant),
+        label(&tr("瞬间截屏"), &hk.instant),
         true,
         None::<&str>,
     )?;
     let longshot = MenuItem::with_id(
         app,
         "longshot",
-        label("长截图", &hk.longshot),
+        label(&tr("长截图"), &hk.longshot),
         true,
         None::<&str>,
     )?;
-    let ocr = MenuItem::with_id(app, "ocr", label("识字", &hk.ocr), true, None::<&str>)?;
+    let ocr = MenuItem::with_id(app, "ocr", label(&tr("识字"), &hk.ocr), true, None::<&str>)?;
     let clip = MenuItem::with_id(
         app,
         "clipboard",
-        label("剪贴板", &hk.clipboard),
+        label(&tr("剪贴板"), &hk.clipboard),
         true,
         None::<&str>,
     )?;
-    let ai = MenuItem::with_id(app, "ai", label("AI 对话", &hk.ai), true, None::<&str>)?;
-    let show = MenuItem::with_id(app, "show", "打开主窗口", true, None::<&str>)?;
-    let settings = MenuItem::with_id(app, "settings", "设置…", true, None::<&str>)?;
-    let quit = MenuItem::with_id(app, "quit", "退出 DATO OCR", true, None::<&str>)?;
+    let ai = MenuItem::with_id(app, "ai", label(&tr("AI 对话"), &hk.ai), true, None::<&str>)?;
+    let show = MenuItem::with_id(app, "show", tr("打开主窗口"), true, None::<&str>)?;
+    let settings = MenuItem::with_id(app, "settings", tr("设置…"), true, None::<&str>)?;
+    let quit = MenuItem::with_id(app, "quit", tr("退出 DATO OCR"), true, None::<&str>)?;
     let sep1 = PredefinedMenuItem::separator(app)?;
     let sep2 = PredefinedMenuItem::separator(app)?;
     let menu = Menu::with_items(

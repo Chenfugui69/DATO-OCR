@@ -100,6 +100,15 @@ html[data-view='clipboard'] body {
   opacity: 1;
 }
 
+/* 不在页面里做滑入滑出（动画关了，或者系统在挪窗口本身） */
+.panel-root--still .panel {
+  transition: none;
+}
+.panel-root--still[data-visible='false'] .panel {
+  transform: none;
+  opacity: 1;
+}
+
 .panel__bar {
   display: flex;
   align-items: center;

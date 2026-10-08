@@ -590,7 +590,7 @@ impl Worker {
                     }
                     Err(err) => {
                         tracing::warn!("WebDAV 同步失败：{err}");
-                        s.error = Some(err.to_string());
+                        s.error = Some(crate::i18n::text(&err));
                     }
                 }
             }

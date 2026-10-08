@@ -183,6 +183,26 @@ pub fn reveal_for_tests(window: &WebviewWindow, visible: bool) {
     sys::effects::reveal_for_tests(window, visible)
 }
 
+/// 应用设置里的深浅色（system | light | dark）同步给原生层：系统材质（毛玻璃）、原生菜单按它画。
+pub fn apply_theme(app: &AppHandle, theme: &str) {
+    sys::effects::apply_theme(app, theme);
+}
+
+/// 平台是不是自己做窗口的滑入滑出（见 `slide_window`）。不是的话由页面自己做动画。
+pub fn slides_windows() -> bool {
+    sys::effects::SLIDES_WINDOWS
+}
+
+/// 把窗口从现在的位置滑到目标位置（屏幕物理像素），`ms` 毫秒。
+pub fn slide_window(window: &WebviewWindow, to: PhysicalRect, ms: u32) {
+    sys::effects::slide_window(window, to, ms);
+}
+
+/// 浮层要不要盖在程序坞上面（macOS：程序坞比普通浮层高一层；别的平台不用管）。
+pub fn set_above_dock(window: &WebviewWindow, above: bool) {
+    sys::effects::set_above_dock(window, above);
+}
+
 /// 窗口不抢焦点地置顶显示（toast 之类）。
 /// 让窗口永远不被激活（点它、显示它都不抢焦点）。悬浮按钮这类"浮在别人上面"的窗口用。
 pub fn set_no_activate(window: &WebviewWindow) {
@@ -310,7 +330,12 @@ pub mod backdrop {
         sys::backdrop::ensure(monitor)
     }
 
-    pub fn load(monitor: MonitorId, image: &RgbaImage, at: PhysicalRect) -> AppResult<()> {
+    /// 底图和会话共用同一份像素（`Arc`），不拷贝。
+    pub fn load(
+        monitor: MonitorId,
+        image: &std::sync::Arc<RgbaImage>,
+        at: PhysicalRect,
+    ) -> AppResult<()> {
         sys::backdrop::load(monitor, image, at)
     }
 

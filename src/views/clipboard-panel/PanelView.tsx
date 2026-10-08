@@ -15,7 +15,7 @@ import { useTranslation } from 'react-i18next';
 import { useEvent } from '@/lib/events';
 import { clipboard, system, translate } from '@/lib/ipc';
 import { useSettings, useSettingsStore } from '@/lib/settings';
-import { assetUrl, modKey } from '@/lib/platform';
+import { assetUrl, isMac, modKey } from '@/lib/platform';
 import { useClipItems, useLiveInvalidation } from '@/lib/queries';
 import type { ClipDetail, ClipItem, ClipType } from '@/lib/types';
 import { EmptyState, IconButton, SearchField, Skeleton } from '@/ui/controls';
@@ -58,6 +58,10 @@ export default function PanelView() {
   const singleClick = !!settings?.clipboard.singleClickPaste;
   const blurRef = useRef(blur);
   blurRef.current = blur;
+  // 页面里不做滑入滑出：用户关了动画；或者 macOS 的底部面板 —— 那里是系统在挪窗口本身（Rust 的 panel::show / dismiss）
+  const still = settings?.clipboard.panelAnimation === false || (isMac && style === 'bottom');
+  const stillRef = useRef(still);
+  stillRef.current = still;
   const [visible, setVisible] = useState(false);
   const [keyword, setKeyword] = useState('');
   const [debounced, setDebounced] = useState('');
@@ -153,7 +157,7 @@ export default function PanelView() {
         void clipboard.hidePanel();
         hiding.current = false;
       },
-      blurRef.current ? 0 : 200,
+      blurRef.current || stillRef.current ? 0 : 200,
     );
   }, []);
 
@@ -351,7 +355,7 @@ export default function PanelView() {
 
   return (
     <div
-      className={clsx('panel-root', `panel-root--${style}`, docked && 'panel-root--docked', blur && 'panel-root--blur', showKeys && 'panel-root--keys')}
+      className={clsx('panel-root', `panel-root--${style}`, docked && 'panel-root--docked', blur && 'panel-root--blur', still && 'panel-root--still', showKeys && 'panel-root--keys')}
       data-visible={visible}
     >
       <div className="panel cn-glass-chrome">

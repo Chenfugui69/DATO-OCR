@@ -90,7 +90,7 @@ pub struct GeneralSettings {
 impl Default for GeneralSettings {
     fn default() -> Self {
         Self {
-            language: "zh-CN".into(),
+            language: "system".into(),
             auto_start: false,
             close_to_tray: true,
             offline_mode: false,
@@ -430,29 +430,88 @@ impl Default for AiPanelStyle {
     }
 }
 
-impl Default for AiSettings {
-    fn default() -> Self {
-        let prompt = |id: &str, label: &str, prompt: &str| QuickPrompt {
-            id: id.into(),
-            label: label.into(),
-            prompt: prompt.into(),
-        };
-        Self {
-            providers: Vec::new(),
-            default_model: String::new(),
-            system_prompt: "你是 DATO OCR 里的助手。回答简洁、准确，默认用简体中文；用户给的内容是什么语言、要求用什么语言，就照做。".into(),
-            temperature: 0.7,
-            max_tokens: 0,
-            thinking: "auto".into(),
-            quick_prompts: vec![
+/// 系统提示词和快捷提问的默认内容。它们存在设置里、用户可以改；没改过的会跟着界面语言换
+/// （见 `AiSettings::follow_language`）。
+fn ai_defaults(english: bool) -> (String, Vec<QuickPrompt>) {
+    let prompt = |id: &str, label: &str, prompt: &str| QuickPrompt {
+        id: id.into(),
+        label: label.into(),
+        prompt: prompt.into(),
+    };
+    if english {
+        (
+            "You are the assistant inside DATO OCR. Answer concisely and accurately, in English by default; if the user's content is in another language or they ask for one, follow that.".into(),
+            vec![
+                prompt("explain", "Explain", "Explain the following:\n\n{text}"),
+                prompt("summary", "Summarize", "Summarize the key points of the following in a few sentences:\n\n{text}"),
+                prompt("translate", "Translate", "Translate the following into English (if it is already in English, translate it into Chinese). Give only the translation:\n\n{text}"),
+                prompt("polish", "Polish", "Polish the following text. Keep its meaning and language, and make it read more naturally:\n\n{text}"),
+                prompt("reply", "Reply for me", "Someone sent me this message. Write a suitable reply for me:\n\n{text}"),
+            ],
+        )
+    } else {
+        (
+            "你是 DATO OCR 里的助手。回答简洁、准确，默认用简体中文；用户给的内容是什么语言、要求用什么语言，就照做。".into(),
+            vec![
                 prompt("explain", "解释", "解释下面这段内容：\n\n{text}"),
                 prompt("summary", "总结", "用几句话总结下面这段内容的要点：\n\n{text}"),
                 prompt("translate", "翻译", "把下面这段内容翻译成中文（如果已经是中文就翻译成英文），只给译文：\n\n{text}"),
                 prompt("polish", "润色", "润色下面这段文字，保持原意和语言，让它更通顺自然：\n\n{text}"),
                 prompt("reply", "帮我回复", "这是别人发给我的消息，帮我写一条得体的回复：\n\n{text}"),
             ],
+        )
+    }
+}
+
+/// 没选预设时新建的服务商叫什么（和前端 settings.ai.customProvider 一致）
+fn custom_provider_name(english: bool) -> &'static str {
+    if english {
+        "Custom service"
+    } else {
+        "自定义服务"
+    }
+}
+
+impl Default for AiSettings {
+    fn default() -> Self {
+        let (system_prompt, quick_prompts) = ai_defaults(crate::i18n::english());
+        Self {
+            providers: Vec::new(),
+            default_model: String::new(),
+            system_prompt,
+            temperature: 0.7,
+            max_tokens: 0,
+            thinking: "auto".into(),
+            quick_prompts,
             panel: Default::default(),
             extra: Map::new(),
+        }
+    }
+}
+
+impl AiSettings {
+    /// 界面语言变了：还是另一种语言的默认内容的（用户没改过），换成这种语言的默认内容。
+    /// 不然英文界面下系统提示词还写着"默认用简体中文"，AI 就一直回中文。用户改过的一个字都不动。
+    pub fn follow_language(&mut self, english: bool) {
+        let (other_system, other_prompts) = ai_defaults(!english);
+        let (system, prompts) = ai_defaults(english);
+        if self.system_prompt == other_system {
+            self.system_prompt = system;
+        }
+        for (theirs, ours) in other_prompts.iter().zip(&prompts) {
+            if let Some(p) = self.quick_prompts.iter_mut().find(|p| p.id == theirs.id) {
+                if p.label == theirs.label {
+                    p.label = ours.label.clone();
+                }
+                if p.prompt == theirs.prompt {
+                    p.prompt = ours.prompt.clone();
+                }
+            }
+        }
+        for provider in &mut self.providers {
+            if provider.name == custom_provider_name(!english) {
+                provider.name = custom_provider_name(english).into();
+            }
         }
     }
 }
@@ -586,6 +645,10 @@ pub struct ClipboardSettings {
     pub panel_blur: bool,
     /// 底部样式贴边：直角、紧贴屏幕底部（不贴边是四周留空的悬浮圆角卡片）
     pub panel_docked: bool,
+    /// 底部样式贴着屏幕最底下、盖在程序坞上面（macOS；关掉是停在程序坞上方）
+    pub panel_over_dock: bool,
+    /// 面板弹出 / 收起的动画
+    pub panel_animation: bool,
     /// 面板里点一下就粘贴（默认要双击，单击只是选中）
     pub single_click_paste: bool,
     pub max_text_mb: u32,
@@ -684,6 +747,8 @@ impl Default for ClipboardSettings {
             panel_style: "bottom".into(),
             panel_blur: false,
             panel_docked: false,
+            panel_over_dock: false,
+            panel_animation: true,
             single_click_paste: false,
             max_text_mb: 5,
             max_image_mb: 30,
@@ -923,6 +988,27 @@ fn migrate_translate_providers(tr: &mut TranslateSettings) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn untouched_ai_defaults_follow_the_language() {
+        let mut ai = AiSettings::default();
+        ai.quick_prompts[1].prompt = "我自己写的总结提示词 {text}".into();
+        ai.providers.push(AiProvider {
+            name: "自定义服务".into(),
+            ..Default::default()
+        });
+        ai.follow_language(true);
+        assert!(ai.system_prompt.starts_with("You are the assistant"));
+        assert_eq!(ai.quick_prompts[0].label, "Explain");
+        assert_eq!(ai.quick_prompts[1].label, "Summarize");
+        // 用户改过的不动
+        assert_eq!(ai.quick_prompts[1].prompt, "我自己写的总结提示词 {text}");
+        assert_eq!(ai.providers[0].name, "Custom service");
+        ai.follow_language(false);
+        assert!(ai.system_prompt.starts_with("你是 DATO OCR 里的助手"));
+        assert_eq!(ai.quick_prompts[0].prompt, "解释下面这段内容：\n\n{text}");
+        assert_eq!(ai.providers[0].name, "自定义服务");
+    }
 
     #[test]
     fn missing_fields_take_defaults_and_unknown_fields_survive() {

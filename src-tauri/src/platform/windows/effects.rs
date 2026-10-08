@@ -20,7 +20,8 @@ use windows::Win32::UI::WindowsAndMessaging::GetWindowRect;
 use super::util::{handle_of, hwnd};
 use crate::error::AppResult;
 pub use crate::platform::generic::{
-    build_floating, frame_window, is_foreground, place_window, take_focus, window_effects,
+    apply_theme, build_floating, frame_window, is_foreground, place_window, set_above_dock,
+    slide_window, take_focus, window_effects, SLIDES_WINDOWS,
 };
 
 // ───────────────────────── 毛玻璃背板 ─────────────────────────

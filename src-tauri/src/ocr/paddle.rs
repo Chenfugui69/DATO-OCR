@@ -87,7 +87,7 @@ pub async fn install(app: &AppHandle) -> AppResult<()> {
             tracing::warn!("PaddleOCR 引擎安装失败：{err}");
             set(app, |s| {
                 *s = DownloadStatus {
-                    error: Some(err.to_string()),
+                    error: Some(crate::i18n::text(err)),
                     ..Default::default()
                 }
             });

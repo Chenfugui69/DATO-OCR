@@ -43,6 +43,17 @@ pub fn is_foreground(window: &WebviewWindow) -> bool {
         .is_ok_and(|own| super::foreground_window().is_some_and(|h| h.0 == own))
 }
 
+/// Windows 上页面自己按设置画深浅色，材质（Mica）跟系统走，不用同步。
+pub fn apply_theme(_app: &AppHandle, _theme: &str) {}
+
+/// Windows 上面板的滑入滑出是页面里的动画。
+pub const SLIDES_WINDOWS: bool = false;
+
+pub fn slide_window(_window: &WebviewWindow, _to: super::types::PhysicalRect, _ms: u32) {}
+
+/// Windows 的置顶窗口本来就在任务栏上面。
+pub fn set_above_dock(_window: &WebviewWindow, _above: bool) {}
+
 pub fn take_focus(window: &WebviewWindow) -> AppResult<()> {
     window.set_focus()?;
     Ok(())

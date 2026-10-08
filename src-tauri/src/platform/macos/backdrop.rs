@@ -95,10 +95,14 @@ pub fn ensure(monitor: MonitorId) -> AppResult<()> {
     Ok(())
 }
 
-pub fn load(monitor: MonitorId, image: &RgbaImage, at: PhysicalRect) -> AppResult<()> {
+pub fn load(
+    monitor: MonitorId,
+    image: &std::sync::Arc<RgbaImage>,
+    at: PhysicalRect,
+) -> AppResult<()> {
     main_thread("load")?;
     ensure(monitor)?;
-    let cg = util::cgimage_from_rgba(image, true).ok_or_else(|| AppError::msg("底图转换失败"))?;
+    let cg = util::cgimage_sharing(image).ok_or_else(|| AppError::msg("底图转换失败"))?;
     SURFACES.with_borrow(|surfaces| {
         let surface = surfaces
             .get(&monitor.0)
