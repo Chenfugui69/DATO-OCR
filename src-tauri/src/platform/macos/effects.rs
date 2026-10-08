@@ -177,7 +177,8 @@ pub fn build_floating(
     // 建窗在主线程上是同步完成的，标记只对紧接着的这一次分配有效
     let armed = MainThreadMarker::new().is_some() && alloc_hook_installed();
     PANEL_NEXT.set(armed);
-    let built = builder.build();
+    // 浮层不是焦点窗口时点它，第一下就算数（系统默认把第一下拿去激活窗口，不交给页面）
+    let built = builder.accept_first_mouse(true).build();
     PANEL_NEXT.set(false);
     let window = built?;
 

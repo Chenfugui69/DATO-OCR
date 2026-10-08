@@ -109,6 +109,9 @@ const zhCN = {
     closeAll: '关闭全部贴图',
   },
   update: {
+    github: '项目主页',
+    githubDesc: '在 GitHub 上看更新记录、下载各平台的安装包、反馈问题',
+    githubOpen: '打开 GitHub',
     banner: '发现新版本 {{version}}',
     bannerHint: '点这里看看更新了什么',
     title: '新版本 {{version}}',

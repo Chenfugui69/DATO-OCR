@@ -367,12 +367,20 @@ pub fn overlay_ready(app: &AppHandle, session_id: u64, monitor: MonitorId) -> Ap
     if !session.shown.lock().insert(monitor.0) {
         return Ok(());
     }
-    let focus = session.focus_monitor() == Some(monitor);
+    let focus_monitor = session.focus_monitor();
+    let focus = focus_monitor == Some(monitor);
+    // 鼠标所在那块屏的遮罩是不是已经显示了（它先好、这块后好）
+    let focused_shown = focus_monitor.filter(|m| !focus && session.shown.lock().contains(&m.0));
     let elapsed = session.started.elapsed().as_millis() as u64;
     let ui_app = app.clone();
     app.run_on_main_thread(move || {
         if let Err(err) = overlay::show_with_backdrop(&ui_app, monitor, focus) {
             tracing::error!(%monitor, "遮罩上屏失败：{err}");
+        }
+        // 多块屏：别的屏的遮罩后显示时会把键盘焦点带走（显示窗口就会抢），鼠标所在那块的遮罩
+        // 就不是焦点窗口了 —— 第一下点击被系统拿去"激活窗口"，要再点一下才能拖。把焦点还回去
+        if let Some(m) = focused_shown {
+            overlay::refocus(&ui_app, m);
         }
         tracing::info!(session = session_id, %monitor, hotkey_to_visible_ms = elapsed, "遮罩可见");
     })?;

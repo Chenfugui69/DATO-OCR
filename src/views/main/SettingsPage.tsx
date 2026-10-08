@@ -2,7 +2,7 @@
 // 分组：通用 · 截图 · 长截图 · 文字识别 · 翻译 · 剪贴板 · 快捷键 · 外观 · 存储 · 关于
 
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { FolderOpen, RotateCcw } from 'lucide-react';
+import { ExternalLink, FolderOpen, RotateCcw } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
@@ -561,6 +561,12 @@ export function SettingsPage({ section }: { section: string | null }) {
                 ]}
                 onChange={(v) => set((d) => void (d.update.channel = v))}
               />
+            </Row>
+            <Row title={t('update.github')} desc={t('update.githubDesc')}>
+              <Button size="sm" onClick={() => void system.openUrl('https://github.com/Chenfugui69/DATO-OCR').catch(notify.error)}>
+                <ExternalLink size={14} strokeWidth={1.75} />
+                {t('update.githubOpen')}
+              </Button>
             </Row>
           </Group>
 

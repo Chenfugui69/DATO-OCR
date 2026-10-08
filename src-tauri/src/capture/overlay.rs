@@ -128,6 +128,15 @@ pub fn show_with_backdrop(app: &AppHandle, monitor: MonitorId, focus: bool) -> A
     Ok(())
 }
 
+/// 把键盘焦点还给这块屏的遮罩。
+pub fn refocus(app: &AppHandle, monitor: MonitorId) {
+    if let Some(window) = app.get_webview_window(&label_for(monitor)) {
+        if let Err(err) = platform::take_focus(&window) {
+            tracing::debug!(%monitor, "还焦点给遮罩失败：{err}");
+        }
+    }
+}
+
 /// 只显示遮罩（长截图模式：底图隐藏，露出真实桌面）。
 pub fn for_each(app: &AppHandle, mut f: impl FnMut(&WebviewWindow)) {
     for (label, window) in app.webview_windows() {

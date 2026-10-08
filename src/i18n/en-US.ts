@@ -80,6 +80,9 @@ const enUS: Dict = {
     closeAll: 'Close all pins',
   },
   update: {
+    github: 'Project page',
+    githubDesc: 'See the changelog, download installers for every platform, and report issues on GitHub',
+    githubOpen: 'Open GitHub',
     banner: 'Version {{version}} is available',
     bannerHint: 'Tap to see what is new',
     title: 'Version {{version}}',
