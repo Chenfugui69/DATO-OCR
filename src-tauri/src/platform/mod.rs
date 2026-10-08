@@ -188,14 +188,25 @@ pub fn apply_theme(app: &AppHandle, theme: &str) {
     sys::effects::apply_theme(app, theme);
 }
 
-/// 平台是不是自己做窗口的滑入滑出（见 `slide_window`）。不是的话由页面自己做动画。
-pub fn slides_windows() -> bool {
-    sys::effects::SLIDES_WINDOWS
+/// 面板的滑入滑出是不是由平台挪窗口来做（见 `slide_window`）。不是的话由页面自己做动画。
+/// `glass`：面板开着毛玻璃（窗口就是面板本身，页面在窗口里没有地方可滑）。
+pub fn slides_windows(glass: bool) -> bool {
+    sys::effects::slides_windows(glass)
+}
+
+/// 面板滑入前 / 滑出后待的位置。`rect` 是面板停稳时的位置。
+pub fn slide_start(rect: PhysicalRect, monitor: &MonitorInfo) -> PhysicalRect {
+    sys::effects::slide_start(rect, monitor)
 }
 
 /// 把窗口从现在的位置滑到目标位置（屏幕物理像素），`ms` 毫秒。
 pub fn slide_window(window: &WebviewWindow, to: PhysicalRect, ms: u32) {
     sys::effects::slide_window(window, to, ms);
+}
+
+/// 悬浮的底部面板盖住程序坞 / 任务栏时，离屏幕底边留多少（逻辑像素）。
+pub fn over_dock_gap() -> f64 {
+    sys::effects::OVER_DOCK_GAP
 }
 
 /// 浮层要不要盖在程序坞上面（macOS：程序坞比普通浮层高一层；别的平台不用管）。

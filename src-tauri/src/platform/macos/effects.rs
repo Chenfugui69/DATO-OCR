@@ -212,6 +212,9 @@ fn is_panel(ns: &NSWindow) -> bool {
     panel_class().is_some_and(|class| ns.isKindOfClass(class))
 }
 
+/// 盖住程序坞时面板离屏幕底边留的缝（逻辑像素），和不盖时离程序坞的距离一样。
+pub const OVER_DOCK_GAP: f64 = 8.0;
+
 /// 浮层盖不盖在程序坞上面：程序坞的窗口层级比普通浮层高，要盖住它得再往上提一档。
 pub fn set_above_dock(window: &WebviewWindow, above: bool) {
     with_window(window, move |ns, _| {
@@ -537,7 +540,14 @@ fn frame_for(ns: &NSWindow, points: CGRect) -> CGRect {
 }
 
 /// 面板的滑入滑出在 macOS 上是挪窗口本身：毛玻璃背板是窗口的一部分，页面里的动画带不动它。
-pub const SLIDES_WINDOWS: bool = true;
+pub fn slides_windows(_glass: bool) -> bool {
+    true
+}
+
+/// 滑入前 / 滑出后待在屏幕底边下面。
+pub fn slide_start(rect: PhysicalRect, monitor: &crate::platform::MonitorInfo) -> PhysicalRect {
+    PhysicalRect::new(rect.x, monitor.bounds.bottom(), rect.width, rect.height)
+}
 
 /// 把窗口从现在的位置滑到 `to`（屏幕物理像素）。
 pub fn slide_window(window: &WebviewWindow, to: PhysicalRect, ms: u32) {

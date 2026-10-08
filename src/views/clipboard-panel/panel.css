@@ -54,6 +54,10 @@ html[data-view='clipboard'] body {
 .panel-root--vertical .panel {
   transform-origin: top left;
 }
+/* 横向那一条又宽又矮，圆角大一些才显得圆润（和 clipboard/panel.rs 的 BOTTOM_RADIUS 一致） */
+.panel-root--bottom .panel {
+  border-radius: 22px;
+}
 .panel-root--vertical[data-visible='false'] .panel {
   transform: scale(0.96);
   opacity: 0;
@@ -84,6 +88,11 @@ html[data-view='clipboard'] body {
 .panel-root--blur .panel {
   transition: none;
   box-shadow: inset 0 0 0 0.5px rgba(255, 255, 255, 0.16);
+}
+/* 浅色 + 毛玻璃（Windows）：背板只是模糊了的桌面，背后是深色内容时一层半透明的白盖不住，整块发灰，
+   浅色主题的深色字看不清，所以色调要实一些。macOS 的系统材质自己就是浅色的，保持五成 */
+html:not([data-platform='mac'])[data-theme='light'] .panel-root--blur .panel {
+  background: rgba(246, 246, 248, 0.78);
 }
 [data-theme='light'] .panel-root--blur .panel {
   background: rgba(246, 246, 248, 0.5);

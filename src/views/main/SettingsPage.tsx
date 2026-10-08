@@ -345,8 +345,11 @@ export function SettingsPage({ section }: { section: string | null }) {
                 <Switch checked={cb.panelDocked} onChange={(v) => set((d) => void (d.clipboard.panelDocked = v))} />
               </Row>
             )}
-            {isMac && cb.panelStyle === 'bottom' && (
-              <Row title={t('settings.clipboard.overDock')} desc={t('settings.clipboard.overDockDesc')}>
+            {cb.panelStyle === 'bottom' && (
+              <Row
+                title={t(isMac ? 'settings.clipboard.overDock' : 'settings.clipboard.overTaskbar')}
+                desc={t(isMac ? 'settings.clipboard.overDockDesc' : 'settings.clipboard.overTaskbarDesc')}
+              >
                 <Switch checked={cb.panelOverDock} onChange={(v) => set((d) => void (d.clipboard.panelOverDock = v))} />
               </Row>
             )}

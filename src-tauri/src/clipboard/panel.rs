@@ -23,8 +23,9 @@ pub const VERTICAL_SIZE: (f64, f64) = (380.0, 620.0);
 /// 页面里面板四周留给阴影的透明边（和 panel.css 一致）：底部样式 8，竖版 6
 const BOTTOM_PAD: f64 = 8.0;
 const VERTICAL_PAD: f64 = 6.0;
-/// 悬浮样式的圆角（和 panel.css 的 --cn-radius-2xl 一致）
+/// 悬浮样式的圆角：竖版和 panel.css 的 --cn-radius-2xl 一致，横向那一条大一些（panel.css 里同样是 22）
 const RADIUS: f64 = 16.0;
+const BOTTOM_RADIUS: f64 = 22.0;
 
 static PREVIOUS: Mutex<Option<WindowHandle>> = Mutex::new(None);
 /// 这次是滑进来的：（停下的位置，屏幕底边下面的起点）。收起时照原路滑回去
@@ -70,7 +71,12 @@ pub fn apply_material(app: &AppHandle) {
     };
     let cb = state(app).settings.read().clipboard.clone();
     let docked = cb.panel_style != "vertical" && cb.panel_docked;
-    wm::set_glass(&window, cb.panel_blur, if docked { 0.0 } else { RADIUS });
+    let radius = match (docked, cb.panel_style.as_str()) {
+        (true, _) => 0.0,
+        (false, "vertical") => RADIUS,
+        _ => BOTTOM_RADIUS,
+    };
+    wm::set_glass(&window, cb.panel_blur, radius);
 }
 
 pub fn toggle(app: &AppHandle) {
@@ -99,6 +105,8 @@ fn show(app: &AppHandle) -> AppResult<()> {
     let cb = state(app).settings.read().clipboard.clone();
     let style = cb.panel_style.clone();
     let mut slide = None;
+    // 上一次滑出去时窗口被裁成了一条看不见的缝（Windows 的滑动是边挪边裁），这次不管滑不滑都先放开
+    platform::set_rect_region(&window, None);
     // 盖在程序坞上面：底边按整块屏算，不按扣掉程序坞的可用区域；窗口层级也要提到程序坞之上
     let over_dock = style != "vertical" && cb.panel_over_dock;
     platform::set_above_dock(&window, over_dock);
@@ -121,6 +129,12 @@ fn show(app: &AppHandle) -> AppResult<()> {
         } else {
             let s = monitor.scale_factor.max(0.5);
             let width = f64::from(monitor.work_area.width) / s;
+            // 悬浮面板离底边的距离：平时是 BOTTOM_PAD，盖住程序坞 / 任务栏时按平台来
+            let gap = if over_dock {
+                platform::over_dock_gap()
+            } else {
+                BOTTOM_PAD
+            };
             let rect = match (cb.panel_docked, blur) {
                 // 贴边：紧贴工作区底边、整屏宽；不开毛玻璃时页面只在上面留阴影
                 (true, true) => wm::rect_on_monitor(
@@ -137,16 +151,25 @@ fn show(app: &AppHandle) -> AppResult<()> {
                     let h = ((BOTTOM_HEIGHT - BOTTOM_PAD * 2.0) * s).round() as i32;
                     PhysicalRect::new(
                         wa.x + pad,
-                        wa.bottom() - pad - h,
+                        wa.bottom() - (gap * s).round() as i32 - h,
                         w.max(1) as u32,
                         h.max(1) as u32,
                     )
                 }
-                _ => wm::rect_on_monitor(&monitor, width, BOTTOM_HEIGHT, wm::Anchor::BottomFull),
+                (true, false) => {
+                    wm::rect_on_monitor(&monitor, width, BOTTOM_HEIGHT, wm::Anchor::BottomFull)
+                }
+                // 悬浮、不开毛玻璃：页面自己在窗口里留了 BOTTOM_PAD 的边，要贴得更近就把整个窗口往下挪
+                (false, false) => {
+                    let mut r =
+                        wm::rect_on_monitor(&monitor, width, BOTTOM_HEIGHT, wm::Anchor::BottomFull);
+                    r.y += ((BOTTOM_PAD - gap) * s).round() as i32;
+                    r
+                }
             };
-            if cb.panel_animation && platform::slides_windows() {
-                // 先摆在屏幕底边下面，显示出来之后再滑上去
-                let start = below(rect, &monitor);
+            if cb.panel_animation && platform::slides_windows(blur) {
+                // 先摆在滑入的起点（看不见），显示出来之后再滑上去
+                let start = platform::slide_start(rect, &monitor);
                 platform::set_bounds(&window, start.x, start.y, start.width, start.height)?;
                 slide = Some((rect, start));
             } else {
@@ -166,11 +189,6 @@ fn show(app: &AppHandle) -> AppResult<()> {
         platform::slide_window(&window, rect, SLIDE_IN_MS);
     }
     Ok(())
-}
-
-/// 面板滑入前 / 滑出后待的位置：正好在屏幕底边下面。
-fn below(rect: PhysicalRect, monitor: &platform::MonitorInfo) -> PhysicalRect {
-    PhysicalRect::new(rect.x, monitor.bounds.bottom(), rect.width, rect.height)
 }
 
 /// 用户收起面板（点外面、Esc、再按一次热键）：平台自己滑窗口的话先滑下去再藏。

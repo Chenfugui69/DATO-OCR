@@ -58,40 +58,49 @@ static APP: OnceLock<AppHandle> = OnceLock::new();
 pub fn run() {
     platform::init_process();
 
-    let builder = tauri::Builder::default()
-        // 单实例必须第一个注册：第二次启动只是把已有实例的主窗口叫出来。
-        // `--page=settings:translate` 这样的参数可以直接跳到某一页（快捷方式、测试用）；
-        // `--translate=文字` 在鼠标旁边弹出划词面板翻译这段文字（脚本、快捷指令、测试用）；
-        // `--action=capture` 直接触发一个功能、`--action=cancel` 取消正在进行的截图，
-        // 都不叫主窗口（快捷方式、脚本、自动化测试用）
-        .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
-            // 开机自启 / 静默启动撞上已经在跑的实例：什么都不做（不能把主窗口弹出来）
-            if args.iter().any(|a| a == "--autostart" || a == "--hidden") {
-                return;
-            }
-            if cfg!(debug_assertions) {
-                if let Some(spec) = args.iter().find_map(|a| a.strip_prefix("--eval=")) {
-                    debug_eval(app, spec);
+    // 测试实例（`CHENOCR_TEST_DATA_DIR`，数据放在别处）不参与单实例：可以和用户正在用的那个同时开着，
+    // 拍说明用的截图、做自动化测试都不用先让用户退出。它也就收不到 `--action=` 这类转发
+    let single = std::env::var_os("CHENOCR_TEST_DATA_DIR").is_none();
+    let builder = tauri::Builder::default();
+    let builder = if single {
+        builder
+            // 单实例必须第一个注册：第二次启动只是把已有实例的主窗口叫出来。
+            // `--page=settings:translate` 这样的参数可以直接跳到某一页（快捷方式、测试用）；
+            // `--translate=文字` 在鼠标旁边弹出划词面板翻译这段文字（脚本、快捷指令、测试用）；
+            // `--action=capture` 直接触发一个功能、`--action=cancel` 取消正在进行的截图，
+            // 都不叫主窗口（快捷方式、脚本、自动化测试用）
+            .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
+                // 开机自启 / 静默启动撞上已经在跑的实例：什么都不做（不能把主窗口弹出来）
+                if args.iter().any(|a| a == "--autostart" || a == "--hidden") {
                     return;
                 }
-            }
-            if let Some(action) = args.iter().find_map(|a| a.strip_prefix("--action=")) {
-                match hotkeys::HotkeyAction::parse(action) {
-                    Some(action) => hotkeys::dispatch(app, action),
-                    None if action == "cancel" => capture::cancel_current(app),
-                    None => tracing::warn!(action, "不认识的 --action"),
+                if cfg!(debug_assertions) {
+                    if let Some(spec) = args.iter().find_map(|a| a.strip_prefix("--eval=")) {
+                        debug_eval(app, spec);
+                        return;
+                    }
                 }
-                return;
-            }
-            if let Some(text) = args.iter().find_map(|a| a.strip_prefix("--translate=")) {
-                if !text.trim().is_empty() {
-                    translate::selection::show_popup(app, text.to_string(), None);
+                if let Some(action) = args.iter().find_map(|a| a.strip_prefix("--action=")) {
+                    match hotkeys::HotkeyAction::parse(action) {
+                        Some(action) => hotkeys::dispatch(app, action),
+                        None if action == "cancel" => capture::cancel_current(app),
+                        None => tracing::warn!(action, "不认识的 --action"),
+                    }
+                    return;
                 }
-                return;
-            }
-            let page = args.iter().find_map(|a| a.strip_prefix("--page="));
-            wm::show_main(app, page);
-        }))
+                if let Some(text) = args.iter().find_map(|a| a.strip_prefix("--translate=")) {
+                    if !text.trim().is_empty() {
+                        translate::selection::show_popup(app, text.to_string(), None);
+                    }
+                    return;
+                }
+                let page = args.iter().find_map(|a| a.strip_prefix("--page="));
+                wm::show_main(app, page);
+            }))
+    } else {
+        builder
+    };
+    let builder = builder
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
                 .with_handler(hotkeys::on_shortcut)

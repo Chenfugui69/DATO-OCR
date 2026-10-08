@@ -756,6 +756,11 @@ html[data-view='translate'], html[data-view='translate'] body { background: tran
    这里不画阴影，只在边上描一圈细线，让面板边缘清楚一点 */
 .pop-shell.is-blur { box-shadow: inset 0 0 0 0.5px rgba(255,255,255,0.16); animation: none; }
 [data-theme='light'] .pop-shell.is-blur { box-shadow: inset 0 0 0 0.5px rgba(0,0,0,0.14); }
+/* 浅色 + 毛玻璃（Windows）：背板只是把桌面模糊了，本身没有颜色。面板背后是深色内容时，淡淡一层白盖不住，
+   整块发灰发暗，上面浅色主题的深色字就看不清了。所以浅色下色调至少五成半实，不透明度滑块在这之上再调。
+   macOS 的系统材质自己就是浅色的，不用垫 */
+html:not([data-platform='mac'])[data-theme='light'] .pop-shell.is-blur {
+  --pop-hi: rgba(252,252,254,calc(0.55 + var(--pop-alpha) * 0.45)); --pop-lo: rgba(236,236,241,calc(0.55 + var(--pop-alpha) * 0.45)); }
 .pop-shell.is-drawer { flex-direction: column; }
 
 .pop-pane { position: relative; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
@@ -773,27 +778,31 @@ html[data-view='translate'], html[data-view='translate'] body { background: tran
                      background: var(--cn-fill-quaternary); color: var(--cn-label); -webkit-line-clamp: unset; overflow: auto;
                      box-shadow: inset 0 -1px 0 var(--cn-accent); }
 
-/* 底部"问 AI"输入框：浮在翻译区底部，翻译结果一直延伸到它后面。输入框背后垫一层遮罩：从输入框的
-   上沿开始（不往上多盖，结果能一直显示到输入框跟前），到面板底边为止。遮罩比面板本身实（面板调得
-   很透时也至少七八成），再把背后的字模糊掉 —— 以前是一段渐变，上半截几乎是透的，滚到后面的译文
-   和输入框里的字叠在一起，看不清在输什么 */
-.pop-pane--translate { --ask-rgb: 252,252,254; }
-.is-drawer .pop-pane--translate { --ask-rgb: 236,236,241; }
-[data-theme='dark'] .pop-pane--translate { --ask-rgb: 46,46,48; }
-[data-theme='dark'] .is-drawer .pop-pane--translate { --ask-rgb: 30,30,32; }
-.pop-ask-wrap { position: absolute; left: 0; right: 0; bottom: 0; z-index: 3; padding: 0 12px 10px;
-                background: rgba(var(--ask-rgb), max(var(--pop-alpha), 0.8));
-                -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px); }
+/* 底部"问 AI"输入框：一颗实心的胶囊浮在翻译区底部，背后不垫整条底色。
+   - 胶囊自己是实的（九成多不透明），里面的字不会和背后的译文叠在一起；
+   - 译文滚到胶囊跟前就渐渐淡出（遮罩加在滚动区上），不会有半行字从胶囊上下露出来。
+   试过又放弃的：整条渐变底色（上半截是透的，字照样叠）；整条实底色（面板是毛玻璃，底下突然一条
+   不透的色带，像另外贴上去的） */
+.pop-ask-wrap { position: absolute; left: 0; right: 0; bottom: 0; z-index: 3; padding: 0 12px 10px; pointer-events: none; }
+.has-ask .pop__body { -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 86px), transparent calc(100% - 46px));
+                      mask-image: linear-gradient(to bottom, #000 calc(100% - 86px), transparent calc(100% - 46px)); }
+.has-ask .tr-box { padding-bottom: 74px; }
+.has-ask .tr-box:has(.tr-box__cards) { padding-bottom: 0; }
+.has-ask .tr-box__cards { padding-bottom: 74px; }
 /* 多个翻译源那一列的滚动条放进右边的留白里，而且位置一直留着：以前一出滚动条卡片就被挤窄 10px，
    左右留白不一样宽。用 overflow-y: scroll 占住这 10px（轨道是透明的，内容不够长时看不见滚动条）：
    scrollbar-gutter 在 WebKit（macOS）里对自定义样式的滚动条不起作用，没出滚动条时卡片会一直顶到右边 */
 .pop-pane--translate .tr-box__cards { margin-right: -10px; overflow-x: hidden; overflow-y: scroll; scrollbar-gutter: stable; }
-.has-ask .tr-box { padding-bottom: 46px; }
-.has-ask .tr-box:has(.tr-box__cards) { padding-bottom: 0; }
-.has-ask .tr-box__cards { padding-bottom: 46px; }
-.pop-ask { flex: none; display: flex; align-items: center; gap: 8px; height: 32px; padding: 0 4px 0 11px;
-           border-radius: 16px; background: var(--cn-fill-quaternary); box-shadow: inset 0 0 0 0.5px var(--cn-separator); color: var(--cn-accent); }
-.pop-ask:focus-within { box-shadow: inset 0 0 0 1px var(--cn-accent); }
+/* 翻译源卡片要从面板上"浮"起来：通用的那层淡灰底色在毛玻璃面板上几乎看不出来，卡片和面板糊成一片。
+   浅色用更白的底，深色用更亮的底，再描一圈细边、压一点点阴影 */
+.pop-pane--translate .tr-card { background: rgba(255,255,255,0.66); box-shadow: 0 0 0 0.5px rgba(0,0,0,0.07), 0 1px 2px rgba(0,0,0,0.06); }
+[data-theme='dark'] .pop-pane--translate .tr-card { background: rgba(255,255,255,0.085); box-shadow: inset 0 0 0 0.5px rgba(255,255,255,0.09), 0 1px 2px rgba(0,0,0,0.22); }
+.pop-ask { flex: none; display: flex; align-items: center; gap: 8px; height: 32px; padding: 0 4px 0 11px; pointer-events: auto;
+           border-radius: 16px; background: rgba(255,255,255,0.94); color: var(--cn-accent);
+           -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px);
+           box-shadow: 0 0 0 0.5px rgba(0,0,0,0.12), 0 3px 10px rgba(0,0,0,0.14); }
+[data-theme='dark'] .pop-ask { background: rgba(62,62,66,0.94); box-shadow: inset 0 0 0 0.5px rgba(255,255,255,0.14), 0 3px 10px rgba(0,0,0,0.32); }
+.pop-ask:focus-within { box-shadow: inset 0 0 0 1px var(--cn-accent), 0 3px 10px rgba(0,0,0,0.18); }
 .pop-ask input { flex: 1; min-width: 0; height: 100%; border: none; outline: none; background: transparent; color: var(--cn-label); font: var(--cn-text-body); }
 .pop-ask input::placeholder { color: var(--cn-label-tertiary); }
 .pop-ask button { flex: none; display: grid; place-items: center; width: 24px; height: 24px; padding: 0; border: none; border-radius: 50%;

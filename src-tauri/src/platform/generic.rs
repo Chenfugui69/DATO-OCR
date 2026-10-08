@@ -43,13 +43,20 @@ pub fn is_foreground(window: &WebviewWindow) -> bool {
         .is_ok_and(|own| super::foreground_window().is_some_and(|h| h.0 == own))
 }
 
-/// Windows 上页面自己按设置画深浅色，材质（Mica）跟系统走，不用同步。
-pub fn apply_theme(_app: &AppHandle, _theme: &str) {}
+/// 应用里选了浅色 / 深色时，窗口的系统材质（Mica）也得是那个外观：材质的深浅是按窗口的主题画的，
+/// 不同步的话系统是深色、应用选了浅色，侧边栏背后还是深色的 Mica，上面压着浅色主题的深色字，看不清
+/// （和 macOS 上是同一个问题）。选"跟随系统"就交还给系统。
+pub fn apply_theme(app: &AppHandle, theme: &str) {
+    app.set_theme(match theme {
+        "light" => Some(tauri::Theme::Light),
+        "dark" => Some(tauri::Theme::Dark),
+        _ => None,
+    });
+}
 
-/// Windows 上面板的滑入滑出是页面里的动画。
-pub const SLIDES_WINDOWS: bool = false;
-
-pub fn slide_window(_window: &WebviewWindow, _to: super::types::PhysicalRect, _ms: u32) {}
+/// 盖住任务栏时面板贴到屏幕最底下，不留缝：任务栏最底下那一排是"程序开着"的小点，留一条缝的话
+/// 它们正好从缝里露出来（用户报过）。
+pub const OVER_DOCK_GAP: f64 = 0.0;
 
 /// Windows 的置顶窗口本来就在任务栏上面。
 pub fn set_above_dock(_window: &WebviewWindow, _above: bool) {}

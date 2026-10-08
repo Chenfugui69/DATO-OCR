@@ -39,6 +39,22 @@ html[data-view='main'][data-glass='off'] body {
   padding-left: 76px;
   white-space: nowrap;
 }
+.sidebar__logo {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  display: grid;
+  place-items: center;
+  pointer-events: none;
+  background: radial-gradient(circle at 30% 15%, #2a2d36, #0c0d10);
+  box-shadow:
+    0 1px 3px rgba(0, 0, 0, 0.35),
+    inset 0 0.5px 0 rgba(255, 255, 255, 0.14);
+}
+[data-platform='mac'] .sidebar__logo {
+  display: none;
+}
 .sidebar__name {
   font: 600 14px/1 var(--cn-font-sans);
   letter-spacing: 0.02em;
@@ -194,14 +210,24 @@ html[data-view='main'][data-glass='off'] body {
 .lib-group {
   margin-bottom: var(--cn-space-6);
 }
+/* 日期标题：一颗小胶囊，滚动时吸在左上角。以前是整行宽的一条模糊带、没有底色，图片滚到它后面时
+   被齐齐糊掉一条，标题自己又看不清（用户说看着奇怪） */
 .lib-group__title {
   position: sticky;
-  top: 0;
+  top: 6px;
   z-index: 2;
-  padding: 6px 0;
-  font: 600 13px/18px var(--cn-font-sans);
-  color: var(--cn-label-secondary);
-  backdrop-filter: blur(12px);
+  width: fit-content;
+  margin: 0 0 8px;
+  padding: 3px 10px;
+  border-radius: var(--cn-radius-full);
+  font: 600 12px/18px var(--cn-font-sans);
+  color: var(--cn-label);
+  background: var(--cn-glass-bg-thin);
+  -webkit-backdrop-filter: blur(16px) saturate(var(--cn-glass-saturate));
+  backdrop-filter: blur(16px) saturate(var(--cn-glass-saturate));
+  box-shadow:
+    0 1px 4px rgba(0, 0, 0, 0.12),
+    0 0 0 0.5px var(--cn-separator);
 }
 .lib-grid {
   display: grid;

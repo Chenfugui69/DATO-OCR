@@ -643,6 +643,8 @@ const enUS: Dict = {
       dockedDesc: 'Square corners, flush with the bottom of the screen; off = a floating rounded card',
       animation: 'Open animation',
       animationDesc: 'The bottom panel slides up from the screen edge and back down; off = it appears and disappears instantly',
+      overTaskbar: 'Cover the taskbar',
+      overTaskbarDesc: 'The panel sits at the very bottom of the screen, over the taskbar; off = it stays above the taskbar',
       overDock: 'Cover the Dock',
       overDockDesc: 'The panel sits at the very bottom of the screen, over the Dock; off = it stays above the Dock',
       blur: 'Frosted glass',

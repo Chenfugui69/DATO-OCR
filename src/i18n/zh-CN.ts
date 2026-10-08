@@ -672,6 +672,8 @@ const zhCN = {
       dockedDesc: '面板紧贴屏幕底部，四角是直角；关掉是四周留空的悬浮圆角卡片',
       animation: '弹出动画',
       animationDesc: '底部面板从屏幕底下滑上来、收起时滑回去；关掉就是直接出现和消失',
+      overTaskbar: '盖住任务栏',
+      overTaskbarDesc: '面板贴着屏幕最底下，盖在任务栏上面；关掉则停在任务栏上方',
       overDock: '盖住程序坞',
       overDockDesc: '面板贴着屏幕最底下，盖在程序坞上面；关掉则停在程序坞上方',
       blur: '毛玻璃',

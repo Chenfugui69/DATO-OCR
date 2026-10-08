@@ -116,7 +116,8 @@ export default function OcrView() {
         .join('\n\n');
     }
     const sep = paragraphs.every((p) => p.lines.length === 1) ? '\n' : '\n\n';
-    return texts.join(sep);
+    // 跨段删除后被并掉的段落是空的，不留空行
+    return texts.filter((v) => v.trim()).join(sep);
   }, [job, texts, paragraphs, keepBreaks]);
 
   const copyAll = useCallback(() => {
@@ -127,14 +128,19 @@ export default function OcrView() {
       .catch(notify.error);
   }, [fullText, t]);
 
-  const onEdit = (i: number, value: string) => {
-    setTexts((prev) => prev.map((v, k) => (k === i ? value : v)));
+  /** 文字被改了：按段落块把现在的内容读回来。跨段删除会把段落块并掉，没了的那段就是空的 */
+  const onEditAll = (root: HTMLElement) => {
+    const blocks = root.querySelectorAll<HTMLElement>('[data-index]');
+    // 全选删光再打字，字是直接落在可编辑区里的，一个段落块都不剩：整个算第一段
+    const next = paragraphs.map((_, i) => (blocks.length ? (root.querySelector<HTMLElement>(`[data-index="${i}"]`)?.innerText ?? '') : i === 0 ? root.innerText : ''));
+    setTexts(next);
     window.clearTimeout(saveTimer.current);
     saveTimer.current = window.setTimeout(() => {
       const recordId = job?.recordId;
       if (recordId) {
-        const next = texts.map((v, k) => (k === i ? value : v)).join('\n\n');
-        void ocr.saveText(recordId, next).catch(() => undefined);
+        void ocr
+          .saveText(recordId, next.filter((v) => v.trim()).join('\n\n'))
+          .catch(() => undefined);
       }
     }, 800);
   };
@@ -272,20 +278,22 @@ export default function OcrView() {
               ) : paragraphs.length === 0 ? (
                 <EmptyState icon={FileSearch} title={t('ocr.nothing')} description={t('ocr.nothingDesc')} />
               ) : (
-                paragraphs.map((p, i) => (
-                  <div
-                    key={`${job.id}-${i}`}
-                    data-index={i}
-                    className={clsx('ocr-para cn-selectable', hover === i && 'ocr-para--active')}
-                    contentEditable="plaintext-only"
-                    suppressContentEditableWarning
-                    spellCheck={false}
-                    onPointerEnter={() => setHover(i)}
-                    onInput={(e) => onEdit(i, (e.target as HTMLElement).innerText)}
-                  >
-                    {keepBreaks ? p.lines.map((l) => l.text).join('\n') : p.text}
-                  </div>
-                ))
+                // 整列是一个可编辑区，段落只是里面的块：每段各自可编辑的话，选区出不了自己那一段，
+                // 鼠标没法从一行拖到另一行（用户报过）。换了识字结果 / 切换"保留换行"就整个重建
+                <div
+                  key={`${job.id}-${keepBreaks}`}
+                  className="ocr-paras cn-selectable"
+                  contentEditable="plaintext-only"
+                  suppressContentEditableWarning
+                  spellCheck={false}
+                  onInput={(e) => onEditAll(e.currentTarget)}
+                >
+                  {paragraphs.map((p, i) => (
+                    <div key={i} data-index={i} className={clsx('ocr-para', hover === i && 'ocr-para--active')} onPointerEnter={() => setHover(i)}>
+                      {keepBreaks ? p.lines.map((l) => l.text).join('\n') : p.text}
+                    </div>
+                  ))}
+                </div>
               )}
             </div>
             {showTranslate && job.status === 'done' && (

@@ -118,9 +118,11 @@ html[data-view='editor'][data-glass='off'] body {
 .ocr-para--active {
   background: var(--cn-accent-subtle);
 }
-.ocr-para:focus {
-  background: var(--cn-bg-base);
-  box-shadow: inset 0 0 0 1px var(--cn-accent);
+/* 整列是一个可编辑区（见 OcrView）：可以从一段拖选到另一段，点哪儿就在哪儿改 */
+.ocr-paras {
+  min-height: 100%;
+  outline: none;
+  cursor: text;
 }
 .ocr-scanning {
   position: absolute;
