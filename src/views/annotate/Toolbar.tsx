@@ -9,12 +9,10 @@ import {
   Circle,
   Download,
   Grid2x2,
-  ImagePlay,
   Languages,
   Pencil,
   Pin,
   ScanText,
-  ScrollText,
   Sparkles,
   Square,
   SquareDashed,
@@ -42,21 +40,47 @@ export const TOOL_ICONS: Record<Tool, LucideIcon> = {
 export const TOOL_KEYS: Record<Tool, string> = { rect: 'R', ellipse: 'O', arrow: 'A', pen: 'P', mosaic: 'M', text: 'T' };
 const TOOLS: Tool[] = ['rect', 'ellipse', 'arrow', 'pen', 'mosaic', 'text'];
 
-export type ActionId = 'ocr' | 'translate' | 'ai' | 'longshot' | 'gif' | 'pin' | 'save' | 'cancel' | 'done';
+/** `undo` 放进哪一组，撤销按钮就排在那一组里；哪组都没有就单独排在绘制工具后面 */
+export type ActionId = 'ocr' | 'translate' | 'ai' | 'longshot' | 'gif' | 'pin' | 'save' | 'cancel' | 'done' | 'undo';
 
-const ACTION_ICONS: Record<ActionId, LucideIcon> = {
+type IconProps = { size?: number | string; strokeWidth?: number | string; absoluteStrokeWidth?: boolean };
+type ActionIcon = React.ComponentType<IconProps>;
+
+// 识字、长截图、GIF 原来三个图标都是"方框里几道线"，挤在一起很容易点错。长截图和 GIF 换成
+// 一眼能认出来的：长截图 = 画面往下接着延伸，GIF 直接写字
+
+/** 长截图：一张竖长的页面，里面两道向下的箭头（一直往下滚） */
+const LongshotIcon: ActionIcon = ({ size = 18, strokeWidth = 1.5 }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={strokeWidth} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+    <rect x="5.5" y="2" width="13" height="20" rx="3" />
+    <path d="m8.75 8.25 3.25 3.25 3.25-3.25M8.75 13 12 16.25 15.25 13" />
+  </svg>
+);
+
+/** GIF：直接写字，占满整个图标的宽度 */
+const GifIcon: ActionIcon = ({ size = 18 }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden>
+    <text x="12" y="17" textAnchor="middle" fontSize="13.5" fontWeight="800" letterSpacing="-0.4" fill="currentColor" fontFamily="var(--cn-font-sans)">
+      GIF
+    </text>
+  </svg>
+);
+
+export const ACTION_ICONS: Record<ActionId, ActionIcon> = {
   ocr: ScanText,
   translate: Languages,
   ai: Sparkles,
-  longshot: ScrollText,
-  gif: ImagePlay,
+  longshot: LongshotIcon,
+  gif: GifIcon,
   pin: Pin,
   save: Download,
   cancel: X,
   done: Check,
+  undo: Undo2,
 };
 
 const ACTION_KEYS: Record<ActionId, string> = {
+  undo: 'Ctrl+Z',
   ocr: 'F3',
   translate: 'Ctrl+T',
   ai: '',
@@ -79,7 +103,7 @@ function ToolButton({
   toolId,
   onClick,
 }: {
-  icon: LucideIcon;
+  icon: LucideIcon | ActionIcon;
   label: string;
   shortcut?: string;
   active?: boolean;
@@ -111,6 +135,8 @@ function ToolButton({
 const Sep = () => <span className="an-sep" />;
 
 export interface ToolbarProps {
+  /** 绘制工具的顺序（设置里可调），不给就是默认顺序 */
+  tools?: Tool[];
   tool: Tool | null;
   onTool: (t: Tool | null) => void;
   canUndo: boolean;
@@ -124,13 +150,13 @@ export interface ToolbarProps {
 }
 
 export const Toolbar = forwardRef<HTMLDivElement, ToolbarProps>(function Toolbar(
-  { tool, onTool, canUndo, onUndo, actions, onAction, disabledTools, disabledActions, className, style },
+  { tools, tool, onTool, canUndo, onUndo, actions, onAction, disabledTools, disabledActions, className, style },
   ref,
 ) {
   const { t } = useTranslation();
   return (
     <div ref={ref} className={clsx('an-toolbar cn-glass', className)} style={style} onPointerDown={(e) => e.stopPropagation()}>
-      {TOOLS.map((id) => (
+      {(tools?.length ? tools : TOOLS).map((id) => (
         <ToolButton
           key={id}
           icon={TOOL_ICONS[id]}
@@ -142,23 +168,31 @@ export const Toolbar = forwardRef<HTMLDivElement, ToolbarProps>(function Toolbar
           onClick={() => onTool(tool === id ? null : id)}
         />
       ))}
-      <Sep />
-      <ToolButton icon={Undo2} label={t('tools.undo')} shortcut="Ctrl+Z" disabled={!canUndo} onClick={onUndo} />
+      {!actions.some((g) => g.includes('undo')) && (
+        <>
+          <Sep />
+          <ToolButton icon={Undo2} label={t('tools.undo')} shortcut="Ctrl+Z" disabled={!canUndo} onClick={onUndo} />
+        </>
+      )}
       {actions.map((group, gi) => (
         <span key={gi} style={{ display: 'contents' }}>
           <Sep />
-          {group.map((id) => (
-            <ToolButton
-              key={id}
-              icon={ACTION_ICONS[id]}
-              label={t(`actions.${id}`)}
-              shortcut={ACTION_KEYS[id]}
-              primary={id === 'done'}
-              danger={id === 'cancel'}
-              disabled={disabledActions?.[id]}
-              onClick={() => onAction(id)}
-            />
-          ))}
+          {group.map((id) =>
+            id === 'undo' ? (
+              <ToolButton key={id} icon={Undo2} label={t('tools.undo')} shortcut={ACTION_KEYS.undo} disabled={!canUndo} onClick={onUndo} />
+            ) : (
+              <ToolButton
+                key={id}
+                icon={ACTION_ICONS[id]}
+                label={t(`actions.${id}`)}
+                shortcut={ACTION_KEYS[id]}
+                primary={id === 'done'}
+                danger={id === 'cancel'}
+                disabled={disabledActions?.[id]}
+                onClick={() => onAction(id)}
+              />
+            ),
+          )}
         </span>
       ))}
     </div>

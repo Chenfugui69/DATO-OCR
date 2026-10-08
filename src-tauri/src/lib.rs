@@ -121,6 +121,7 @@ pub fn run() {
             commands::capture::gif_cancel,
             commands::capture::longshot_undo,
             commands::capture::pin_info,
+            commands::capture::pin_ready,
             commands::capture::pin_close,
             commands::capture::pin_close_all,
             commands::capture::pin_copy,

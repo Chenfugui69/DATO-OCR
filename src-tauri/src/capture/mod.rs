@@ -480,6 +480,28 @@ pub fn finish(app: &AppHandle, meta: FinishMeta, annotation_png: Vec<u8>) -> App
         )?;
     }
     let source_app = session.source_app.clone();
+    if meta.action == FinishAction::Pin {
+        // 贴图：遮罩先留着，等贴图窗口把图画出来再收（见 `pin::create`）。先收的话选区那块画面
+        // 会消失两三百毫秒再冒出来，看着像跳了一下
+        let image = Arc::new(image);
+        let (end_app, session_id) = (app.clone(), session.id);
+        pin::create(
+            app,
+            image.clone(),
+            (global.x, global.y),
+            monitor.scale_factor,
+            Some(Box::new(move || end_session(&end_app, session_id, false))),
+        )?;
+        if st.settings.read().capture.save_to_library {
+            let app = app.clone();
+            std::thread::spawn(move || {
+                if let Err(err) = library::add(&app, &image, "normal", source_app, annotated) {
+                    tracing::warn!("写入截图库失败：{err}");
+                }
+            });
+        }
+        return Ok(());
+    }
     let restore = matches!(meta.action, FinishAction::Copy | FinishAction::Save);
     end_session(app, session.id, restore);
 
@@ -545,7 +567,7 @@ pub(crate) fn perform(
             }
         }
         FinishAction::Pin => {
-            pin::create(app, image.clone(), (at.x, at.y), scale)?;
+            pin::create(app, image.clone(), (at.x, at.y), scale, None)?;
             add_to_library();
         }
         FinishAction::Ocr | FinishAction::Translate => {

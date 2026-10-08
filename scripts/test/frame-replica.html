@@ -1,0 +1,97 @@
+<!doctype html>
+<meta charset="utf-8" />
+<title>frame replica</title>
+<link rel="stylesheet" href="../../src/views/capture/capture.css" />
+<style>
+  html, body { margin: 0; height: 100%; }
+  /* 左半白、右半深色，模拟框压在不同内容上 */
+  body { background: linear-gradient(90deg, #fff 0 50%, #2b3a55 50% 100%); font: 13px sans-serif; }
+  .cap-root { --cn-accent: #0a84ff; --cn-font-sans: sans-serif; }
+</style>
+<div class="cap-root" id="root"></div>
+<script>
+  // CaptureView.tsx 里 Mask / FrameBox / Handles 的原样移植，用来在普通浏览器里看渲染结果
+  const q = new URLSearchParams(location.search);
+  const num = (k, d) => (q.has(k) ? Number(q.get(k)) : d);
+  const s = num('s', devicePixelRatio);
+  const t = num('t', 2);
+  const radius = num('radius', 12);
+  const opacity = num('mask', 0.3);
+  const inside = q.get('inside') === '1';
+  const solid = (q.get('style') || 'solid') === 'solid';
+  const rect = { x: num('x', 301), y: num('y', 151), width: num('w', 601), height: num('h', 331) };
+  const root = document.getElementById('root');
+  root.style.setProperty('--cap-frame-color', q.get('color') || '#FFFFFF');
+  root.style.setProperty('--cap-frame-width', t + 'px');
+  root.style.setProperty('--cap-frame-style', q.get('style') || 'solid');
+  const HALO = 0.5;
+  const STRETCH_BASE = 100;
+  const stretch = (w, h) => `scale(${Math.max(0, w) / STRETCH_BASE}, ${Math.max(0, h) / STRETCH_BASE})`;
+  const el = (cls, style, parent = root) => {
+    const e = document.createElement(cls.startsWith('cap-mask') || cls === 'cap-ring' ? 'div' : 'span');
+    e.className = cls;
+    Object.assign(e.style, style);
+    for (const k in style) if (k.startsWith('--')) e.style.setProperty(k, style[k]);
+    parent.appendChild(e);
+    return e;
+  };
+  const px = (v) => v + 'px';
+
+  function mask() {
+    if (opacity <= 0) return;
+    const color = `rgba(0,0,0,${opacity})`;
+    const w = innerWidth, h = innerHeight;
+    const piece = (x, y, pw, ph) => el('cap-mask', { background: color, transform: `translate(${x}px, ${y}px) ${stretch(pw, ph)}` });
+    const x1 = rect.x / s, y1 = rect.y / s, x2 = (rect.x + rect.width) / s, y2 = (rect.y + rect.height) / s;
+    const r = Math.min(radius, (x2 - x1) / 2, (y2 - y1) / 2);
+    const corner = (x, y, at) => el('cap-mask-corner', { width: px(r), height: px(r), transform: `translate(${x}px, ${y}px)`, background: `radial-gradient(circle at ${at}, transparent ${r - 0.5}px, ${color} ${r + 0.5}px)` });
+    piece(0, 0, w, y1); piece(0, y2, w, h - y2); piece(0, y1, x1, y2 - y1); piece(x2, y1, w - x2, y2 - y1);
+    if (r > 0) { corner(x1, y1, '100% 100%'); corner(x2 - r, y1, '0 100%'); corner(x2 - r, y2 - r, '0 0'); corner(x1, y2 - r, '100% 0'); }
+  }
+
+  function frame() {
+    const x = rect.x / s, y = rect.y / s, w = rect.width / s, h = rect.height / s;
+    const ox = inside ? x : x - t, oy = inside ? y : y - t, ow = inside ? w : w + 2 * t, oh = inside ? h : h + 2 * t;
+    const r = Math.min(radius, w / 2, h / 2);
+    const ro = r > 0 ? (inside ? r : r + t) : 0;
+    const len = (v) => Math.max(0, v);
+    const ring = (kind, g, gi) => {
+      const tt = t + g + gi;
+      const rr = ro > 0 ? ro + g : 0;
+      const hx = ro > 0 ? ox + ro : ox - g;
+      const hLen = len(ro > 0 ? ow - 2 * ro : ow + 2 * g);
+      const vy = ro > 0 ? oy + ro : oy + t + gi;
+      const vLen = len(ro > 0 ? oh - 2 * ro : oh - 2 * (t + gi));
+      const filled = kind === 'halo' || solid;
+      const box = el('cap-ring', { '--cap-edge': tt + 'px' });
+      const edge = (dir, ex, ey, length) =>
+        filled
+          ? el(`cap-edge cap-edge--fill cap-edge--${kind}`, { transform: `translate(${ex}px, ${ey}px) ${dir === 'h' ? stretch(length, tt) : stretch(tt, length)}` }, box)
+          : el(`cap-edge cap-edge--${dir}`, { [dir === 'h' ? 'width' : 'height']: px(length), transform: `translate(${ex}px, ${ey}px)` }, box);
+      const corner = (name, cx, cy) => el(`cap-corner cap-corner--${name} cap-corner--${kind}`, { width: px(rr), height: px(rr), transform: `translate(${cx}px, ${cy}px)` }, box);
+      edge('h', hx, oy - g, hLen); edge('h', hx, oy + oh - t - gi, hLen); edge('v', ox - g, vy, vLen); edge('v', ox + ow - t - gi, vy, vLen);
+      if (rr > 0) { corner('tl', ox - g, oy - g); corner('tr', ox + ow - ro, oy - g); corner('br', ox + ow - ro, oy + oh - ro); corner('bl', ox - g, oy + oh - ro); }
+    };
+    ring('halo', HALO, inside ? HALO : 0);
+    ring('line', 0, 0);
+  }
+
+  function handles() {
+    if (q.get('handles') === '0' || inside) return;
+    const ins = Math.min(radius, rect.width / s / 2, rect.height / s / 2) * (1 - Math.SQRT1_2);
+    for (const h of ['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w']) {
+      const cx = rect.x + rect.width / 2, cy = rect.y + rect.height / 2;
+      const hx = h.includes('w') ? rect.x : h.includes('e') ? rect.x + rect.width : cx;
+      const hy = h.includes('n') ? rect.y : h.includes('s') ? rect.y + rect.height : cy;
+      const dx = h.includes('w') ? ins : h.includes('e') ? -ins : 0;
+      const dy = h.includes('n') ? ins : h.includes('s') ? -ins : 0;
+      const corner = h.length === 2;
+      const sx = h.includes('w') ? -1 : h.includes('e') ? 1 : 0;
+      const sy = h.includes('n') ? -1 : h.includes('s') ? 1 : 0;
+      const kind = corner ? 'corner' : sy !== 0 ? 'h' : 'v';
+      el(`cap-handle cap-handle--${kind}`, { left: px(hx / s + (corner ? dx : 0)), top: px(hy / s + (corner ? dy : 0)), '--sx': sx, '--sy': sy });
+    }
+  }
+  mask(); frame(); handles();
+  document.title = `dpr ${devicePixelRatio} s ${s}`;
+</script>

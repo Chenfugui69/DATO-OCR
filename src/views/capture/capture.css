@@ -17,16 +17,18 @@ html[data-view='capture'] #root {
 }
 
 /*
- * 压暗遮罩：洞的上下左右各一块纯色。每块都是 1×1 的独立合成层，用 transform 的 scale 拉到位 ——
+ * 压暗遮罩：洞的上下左右各一块纯色。每块都是一小块独立合成层，用 transform 的 scale 拉到位 ——
  * 拖选区时只是合成器挪图层，不用重画（原来是全屏一块配 clip-path 挖洞，每动一下全屏重画）。
- * 没有过渡动画：截图要瞬间响应
+ * 没有过渡动画：截图要瞬间响应。
+ * 底块是 100×100（CaptureView 的 STRETCH_BASE）而不是 1×1：150% 缩放下 1 个 CSS 像素是 1.5 个物理像素，
+ * 会被对齐成 2 个，再一拉伸整块就大了三分之一，遮罩和框线全部错位。100 在常见缩放比下都是整数个物理像素
  */
 .cap-mask {
   position: absolute;
   left: 0;
   top: 0;
-  width: 1px;
-  height: 1px;
+  width: 100px;
+  height: 100px;
   transform-origin: 0 0;
   will-change: transform;
   pointer-events: none;
@@ -69,10 +71,10 @@ html[data-view='capture'] #root {
   box-sizing: content-box;
   border: 0 var(--cap-frame-style) var(--cap-frame-color);
 }
-/* 实线的边：1×1 的合成层，用 scale 拉成细长条（和 .cap-mask 同一个办法），拖动时不重画 */
+/* 实线的边：一小块合成层，用 scale 拉成细长条（和 .cap-mask 同一个办法、同一个底块大小），拖动时不重画 */
 .cap-edge--fill {
-  width: 1px;
-  height: 1px;
+  width: 100px;
+  height: 100px;
   transform-origin: 0 0;
   will-change: transform;
   background: var(--cap-frame-color);
@@ -118,6 +120,19 @@ html[data-view='capture'] #root {
   border-bottom-width: var(--cap-edge);
   border-left-width: var(--cap-edge);
   border-bottom-left-radius: 100%;
+}
+/* 四角样式：角块比圆弧大，多出来的是两条直的短臂，所以圆角是固定半径而不是整块 100% */
+.cap-corner--bracket.cap-corner--tl {
+  border-top-left-radius: var(--cap-corner-r);
+}
+.cap-corner--bracket.cap-corner--tr {
+  border-top-right-radius: var(--cap-corner-r);
+}
+.cap-corner--bracket.cap-corner--br {
+  border-bottom-right-radius: var(--cap-corner-r);
+}
+.cap-corner--bracket.cap-corner--bl {
+  border-bottom-left-radius: var(--cap-corner-r);
 }
 
 /* 8 个控制点：白色圆 + 框色描边 + 一圈阴影（框是白色时也看得见）；实际命中范围更大 */

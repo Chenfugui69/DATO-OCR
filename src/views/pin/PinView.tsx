@@ -157,6 +157,9 @@ export default function PinView() {
             src={shotUrl(info.imageId)}
             alt=""
             draggable={false}
+            // 窗口是藏着建的，图画出来了才让 Rust 显示（之后再触发也没关系，只生效一次）
+            onLoad={() => requestAnimationFrame(() => void pin.ready(LABEL))}
+            onError={() => void pin.ready(LABEL)}
             style={{ width: (info.width * zoom) / dpr, height: (info.height * zoom) / dpr, imageRendering: pixelated ? 'pixelated' : 'auto' }}
           />
           {zoom !== 1 && <span className="pin-zoom cn-glass-thin cn-numeric">{Math.round(zoom * 100)}%</span>}
@@ -164,7 +167,8 @@ export default function PinView() {
       )}
       <style>{`
         html[data-view='pin'], html[data-view='pin'] body { background: transparent !important; }
-        .pin-root { position: fixed; inset: 0; animation: pin-in 180ms var(--cn-ease-sheet); }
+        /* 不做出现动画：贴图要原地、原样接替截图选区，一缩一放就成了"跳一下" */
+        .pin-root { position: fixed; inset: 0; }
         .pin-root[data-closing] { animation: pin-out 120ms var(--cn-ease-in) forwards; }
         .pin-frame { position: relative; line-height: 0; border-radius: 2px; box-shadow: 0 4px 12px rgba(0,0,0,0.28), 0 0 0 0.5px rgba(0,0,0,0.25); transition: opacity 120ms; }
         .pin-frame img { display: block; }
@@ -172,7 +176,6 @@ export default function PinView() {
         .pin-zoom { position: absolute; right: 6px; bottom: 6px; padding: 2px 6px; border-radius: 4px; font: 500 11px/14px var(--cn-font-sans); color: var(--cn-label); line-height: 14px; pointer-events: none; }
         .pin-dot { border-radius: 50%; overflow: hidden; box-shadow: 0 2px 8px rgba(0,0,0,0.35), 0 0 0 2px #fff; }
         .pin-dot img { width: 100%; height: 100%; object-fit: cover; }
-        @keyframes pin-in { from { opacity: 0; transform: scale(0.96); } }
         @keyframes pin-out { to { opacity: 0; transform: scale(0.94); } }
       `}</style>
     </div>

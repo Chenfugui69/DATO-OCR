@@ -53,6 +53,7 @@ export function FrameStyleRows({ name, value, onChange }: { name: string; value:
             { value: 'solid', label: t('settings.frame.solid') },
             { value: 'dashed', label: t('settings.frame.dashed') },
             { value: 'dotted', label: t('settings.frame.dotted') },
+            { value: 'corners', label: t('settings.frame.corners') },
           ]}
           onChange={(v) => patch({ style: v })}
         />
@@ -60,11 +61,21 @@ export function FrameStyleRows({ name, value, onChange }: { name: string; value:
       <Row title={t('settings.frame.radius', { name })}>
         <span className="set-row__value cn-numeric">{value.radius}px</span>
         <Slider value={value.radius} min={0} max={24} onChange={(v) => patch({ radius: v })} />
-        <span
-          className="frame-preview"
-          aria-hidden
-          style={{ outline: `${value.width}px ${value.style} ${cssColor(value.color)}`, borderRadius: value.radius }}
-        />
+        {value.style === 'corners' ? (
+          // 四角样式：四个角各一小段，圆角按比例缩到预览里
+          <span className="frame-preview frame-preview--corners" aria-hidden style={{ color: cssColor(value.color), '--w': `${value.width}px`, '--r': `${Math.round(value.radius / 3)}px` } as React.CSSProperties}>
+            <i />
+            <i />
+            <i />
+            <i />
+          </span>
+        ) : (
+          <span
+            className="frame-preview"
+            aria-hidden
+            style={{ outline: `${value.width}px ${value.style} ${cssColor(value.color)}`, borderRadius: value.radius }}
+          />
+        )}
       </Row>
     </>
   );

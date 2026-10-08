@@ -17,7 +17,7 @@ import { formatColor, readableOn } from '@/lib/format';
 import { CONTENT_INTERVAL, useElementSize, useThrottled } from '@/lib/hooks';
 import { capture, gif, reportError } from '@/lib/ipc';
 import { shotUrl, windowLabel } from '@/lib/platform';
-import type { CaptureIntent, FinishAction, FrameStyle } from '@/lib/types';
+import { MID_ACTIONS, TAIL_ACTIONS, type CaptureIntent, type FinishAction, type FrameStyle, type MidAction, type TailAction } from '@/lib/types';
 import { Spinner } from '@/ui/controls';
 import { notify } from '@/ui/overlays';
 import { AnnotationEngine, toolOf } from '@/views/annotate/engine';
@@ -116,7 +116,7 @@ function scheduleChildren(handle: number) {
         childCache.set(handle, local);
         childPending = null;
         const { cursor, phase } = get();
-        if (cursor && phase === 'detect') set({ hover: detect(cursor) });
+        if (cursor && phase === 'detect') set({ hover: hoverAt(cursor) });
       })
       .catch((err) => {
         childCache.set(handle, []);
@@ -124,6 +124,14 @@ function scheduleChildren(handle: number) {
         reportError('capture-window-children', err);
       });
   }, 80);
+}
+
+/**
+ * 鼠标底下要高亮的区域。截图识字 / 翻译不自动框窗口（返回 null）：整屏均匀压暗，等用户自己拖 ——
+ * 识字要的是一小段文字，自动框出来的整个窗口几乎从来不是想要的范围。
+ */
+function hoverAt(p: Point): Rect | null {
+  return isTextIntent(get().session?.intent) ? null : detect(p);
 }
 
 /** 命中判定：按 Z 序从上到下取第一个包含鼠标的窗口；再细分到面积最小的子控件。 */
@@ -200,7 +208,7 @@ async function startSession() {
       colorFormat: info.settings.colorFormat,
     });
   });
-  if (cursor) set({ hover: detect(cursor) });
+  if (cursor) set({ hover: hoverAt(cursor) });
 
   try {
     await capture.overlayReady(info.sessionId, MONITOR_ID);
@@ -273,7 +281,7 @@ function enterEditing(sel: Rect) {
 
 function clearSelection() {
   engine.reset();
-  set({ selection: null, phase: 'detect', tool: null, hover: get().cursor ? detect(get().cursor!) : null });
+  set({ selection: null, phase: 'detect', tool: null, hover: get().cursor ? hoverAt(get().cursor!) : null });
   const s = get().session;
   if (s) void broadcast('capture-active-monitor', { sessionId: s.sessionId, monitorId: null });
 }
@@ -311,6 +319,7 @@ function onAction(id: ActionId) {
   if (!s) return;
   if (id === 'done') void finish(s.intent === 'translate' ? 'copy' : intentAction(s.intent));
   else if (id === 'translate') void translateInPlace();
+  else if (id === 'undo') engine.undo();
   else void finish(id === 'cancel' ? 'cancel' : id === 'save' ? 'save' : id);
 }
 
@@ -458,7 +467,7 @@ function handleMove(e: MoveInput) {
 
   switch (st.phase) {
     case 'detect':
-      set({ hover: detect(p) });
+      set({ hover: hoverAt(p) });
       return;
     case 'pressing': {
       if (!press) return;
@@ -523,10 +532,11 @@ function onPointerUp() {
   flushMove();
   const st = get();
   if (st.phase === 'pressing') {
-    // 单击（移动 < 4px）= 采纳当前高亮区域
-    const target = press?.hover ?? screenRect();
+    // 单击（移动 < 4px）= 采纳当前高亮区域。截图识字没有高亮区域，单击不算数，接着等用户拖
+    const target = press?.hover ?? (isTextIntent(st.session?.intent) ? null : screenRect());
     press = null;
-    enterEditing(target);
+    if (target) enterEditing(target);
+    else set({ phase: 'detect' });
     return;
   }
   if (st.phase === 'selecting' && st.selection) {
@@ -670,7 +680,7 @@ function onKeyDown(e: KeyboardEvent) {
 
 // 拖选区时这里每一帧都在变，所以遮罩和选区框都拆成小块、只靠 transform 摆位：
 //
-// - 压暗遮罩：洞的上下左右各一块纯色，都是 1×1 的独立合成层用 scale 拉到位，拖动时一个像素都
+// - 压暗遮罩：洞的上下左右各一块纯色，都是一小块独立合成层用 scale 拉到位，拖动时一个像素都
 //   不用重画。最早是一整块全屏元素配 clip-path 挖洞，每动一下全屏（4K 屏就是 800 多万像素）重画一遍。
 //   四块直接给宽高也不行：WebKit 里图层一变大小就整块重新光栅化。
 // - 选区框：四条细边（圆角时再加四个角）。一个带 outline / border 的元素范围就是整个选区，
@@ -678,6 +688,15 @@ function onKeyDown(e: KeyboardEvent) {
 //
 // Chromium（Windows）扛得住原来的写法；WebKit（macOS）在 4K / 5K、高刷新率的屏上会掉帧。
 // 坐标都是物理像素换算过来的，正好落在设备像素上，四块拼缝处不会有亮线。
+
+/**
+ * 拉伸用的底块边长（CSS 像素，和 capture.css 里 .cap-mask / .cap-edge--fill 的宽高一致）。
+ * 不能是 1：150% 缩放下 1 个 CSS 像素是 1.5 个物理像素，底块被对齐成 2×2，拉伸之后整块大三分之一，
+ * 遮罩和框线全部错位。100 在 125% / 150% / 175% 下都是整数个物理像素。
+ */
+const STRETCH_BASE = 100;
+/** 把底块拉成 w×h（CSS 像素）的 scale 写法 */
+const stretch = (w: number, h: number) => `scale(${Math.max(0, w) / STRETCH_BASE}, ${Math.max(0, h) / STRETCH_BASE})`;
 
 /** 压暗遮罩。`hole` 是不压暗的那块（选区或悬停高亮的窗口），本屏局部物理坐标。 */
 function Mask({
@@ -698,7 +717,7 @@ function Mask({
   const color = `rgba(0,0,0,${opacity})`;
   const { width: w, height: h } = viewport;
   const piece = (key: string, x: number, y: number, pw: number, ph: number) => (
-    <div key={key} className="cap-mask" style={{ background: color, transform: `translate(${x}px, ${y}px) scale(${Math.max(0, pw)}, ${Math.max(0, ph)})` }} />
+    <div key={key} className="cap-mask" style={{ background: color, transform: `translate(${x}px, ${y}px) ${stretch(pw, ph)}` }} />
   );
   if (!hole) return piece('all', 0, 0, w, h);
   const x1 = hole.x / s;
@@ -745,7 +764,7 @@ const HALO = 0.5;
  * 颜色、线型来自 .cap-root 上的 --cap-frame-* 变量，这里只管几何。
  *
  * 每条边、每个角都是两层：下面一条略宽的半透明暗边，上面才是线 —— 白框压在白色内容上也看得清。
- * 实线的边和压暗遮罩一样，是 1×1 的合成层用 scale 拉到位，拖动时不重画；角块大小固定，只挪位置。
+ * 实线的边和压暗遮罩一样，是一小块合成层用 scale 拉到位，拖动时不重画；角块大小固定，只挪位置。
  * 只有虚线 / 点线没法拉伸，那几条边用真实尺寸的 border 画，每帧要重画细细的一条。
  *
  * 试过又放弃的写法（WebKit 上都慢，量过）：
@@ -759,6 +778,7 @@ function FrameBox({
   width,
   radius,
   solid,
+  corners,
   inside,
 }: {
   rect: Rect;
@@ -766,6 +786,8 @@ function FrameBox({
   width: number;
   radius: number;
   solid: boolean;
+  /** 只画四个角（截图识字默认的样子）：每个角是一段圆弧带两条短臂，四条边不画 */
+  corners?: boolean;
   inside?: boolean;
 }) {
   const x = rect.x / s;
@@ -782,6 +804,37 @@ function FrameBox({
   // 外沿的圆角半径；直角框没有角块，横边一直画到外角，竖边夹在两条横边之间
   const ro = r > 0 ? (inside ? r : r + t) : 0;
   const len = (v: number) => Math.max(0, v);
+  // 四角样式：角块 = 圆弧 + 两条短臂，边长 L。选区很小时收短，四个角不碰到一起
+  const arm = ro > 0 ? Math.max(10, Math.min(28, ro * 0.9)) : 16;
+  const L = Math.max(t, Math.min(ro + arm, ow / 2 - 3, oh / 2 - 3));
+
+  /** 四角样式的一圈：只有四个角块。暗边比线四周各多出 g。 */
+  const bracketRing = (kind: 'halo' | 'line', g: number) => {
+    const size = L + 2 * g;
+    const corner = (name: string, px: number, py: number) => (
+      <span
+        key={name}
+        className={`cap-corner cap-corner--bracket cap-corner--${name} cap-corner--${kind}`}
+        style={{ width: size, height: size, transform: `translate(${px}px, ${py}px)` }}
+      />
+    );
+    return (
+      <div className="cap-ring" style={{ '--cap-edge': `${t + g}px`, '--cap-corner-r': `${Math.min(ro > 0 ? ro + g : 0, size)}px` } as React.CSSProperties}>
+        {corner('tl', ox - g, oy - g)}
+        {corner('tr', ox + ow - L - g, oy - g)}
+        {corner('br', ox + ow - L - g, oy + oh - L - g)}
+        {corner('bl', ox - g, oy + oh - L - g)}
+      </div>
+    );
+  };
+  if (corners) {
+    return (
+      <>
+        {bracketRing('halo', HALO)}
+        {bracketRing('line', 0)}
+      </>
+    );
+  }
 
   /** 一圈框的八块。`g` / `gi`：比线本身向外 / 向里多出多少（暗边才多出来，线本身是 0）。 */
   const ring = (kind: 'halo' | 'line', g: number, gi: number) => {
@@ -792,13 +845,13 @@ function FrameBox({
     const hLen = len(ro > 0 ? ow - 2 * ro : ow + 2 * g);
     const vy = ro > 0 ? oy + ro : oy + t + gi;
     const vLen = len(ro > 0 ? oh - 2 * ro : oh - 2 * (t + gi));
-    const stretch = kind === 'halo' || solid;
+    const filled = kind === 'halo' || solid;
     const edge = (key: string, dir: 'h' | 'v', px: number, py: number, length: number) =>
-      stretch ? (
+      filled ? (
         <span
           key={key}
           className={`cap-edge cap-edge--fill cap-edge--${kind}`}
-          style={{ transform: `translate(${px}px, ${py}px) scale(${dir === 'h' ? length : tt}, ${dir === 'h' ? tt : length})` }}
+          style={{ transform: `translate(${px}px, ${py}px) ${dir === 'h' ? stretch(length, tt) : stretch(tt, length)}` }}
         />
       ) : (
         <span
@@ -831,13 +884,14 @@ function FrameBox({
 
 /** 选区框样式 → CSS 变量（选区框、悬停框、拖柄共用）。 */
 function frameVars(f: FrameStyle | undefined): React.CSSProperties {
-  const style = f ?? { color: 'accent', width: 1.5, style: 'solid', radius: 0 };
+  const style = f ?? { color: 'accent', width: 3, style: 'solid', radius: 0 };
   return {
     '--cap-frame-color': style.color === 'accent' ? 'var(--cn-accent)' : style.color,
     // 完成按钮用框的颜色当底色，上面的勾按底色深浅选黑或白
     '--cap-frame-fg': style.color === 'accent' || readableOn(style.color) === 'white' ? '#fff' : 'rgba(0,0,0,0.85)',
     '--cap-frame-width': `${style.width}px`,
-    '--cap-frame-style': style.style,
+    // 四角样式的角块也是实线画的
+    '--cap-frame-style': style.style === 'corners' ? 'solid' : style.style,
     '--cap-frame-radius': `${style.radius}px`,
   } as React.CSSProperties;
 }
@@ -944,7 +998,25 @@ function TranslationBar({ css }: { css: { x: number; y: number; width: number } 
   );
 }
 
-function Toolbars({ rect, s, viewport }: { rect: Rect; s: number; viewport: { width: number; height: number } }) {
+/** 选区左上角留给尺寸提示的宽度（CSS 像素），够放下 "3840 × 2160" */
+const SIZE_HINT_ROOM = 96;
+
+function Toolbars({
+  rect,
+  s,
+  viewport,
+  tools,
+  mid,
+  order,
+}: {
+  rect: Rect;
+  s: number;
+  viewport: { width: number; height: number };
+  /** 三组按钮各自的顺序（设置里可调）：绘制工具、识字翻译那一组、最右边那一组 */
+  tools?: Tool[];
+  mid?: MidAction[];
+  order?: TailAction[];
+}) {
   const { t } = useTranslation();
   useEngineVersion(engine);
   const tool = useOverlay((x) => x.tool);
@@ -959,6 +1031,8 @@ function Toolbars({ rect, s, viewport }: { rect: Rect; s: number; viewport: { wi
   const picked0 = engine.selectedAnnotation;
   const hasSub = !!(tool ?? (picked0 ? toolOf(picked0) : null));
   const sub = useElementSize(subRef, { width: 300, height: 40 }, [hasSub]);
+  const intentRef = useRef<HTMLDivElement>(null);
+  const intentSize = useElementSize(intentRef, { width: 170, height: 26 });
 
   const css = { x: rect.x / s, y: rect.y / s, width: rect.width / s, height: rect.height / s };
   const pos = placeToolbar(css, bar, viewport);
@@ -990,10 +1064,8 @@ function Toolbars({ rect, s, viewport }: { rect: Rect; s: number; viewport: { wi
         }}
         canUndo={engine.canUndo}
         onUndo={() => engine.undo()}
-        actions={[
-          ['ocr', 'translate', 'ai', 'longshot', 'gif', 'pin'],
-          ['save', 'cancel', 'done'],
-        ]}
+        tools={tools}
+        actions={[mid?.length ? mid : MID_ACTIONS, order?.length ? order : TAIL_ACTIONS]}
         onAction={onAction}
         disabledTools={{ mosaic: !pixelsReady }}
         disabledActions={{ translate: translating }}
@@ -1018,7 +1090,14 @@ function Toolbars({ rect, s, viewport }: { rect: Rect; s: number; viewport: { wi
         </div>
       )}
       {intent !== 'normal' && !engine.hasGroup(TRANSLATION_GROUP) && (
-        <div className="cap-intent cn-glass-thin" style={{ transform: `translate(${css.x}px, ${Math.max(0, css.y - 32)}px)` }}>
+        // 选区左上角是尺寸提示，这条提示靠右上角放；选区太窄就排在尺寸提示右边，不压在它上面
+        <div
+          ref={intentRef}
+          className="cap-intent cn-glass-thin"
+          style={{
+            transform: `translate(${Math.max(0, Math.min(Math.max(css.x + SIZE_HINT_ROOM, css.x + css.width - intentSize.width), viewport.width - intentSize.width))}px, ${Math.max(0, css.y - 6 - intentSize.height)}px)`,
+          }}
+        >
           {t(`capture.intent.${intent}`)}
         </div>
       )}
@@ -1099,8 +1178,8 @@ export default function CaptureView() {
       : phase === 'gif'
         ? 0.35
       : isTextIntent(session?.intent)
-        ? (session?.settings.ocrMaskOpacity ?? 0)
-        : (session?.settings.maskOpacity ?? 0.45);
+        ? (session?.settings.ocrMaskOpacity ?? 0.2)
+        : (session?.settings.maskOpacity ?? 0.4);
   const hole =
     phase === 'detect' || phase === 'pressing'
       ? hover
@@ -1110,8 +1189,10 @@ export default function CaptureView() {
   const showMask = phase !== 'longshot-other' && phase !== 'gif-other';
   const frame = isTextIntent(session?.intent) ? session?.settings.ocrFrame : session?.settings.frame;
   const radius = phase === 'longshot' || phase === 'gif' ? 0 : (frame?.radius ?? 0);
-  const frameWidth = frame?.width ?? 1.5;
+  const frameWidth = frame?.width ?? 3;
   const frameSolid = (frame?.style ?? 'solid') === 'solid';
+  const frameCorners = frame?.style === 'corners';
+  const cfg = session?.settings;
   const pw = session?.monitor.bounds.width ?? 1;
   const ph = session?.monitor.bounds.height ?? 1;
 
@@ -1137,24 +1218,25 @@ export default function CaptureView() {
 
       {(phase === 'detect' || phase === 'pressing') && hover && (
         <>
-          <FrameBox rect={hover} s={s} width={frameWidth + 0.5} radius={radius} solid={frameSolid} inside />
+          <FrameBox rect={hover} s={s} width={frameWidth + 0.5} radius={radius} solid={frameSolid} corners={frameCorners} inside />
           <SizeHint rect={hover} s={s} viewport={viewport} />
         </>
       )}
       {(phase === 'selecting' || phase === 'editing') && selection && (
         <>
-          <FrameBox rect={selection} s={s} width={frameWidth} radius={radius} solid={frameSolid} />
+          <FrameBox rect={selection} s={s} width={frameWidth} radius={radius} solid={frameSolid} corners={frameCorners} />
+          {/* 拖柄从开始拖选区就跟着显示，不是松手才冒出来。四角样式的框本身就是四个角，不再叠拖柄 */}
+          {!frameCorners && !engine.drawing && <Handles rect={selection} s={s} radius={radius} />}
           <SizeHint rect={selection} s={s} viewport={viewport} />
         </>
       )}
       {phase === 'editing' && selection && (
         <>
-          {!engine.drawing && <Handles rect={selection} s={s} radius={radius} />}
           <div className="cap-text-layer">
             <SelectionOverlay engine={engine} displayScale={s} />
             <TextEditor engine={engine} displayScale={s} />
           </div>
-          <Toolbars rect={selection} s={s} viewport={viewport} />
+          <Toolbars rect={selection} s={s} viewport={viewport} tools={cfg?.toolbarTools} mid={cfg?.toolbarActions} order={cfg?.toolbarOrder} />
         </>
       )}
       {phase === 'longshot' && selection && <LongshotUI rect={selection} s={s} viewport={viewport} />}

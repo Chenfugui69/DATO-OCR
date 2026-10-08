@@ -64,6 +64,7 @@ pub async fn library_pin(app: AppHandle, id: i64) -> AppResult<()> {
             std::sync::Arc::new(image),
             (x, y),
             monitor.scale_factor,
+            None,
         )?;
         Ok(())
     })

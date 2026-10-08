@@ -129,6 +129,15 @@ dispatch2 = "0.3"
 security-framework = "3"
 aes-gcm = "0.10"
 
+# 调试版也开优化：不开的话抓屏和图像处理慢二三十倍（4K 屏连续抓屏一秒只有 3 帧），
+# `tauri dev` 里长截图、GIF 一滚就跟丢，试不出真实效果。依赖只编一次，开到 3；自己的代码开到 1，
+# 重编还是快的。
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 3
+
 [profile.release]
 opt-level = "s"
 lto = true

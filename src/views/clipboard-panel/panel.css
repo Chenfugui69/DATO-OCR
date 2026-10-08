@@ -4,14 +4,25 @@ html[data-view='clipboard'] body {
   background: transparent !important;
 }
 
+/* 面板四周的透明边是留给阴影的，阴影必须整个装得下（偏移 + 模糊 ≤ 透明边），装不下的部分会在
+   窗口边上被齐齐切断：下面一条又黑又直的边、两侧一道硬线，看着像面板外面套了个方框。
+   所以这里不用通用的 --cn-shadow-xl（往下要 64px），按透明边的宽度单独配 */
 .panel-root {
   position: fixed;
   inset: 0;
   padding: 8px 8px 8px;
   display: flex;
+  --panel-shadow: 0 2px 6px rgba(0, 0, 0, 0.16);
+}
+[data-theme='dark'] .panel-root {
+  --panel-shadow: 0 2px 6px rgba(0, 0, 0, 0.4);
 }
 .panel-root--vertical {
   padding: 6px;
+  --panel-shadow: 0 1px 5px rgba(0, 0, 0, 0.18);
+}
+[data-theme='dark'] .panel-root--vertical {
+  --panel-shadow: 0 1px 5px rgba(0, 0, 0, 0.42);
 }
 
 .panel {
@@ -24,7 +35,7 @@ html[data-view='clipboard'] body {
   overflow: hidden;
   /* 透明窗口里 backdrop-filter 透不到桌面，底色要足够实 */
   background: var(--cn-glass-bg-chrome);
-  box-shadow: var(--cn-shadow-xl), 0 0 0 0.5px var(--cn-separator);
+  box-shadow: var(--panel-shadow), 0 0 0 0.5px var(--cn-separator);
   transition:
     transform 280ms var(--cn-ease-sheet),
     opacity 200ms var(--cn-ease-out);
@@ -49,14 +60,19 @@ html[data-view='clipboard'] body {
   transition-duration: 130ms;
 }
 
-/* 贴边：直角、紧贴屏幕底部，只在上沿投一点阴影 */
+/* 贴边：直角、紧贴屏幕底部，只在上沿投一点阴影（上面只有 8px 透明边，同样要装得下） */
 .panel-root--docked {
   padding: 8px 0 0;
 }
 .panel-root--docked .panel {
   border-radius: 0;
   box-shadow:
-    0 -8px 24px rgba(0, 0, 0, 0.16),
+    0 -2px 6px rgba(0, 0, 0, 0.14),
+    0 -0.5px 0 var(--cn-separator);
+}
+[data-theme='dark'] .panel-root--docked:not(.panel-root--blur) .panel {
+  box-shadow:
+    0 -2px 6px rgba(0, 0, 0, 0.36),
     0 -0.5px 0 var(--cn-separator);
 }
 

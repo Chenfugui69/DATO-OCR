@@ -604,6 +604,73 @@ html[data-view='main'][data-glass='off'] body {
   margin-left: 6px;
   background: linear-gradient(135deg, #8e8e93, #3a3a3c);
 }
+.frame-preview--corners {
+  position: relative;
+  width: 48px;
+  height: 30px;
+}
+.frame-preview--corners i {
+  position: absolute;
+  width: 12px;
+  height: 10px;
+  border: 0 solid currentColor;
+}
+.frame-preview--corners i:nth-child(1) {
+  left: 0;
+  top: 0;
+  border-width: var(--w) 0 0 var(--w);
+  border-top-left-radius: var(--r);
+}
+.frame-preview--corners i:nth-child(2) {
+  right: 0;
+  top: 0;
+  border-width: var(--w) var(--w) 0 0;
+  border-top-right-radius: var(--r);
+}
+.frame-preview--corners i:nth-child(3) {
+  right: 0;
+  bottom: 0;
+  border-width: 0 var(--w) var(--w) 0;
+  border-bottom-right-radius: var(--r);
+}
+.frame-preview--corners i:nth-child(4) {
+  left: 0;
+  bottom: 0;
+  border-width: 0 0 var(--w) var(--w);
+  border-bottom-left-radius: var(--r);
+}
+
+/* 截图工具条按钮顺序：一条和真工具条一样的条，按住图标左右拖 */
+.set-row--stack {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 10px;
+}
+.tb-order {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+.tb-order__bar {
+  background: var(--cn-bg-elevated);
+  box-shadow:
+    0 2px 8px rgba(0, 0, 0, 0.12),
+    0 0 0 0.5px var(--cn-separator);
+  touch-action: none;
+}
+.tb-order__item {
+  cursor: grab;
+}
+.tb-order__item:active:not(:disabled) {
+  transform: none;
+}
+.tb-order__item[data-dragging] {
+  cursor: grabbing;
+  background: color-mix(in srgb, var(--cn-accent) 18%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--cn-accent) 45%, transparent);
+  transform: scale(1.1);
+}
 /* AI 服务商：每个服务商一组行，组与组之间粗一点的分隔 */
 .ai-provider + .ai-provider,
 .ai-provider + .set-row {

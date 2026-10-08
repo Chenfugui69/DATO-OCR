@@ -13,7 +13,8 @@ import { useEvent } from '@/lib/events';
 import { useElementSize } from '@/lib/hooks';
 import { editor } from '@/lib/ipc';
 import { shotUrl } from '@/lib/platform';
-import type { EditorAction, EditorDoc } from '@/lib/types';
+import { useSettings } from '@/lib/settings';
+import { MID_ACTIONS, TAIL_ACTIONS, type EditorAction, type EditorDoc } from '@/lib/types';
 import { Spinner } from '@/ui/controls';
 import { notify } from '@/ui/overlays';
 import { TitleBar } from '@/ui/TitleBar';
@@ -30,6 +31,7 @@ const TOO_LONG_TO_PASTE = 8000;
 
 export default function EditorView() {
   const { t } = useTranslation();
+  const cfg = useSettings()?.capture;
   useEngineVersion(engine);
   const [doc, setDoc] = useState<EditorDoc | null>(null);
   const [tool, setTool] = useState<Tool | null>(null);
@@ -165,7 +167,7 @@ export default function EditorView() {
   const onAction = (id: ActionId) => {
     if (id === 'cancel') void getCurrentWindow().close();
     else if (id === 'done') void done();
-    else if (id !== 'longshot' && id !== 'gif') void finish(id);
+    else if (id !== 'longshot' && id !== 'gif' && id !== 'undo') void finish(id);
   };
 
   useEffect(() => {
@@ -315,10 +317,9 @@ export default function EditorView() {
           }}
           canUndo={engine.canUndo}
           onUndo={() => engine.undo()}
-          actions={[
-            ['ocr', 'translate', 'ai', 'pin'],
-            ['save', 'cancel', 'done'],
-          ]}
+          // 顺序跟截图工具条用同一份设置；这里没有长截图和 GIF
+          tools={cfg?.toolbarTools}
+          actions={[(cfg?.toolbarActions?.length ? cfg.toolbarActions : MID_ACTIONS).filter((a) => a !== 'longshot' && a !== 'gif'), cfg?.toolbarOrder?.length ? cfg.toolbarOrder : TAIL_ACTIONS]}
           onAction={onAction}
           disabledTools={{ mosaic: !ready }}
           disabledActions={{ done: busy, save: busy }}

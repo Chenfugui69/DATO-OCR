@@ -150,7 +150,7 @@ pub fn finish(app: &AppHandle, meta: EditorFinish, annotation_png: Vec<u8>) -> A
             let wa = monitor.work_area;
             let x = wa.x + (wa.width as i32 - image.width() as i32).max(0) / 2;
             let y = wa.y + (wa.height as i32 - image.height() as i32).max(0) / 2;
-            pin::create(app, Arc::new(image), (x, y), monitor.scale_factor)?;
+            pin::create(app, Arc::new(image), (x, y), monitor.scale_factor, None)?;
         }
         EditorAction::Ai => {
             let attached = crate::ai::store_image(app, Arc::new(image));

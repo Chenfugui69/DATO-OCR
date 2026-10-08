@@ -86,6 +86,8 @@ export const longshot = {
 
 export const pin = {
   info: (label: string) => call<PinInfo>('pin_info', { label }),
+  /** 图画好了，可以显示窗口了 */
+  ready: (label: string) => call<void>('pin_ready', { label }),
   close: (label: string) => call<void>('pin_close', { label }),
   closeAll: () => call<void>('pin_close_all'),
   copy: (label: string) => call<void>('pin_copy', { label }),

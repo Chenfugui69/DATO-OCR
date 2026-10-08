@@ -133,6 +133,12 @@ pub async fn pin_info(app: AppHandle, label: String) -> AppResult<PinInfo> {
     pin::info(&app, &label)
 }
 
+/// 贴图页面把图画好了，可以显示窗口了。
+#[tauri::command]
+pub async fn pin_ready(app: AppHandle, label: String) {
+    pin::ready(&app, &label);
+}
+
 #[tauri::command]
 pub async fn pin_close(app: AppHandle, label: String) -> AppResult<()> {
     let ui = app.clone();

@@ -184,6 +184,12 @@ pub struct CaptureSettings {
     pub snap_threshold: u32,
     /// none（默认，右键什么都不做）| exit | cancelSelection
     pub right_click: String,
+    /// 截图工具条三组按钮各自从左到右的顺序（设置里拖动图标调整）：绘制工具
+    pub toolbar_tools: Vec<String>,
+    /// 识字、翻译、问 AI、长截图、GIF 那一组
+    pub toolbar_actions: Vec<String>,
+    /// 最右边那一组
+    pub toolbar_order: Vec<String>,
     /// copy | copyAndSave
     pub finish_action: String,
     pub save_to_library: bool,
@@ -200,8 +206,8 @@ pub struct CaptureSettings {
 impl Default for CaptureSettings {
     fn default() -> Self {
         Self {
-            mask_opacity: 0.45,
-            ocr_mask_opacity: 0.0,
+            mask_opacity: 0.4,
+            ocr_mask_opacity: 0.2,
             ocr_instant: true,
             instant_action: "select".into(),
             instant_cursor: true,
@@ -210,9 +216,9 @@ impl Default for CaptureSettings {
             frame: FrameStyle::default(),
             ocr_frame: FrameStyle {
                 color: "#FFFFFF".into(),
-                width: 2.0,
-                style: "solid".into(),
-                radius: 12,
+                width: 3.0,
+                style: "corners".into(),
+                radius: 24,
             },
             show_magnifier: true,
             color_format: "hex".into(),
@@ -220,6 +226,9 @@ impl Default for CaptureSettings {
             detect_child_windows: true,
             snap_threshold: 8,
             right_click: "none".into(),
+            toolbar_tools: owned(&TOOLBAR_TOOLS),
+            toolbar_actions: owned(&TOOLBAR_ACTIONS),
+            toolbar_order: owned(&TOOLBAR_ORDER),
             finish_action: "copy".into(),
             save_to_library: true,
             save_directory: None,
@@ -231,6 +240,26 @@ impl Default for CaptureSettings {
     }
 }
 
+/// 截图工具条三组按钮的默认顺序：绘制工具、识字翻译那一组、最右边那一组。
+pub const TOOLBAR_TOOLS: [&str; 6] = ["rect", "ellipse", "arrow", "pen", "mosaic", "text"];
+pub const TOOLBAR_ACTIONS: [&str; 5] = ["ocr", "translate", "ai", "longshot", "gif"];
+pub const TOOLBAR_ORDER: [&str; 5] = ["undo", "save", "pin", "cancel", "done"];
+
+fn owned(ids: &[&str]) -> Vec<String> {
+    ids.iter().map(|s| (*s).into()).collect()
+}
+
+/// 顺序必须正好是那一组按钮各出现一次，不是就恢复默认。
+fn fix_order(order: &mut Vec<String>, all: &[&str]) {
+    let mut have = order.clone();
+    have.sort();
+    let mut want = owned(all);
+    want.sort();
+    if have != want {
+        *order = owned(all);
+    }
+}
+
 /// 截图选区框的样式。
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase", default)]
@@ -239,7 +268,7 @@ pub struct FrameStyle {
     pub color: String,
     /// 线宽（逻辑像素）
     pub width: f64,
-    /// solid | dashed | dotted
+    /// solid | dashed | dotted | corners（只画四个角）
     pub style: String,
     /// 圆角（逻辑像素）。只影响框的样子，截下来的图仍是矩形
     pub radius: u32,
@@ -249,7 +278,7 @@ impl Default for FrameStyle {
     fn default() -> Self {
         Self {
             color: "accent".into(),
-            width: 1.5,
+            width: 3.0,
             style: "solid".into(),
             radius: 0,
         }
@@ -260,7 +289,10 @@ impl FrameStyle {
     fn sanitize(&mut self) {
         self.width = self.width.clamp(1.0, 6.0);
         self.radius = self.radius.min(32);
-        if !matches!(self.style.as_str(), "solid" | "dashed" | "dotted") {
+        if !matches!(
+            self.style.as_str(),
+            "solid" | "dashed" | "dotted" | "corners"
+        ) {
             self.style = "solid".into();
         }
         let hex = self.color.strip_prefix('#').unwrap_or("");
@@ -482,15 +514,16 @@ pub struct PopupStyle {
 impl Default for PopupStyle {
     fn default() -> Self {
         Self {
-            width: 460,
+            width: 380,
             height: 0,
             font_size: 15,
-            opacity: 1.0,
+            // 毛玻璃默认开着：色调要淡，背后的模糊才透得出来
+            opacity: 0.45,
             radius: 24,
             show_source: false,
             ai_layout: "drawer".into(),
             drawer_height: 380,
-            blur: false,
+            blur: true,
             extra: Map::new(),
         }
     }
@@ -500,11 +533,12 @@ impl Default for TranslateSettings {
     fn default() -> Self {
         Self {
             target_language: "auto".into(),
-            providers: TRANSLATE_PROVIDERS
+            // 默认顺序：有道、必应、谷歌、腾讯；要自己填密钥的两个排在后面、默认不开
+            providers: ["youdao", "bing", "google", "transmart", "deepl", "openai"]
                 .iter()
                 .map(|id| ProviderEntry {
                     id: (*id).into(),
-                    enabled: matches!(*id, "bing" | "transmart" | "youdao" | "google"),
+                    enabled: !matches!(*id, "deepl" | "openai"),
                 })
                 .collect(),
             show_all_providers: true,
@@ -715,8 +749,23 @@ impl Settings {
         if !matches!(c.right_click.as_str(), "none" | "exit" | "cancelSelection") {
             c.right_click = "none".into();
         }
+        // 识字框改成"四角"样式之前存下来的设置：还是以前那个白色实线圆角框的，换成新样式（只换一次，
+        // 之后用户自己改回实线就不再动）
+        if c.extra
+            .insert("ocrFrameCorners".into(), Value::Bool(true))
+            .is_none()
+            && c.ocr_frame.style == "solid"
+            && c.ocr_frame.radius == 12
+            && c.ocr_frame.color.eq_ignore_ascii_case("#FFFFFF")
+        {
+            c.ocr_frame.style = "corners".into();
+            c.ocr_frame.radius = 24;
+        }
         c.frame.sanitize();
         c.ocr_frame.sanitize();
+        fix_order(&mut c.toolbar_tools, &TOOLBAR_TOOLS);
+        fix_order(&mut c.toolbar_actions, &TOOLBAR_ACTIONS);
+        fix_order(&mut c.toolbar_order, &TOOLBAR_ORDER);
         c.snap_threshold = c.snap_threshold.min(32);
         c.jpg_quality = c.jpg_quality.clamp(40, 100);
         if !matches!(c.color_format.as_str(), "hex" | "rgb" | "hsl") {

@@ -89,6 +89,16 @@ async function moveWindow(
   await system.setBounds(x, y, w, h, backdrop);
 }
 
+/**
+ * 面板往外长的时候，毛玻璃背板的动画晚几帧再开始。背板是系统合成器做的动画，命令一到就动；页面的
+ * 过渡要过两三帧才上屏。同时开始的话背板跑在前面，面板还没长到那里就先露出一条空的毛玻璃
+ * （连拍里看得到，背后是浅色窗口时很显眼）。晚一点只是面板最前沿那一小条暂时没有模糊，看不出来。
+ * 收起时相反，背板先缩没关系，不用等
+ */
+async function lagBackdrop() {
+  for (let i = 0; i < 3; i += 1) await frame();
+}
+
 /** 改窗口前等几帧（见 moveWindow） */
 const MOVE_DELAY_FRAMES = 1;
 
@@ -200,20 +210,44 @@ export default function TranslatePopup() {
 
   const hide = useCallback(() => void getCurrentWindow().hide(), []);
 
+  /** 面板在被拖着挪：过 ms 没再动就算挪完了 */
+  const settle = useCallback((ms: number) => {
+    window.clearTimeout(moveTimer.current);
+    moveTimer.current = window.setTimeout(() => {
+      userMoving.current = false;
+      // 拖完把焦点要回来，之后点外面才能照常收起
+      const w = getCurrentWindow();
+      void (async () => {
+        if (!(await w.isFocused()) && (await w.isVisible())) await w.setFocus();
+      })();
+    }, ms);
+  }, []);
+
+  /**
+   * 原文那一栏：按住拖是挪面板，点一下才是改原文。语言那一行能拖的空白只有窄窄一条，
+   * 面板顶上这一栏看着就像标题栏，用户会去拖它（钉住之后尤其想挪）
+   */
+  const dragBySource = (e: React.PointerEvent<HTMLElement>) => {
+    if (e.button !== 0) return;
+    const { clientX: x0, clientY: y0 } = e;
+    const stop = () => {
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', stop);
+    };
+    const move = (ev: PointerEvent) => {
+      if (Math.hypot(ev.clientX - x0, ev.clientY - y0) < 4) return;
+      stop();
+      userMoving.current = true;
+      settle(1500);
+      void getCurrentWindow().startDragging();
+    };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', stop);
+  };
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => e.key === 'Escape' && hide();
     window.addEventListener('keydown', onKey);
-    const settle = (ms: number) => {
-      window.clearTimeout(moveTimer.current);
-      moveTimer.current = window.setTimeout(() => {
-        userMoving.current = false;
-        // 拖完把焦点要回来，之后点外面才能照常收起
-        const w = getCurrentWindow();
-        void (async () => {
-          if (!(await w.isFocused()) && (await w.isVisible())) await w.setFocus();
-        })();
-      }, ms);
-    };
     const onDown = (e: PointerEvent) => {
       if (!(e.target as Element | null)?.closest?.('[data-tauri-drag-region]')) return;
       userMoving.current = true;
@@ -246,9 +280,12 @@ export default function TranslatePopup() {
       win.onMoved(() => userMoving.current && settle(400)),
       // 用户拖右下角改了大小：记进设置，下次按这个尺寸弹出
       win.onResized(() => {
-        // 顶上有预留时，窗口区域和毛玻璃背板要跟着面板的新大小（动画期间由展开 / 收起自己管）
+        // 顶上有预留时，用户拖边改了大小，窗口区域和毛玻璃背板要跟着面板的新大小。
+        // 只管用户拖的：弹出时 Rust 摆位、展开 / 收起也会改窗口大小，那些各自设好了区域和背板；
+        // 这里要是也跟着设，用的是上一次弹出留下的预留高度和还没更新的窗口高度，命令又排在
+        // Rust 后面执行，正确的区域就被盖掉了 —— 面板下面被裁掉一截，或者顶上多出一块空的毛玻璃
         const top = topRef.current;
-        if (top > 0 && !animating.current) {
+        if (top > 0 && userResizing.current && !animating.current) {
           const rect = { x: 0, y: top, width: window.innerWidth, height: window.innerHeight - top };
           void system.setRegion(rect);
           if (padRef.current === 0) void system.backdrop(rect);
@@ -286,7 +323,7 @@ export default function TranslatePopup() {
       window.removeEventListener('pointerdown', onDown, true);
       for (const u of unlisteners) void u.then((fn) => fn());
     };
-  }, [hide, logicalWindowSize, beginResize]);
+  }, [hide, logicalWindowSize, beginResize, settle]);
 
   const openAi = async (ask?: string) => {
     if (animating.current) return;
@@ -340,7 +377,10 @@ export default function TranslatePopup() {
         await frame();
         // 2. 外框往上长到新高度，对话区从输入框那里升上来，毛玻璃背板用同一条曲线跟着长
         setSheet({ w: full.fw, h: full.fh, ...full, x: 0, y: 0, open: true, animate: true });
-        if (blur) void system.backdrop({ x: 0, y: top, width: full.fw, height: full.fh }, ANIM_MS);
+        if (blur) {
+          await lagBackdrop();
+          void system.backdrop({ x: 0, y: top, width: full.fw, height: full.fh }, ANIM_MS);
+        }
         await wait(ANIM_MS + 40);
         setSheet(null);
         return;
@@ -373,7 +413,10 @@ export default function TranslatePopup() {
       await frame();
       // 2. 外框长到新尺寸、回到原点，对话区滑进来
       setSheet({ w: full.fw, h: full.fh, ...full, x: 0, y: 0, open: true, animate: true });
-      if (blur) void system.backdrop({ x: 0, y: top, width: w, height: h }, ANIM_MS);
+      if (blur) {
+        await lagBackdrop();
+        void system.backdrop({ x: 0, y: top, width: w, height: h }, ANIM_MS);
+      }
       await wait(ANIM_MS + 40);
       setSheet(null);
       // 没有预留时背板恢复铺满窗口；有预留时就停在面板上（窗口顶上那截不铺）
@@ -502,13 +545,22 @@ export default function TranslatePopup() {
         transition: sheet.animate ? transition(['width', 'height', 'transform']) : 'none',
       }
     : undefined;
-  // 过渡期间翻译区保持展开前的高度（带着输入框），抽屉滑上来盖住它的下沿
-  const paneStyle =
+  // 过渡期间翻译区保持展开前的高度（带着输入框），抽屉滑上来盖住它的下沿。
+  // 被盖住的那一截同步裁掉：面板调了不透明度时抽屉是半透明的，不裁的话下面的译文和输入框会透上来，
+  // 动画一结束（翻译区变矮）又突然消失
+  const paneFull = baseSize.current.h - pad * 2;
+  const paneStyle: React.CSSProperties | undefined =
     mode !== 'ai'
       ? undefined
       : layout === 'side'
         ? { width: transW, maxWidth: sheet ? 'none' : undefined }
-        : { height: sheet ? baseSize.current.h - pad * 2 : transH };
+        : sheet
+          ? {
+              height: paneFull,
+              clipPath: `inset(0 0 ${sheet.open ? Math.max(0, paneFull - transH) : 0}px 0)`,
+              transition: `${sheet.animate ? `${transition(['clip-path'])}, ` : ''}background-color ${ANIM_MS}ms ${EASE}`,
+            }
+          : { height: transH };
   /**
    * 过渡期间对话区贴着外框底边（侧边是右边），高度（宽度）从 0 长到最终值，和外框用同一条缓动曲线：
    * 外框往下长多少，抽屉就往上长多少，顶边从翻译区底部平滑升到最终位置，中间不会露出空隙。
@@ -567,7 +619,7 @@ export default function TranslatePopup() {
                 }}
               />
             ) : (
-              <div className="pop__source" title={t('translate.editSource')} onClick={() => setEditingSource(true)}>
+              <div className="pop__source" title={t('translate.editSource')} onPointerDown={dragBySource} onClick={() => setEditingSource(true)}>
                 {text}
               </div>
             ))}
@@ -721,12 +773,20 @@ html[data-view='translate'], html[data-view='translate'] body { background: tran
                      background: var(--cn-fill-quaternary); color: var(--cn-label); -webkit-line-clamp: unset; overflow: auto;
                      box-shadow: inset 0 -1px 0 var(--cn-accent); }
 
-/* 底部"问 AI"输入框：浮在翻译区底部，翻译结果一直延伸到它后面；底色从输入框的中间才开始（上面是渐变），
-   不再是输入框上面一整条底色把结果截断 */
-.pop-pane--translate { --pane-bg: var(--pop-hi); }
-.is-drawer .pop-pane--translate { --pane-bg: var(--pop-lo); }
+/* 底部"问 AI"输入框：浮在翻译区底部，翻译结果一直延伸到它后面。输入框背后垫一层遮罩：从输入框的
+   上沿开始（不往上多盖，结果能一直显示到输入框跟前），到面板底边为止。遮罩比面板本身实（面板调得
+   很透时也至少七八成），再把背后的字模糊掉 —— 以前是一段渐变，上半截几乎是透的，滚到后面的译文
+   和输入框里的字叠在一起，看不清在输什么 */
+.pop-pane--translate { --ask-rgb: 252,252,254; }
+.is-drawer .pop-pane--translate { --ask-rgb: 236,236,241; }
+[data-theme='dark'] .pop-pane--translate { --ask-rgb: 46,46,48; }
+[data-theme='dark'] .is-drawer .pop-pane--translate { --ask-rgb: 30,30,32; }
 .pop-ask-wrap { position: absolute; left: 0; right: 0; bottom: 0; z-index: 3; padding: 0 12px 10px;
-                background: linear-gradient(to bottom, transparent 0, var(--pane-bg) 16px); }
+                background: rgba(var(--ask-rgb), max(var(--pop-alpha), 0.8));
+                -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px); }
+/* 多个翻译源那一列的滚动条放进右边的留白里，而且位置一直留着：以前一出滚动条卡片就被挤窄 10px，
+   左右留白不一样宽 */
+.pop-pane--translate .tr-box__cards { margin-right: -10px; scrollbar-gutter: stable; }
 .has-ask .tr-box { padding-bottom: 46px; }
 .has-ask .tr-box:has(.tr-box__cards) { padding-bottom: 0; }
 .has-ask .tr-box__cards { padding-bottom: 46px; }

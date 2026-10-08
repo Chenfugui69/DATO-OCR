@@ -102,7 +102,8 @@ export function TranslateBox({
 
   return (
     <div className={compact ? 'tr-box tr-box--compact' : 'tr-box'} style={fontSize ? ({ '--tr-font': `${fontSize}px` } as React.CSSProperties) : undefined}>
-      <div className="tr-box__langs">
+      {/* 这一行的空白处（控件之间的缝、两头的留白）都可以拖动面板 */}
+      <div className="tr-box__langs" data-tauri-drag-region>
         <Select value={from} width={compact ? 96 : 110} options={[{ value: 'auto', label: t('lang.auto') }, ...langOptions]} onChange={setFrom} />
         <IconButton icon={ArrowDownUp} size="sm" label={t('translate.swap')} onClick={swap} />
         <Select value={to} width={compact ? 96 : 110} options={[{ value: 'auto', label: t('translate.autoTarget') }, ...langOptions]} onChange={setTo} />

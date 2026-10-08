@@ -19,6 +19,7 @@ import { confirmDialog, notify } from '@/ui/overlays';
 
 import { AiSettingsGroups } from './AiSettings';
 import { FrameStyleRows } from './FrameStyleRows';
+import { ToolbarOrder } from './ToolbarOrder';
 import { Group, Row } from './settingsParts';
 import { TranslateSettingsGroups } from './TranslateSettings';
 import { UpdateBanner, UpdateDialog, useUpdate } from './UpdateDialog';
@@ -208,6 +209,13 @@ export function SettingsPage({ section }: { section: string | null }) {
             <Row title={t('settings.capture.gifCursor')}>
               <Switch checked={c.gifCursor} onChange={(v) => set((d) => void (d.capture.gifCursor = v))} />
             </Row>
+            <div className="set-row set-row--stack">
+              <div className="set-row__label">
+                <div className="set-row__title">{t('settings.capture.toolbarOrder')}</div>
+                <div className="set-row__desc">{t('settings.capture.toolbarOrderDesc')}</div>
+              </div>
+              <ToolbarOrder value={c} onChange={(v) => set((d) => void Object.assign(d.capture, v))} />
+            </div>
             <FrameStyleRows name={t('settings.frame.captureName')} value={c.frame} onChange={(v) => set((d) => void (d.capture.frame = v))} />
             <Row title={t('settings.capture.magnifier')}>
               <Switch checked={c.showMagnifier} onChange={(v) => set((d) => void (d.capture.showMagnifier = v))} />

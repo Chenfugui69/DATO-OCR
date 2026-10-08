@@ -215,11 +215,22 @@ export interface PopupStyle {
   blur: boolean;
 }
 
+/** 截图工具条最右边那一组里的按钮 */
+export type TailAction = 'undo' | 'save' | 'pin' | 'cancel' | 'done';
+export const TAIL_ACTIONS: TailAction[] = ['undo', 'save', 'pin', 'cancel', 'done'];
+/** 中间那一组 */
+export type MidAction = 'ocr' | 'translate' | 'ai' | 'longshot' | 'gif';
+export const MID_ACTIONS: MidAction[] = ['ocr', 'translate', 'ai', 'longshot', 'gif'];
+/** 绘制工具 */
+export type ToolId = 'rect' | 'ellipse' | 'arrow' | 'pen' | 'mosaic' | 'text';
+export const TOOL_ORDER: ToolId[] = ['rect', 'ellipse', 'arrow', 'pen', 'mosaic', 'text'];
+
 export interface FrameStyle {
   /** 'accent' = 跟随主题色，否则 #RRGGBB */
   color: string;
   width: number;
-  style: 'solid' | 'dashed' | 'dotted';
+  /** corners = 只画四个角 */
+  style: 'solid' | 'dashed' | 'dotted' | 'corners';
   radius: number;
 }
 
@@ -239,6 +250,10 @@ export interface CaptureSettings {
   detectChildWindows: boolean;
   snapThreshold: number;
   rightClick: 'none' | 'exit' | 'cancelSelection';
+  /** 截图工具条三组按钮各自的顺序：绘制工具、识字翻译那一组、最右边那一组 */
+  toolbarTools: ToolId[];
+  toolbarActions: MidAction[];
+  toolbarOrder: TailAction[];
   finishAction: 'copy' | 'copyAndSave';
   saveToLibrary: boolean;
   saveDirectory: string | null;

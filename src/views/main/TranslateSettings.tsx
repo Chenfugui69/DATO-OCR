@@ -246,7 +246,7 @@ export function TranslateSettingsGroups({ settings, set }: { settings: Settings;
             icon={RotateCcw}
             onClick={() =>
               set((d) => {
-                d.translate.popup = { ...d.translate.popup, width: 460, height: 0, fontSize: 15, opacity: 1, radius: 14, showSource: false, blur: false };
+                d.translate.popup = { ...d.translate.popup, width: 380, height: 0, fontSize: 15, opacity: 0.45, radius: 24, showSource: false, blur: true };
               })
             }
           >

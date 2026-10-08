@@ -26,9 +26,14 @@ pub struct PinEntry {
     pub scale: f64,
 }
 
+/// 贴图窗口画好第一帧时要做的事（截图遮罩等到这时才收）
+pub type OnReady = Box<dyn FnOnce() + Send>;
+
 #[derive(Default)]
 pub struct PinRegistry {
     pins: Mutex<HashMap<String, PinEntry>>,
+    /// 还没显示出来的贴图：页面把图画好之后才显示窗口（见 `ready`）
+    waiting: Mutex<HashMap<String, Option<OnReady>>>,
 }
 
 impl PinRegistry {
@@ -53,12 +58,20 @@ pub struct PinInfo {
     pub margin: f64,
 }
 
+/// 页面最多等这么久；到点还没画好也把窗口显示出来
+const READY_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(1500);
+
 /// `at`：图片左上角的屏幕物理坐标（即原选区位置），贴图出现在原地。
+///
+/// 窗口建好先藏着，等页面把图画出来（`ready`）才显示：新建一个网页窗口要两三百毫秒，
+/// 先显示的话是一个空窗口，图过一会儿才冒出来。`on_ready` 在窗口显示的那一刻调用 ——
+/// 从截图工具条点"贴图"时，遮罩就是等到这时才收的，冻结的画面直接换成贴图，中间不闪。
 pub fn create(
     app: &AppHandle,
     image: Arc<RgbaImage>,
     at: (i32, i32),
     scale: f64,
+    on_ready: Option<OnReady>,
 ) -> AppResult<String> {
     let st = state(app);
     let id = uuid::Uuid::new_v4().simple().to_string()[..12].to_string();
@@ -72,6 +85,14 @@ pub fn create(
             scale,
         },
     );
+
+    st.pins.waiting.lock().insert(label.clone(), on_ready);
+    let timer_app = app.clone();
+    let timer_label = label.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(READY_TIMEOUT);
+        ready(&timer_app, &timer_label);
+    });
 
     let (w, h) = image.dimensions();
     let margin_px = (MARGIN * scale).round() as i32;
@@ -102,11 +123,10 @@ pub fn create(
                     w + 2 * margin_px as u32,
                     h + 2 * margin_px as u32,
                 );
-                let _ = window.show();
-                let _ = platform::take_focus(&window);
             }
             Err(err) => {
                 tracing::error!("创建贴图窗口失败：{err}");
+                ready(&ui_app, &ui_label);
                 remove(&ui_app, &ui_label);
             }
         }
@@ -127,6 +147,24 @@ pub fn info(app: &AppHandle, label: &str) -> AppResult<PinInfo> {
         scale: entry.scale,
         margin: MARGIN,
     })
+}
+
+/// 贴图页面把图画好了（或者等超时了）：显示窗口，做 `on_ready`。每张贴图只生效一次。
+pub fn ready(app: &AppHandle, label: &str) {
+    let Some(on_ready) = state(app).pins.waiting.lock().remove(label) else {
+        return;
+    };
+    let ui_app = app.clone();
+    let label = label.to_string();
+    let _ = app.run_on_main_thread(move || {
+        if let Some(window) = ui_app.get_webview_window(&label) {
+            let _ = window.show();
+            let _ = platform::take_focus(&window);
+        }
+        if let Some(f) = on_ready {
+            f();
+        }
+    });
 }
 
 fn remove(app: &AppHandle, label: &str) {
