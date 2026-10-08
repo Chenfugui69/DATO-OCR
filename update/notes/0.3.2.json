@@ -9,7 +9,8 @@
     "剪贴板面板可以选单击粘贴还是双击粘贴",
     "剪贴板面板从屏幕底下滑上来（可以在设置里关掉）",
     "截图工具条的按钮顺序可以在设置里拖动调整",
-    "选区框新增「四角」线型"
+    "选区框新增「四角」线型",
+    "剪贴板面板可以盖在任务栏上面（设置里的开关）"
   ],
   "improved": [
     "换了新图标",
@@ -17,7 +18,10 @@
     "长截图可以一口气滚到底，截完自动复制",
     "拖动截图选区更流畅",
     "截图工具条重新设计，图标更统一",
-    "翻译结果前面显示翻译服务的图标"
+    "翻译结果前面显示翻译服务的图标",
+    "识字结果可以用鼠标跨行拖动选中",
+    "划词翻译面板的输入框和翻译结果更清楚，不再和后面的文字叠在一起",
+    "截图识字不再自动框选窗口，由你自己拖出要识别的范围"
   ],
   "fixed": [
     "毛玻璃面板的圆角外面多出一块方形",
@@ -25,7 +29,11 @@
     "划词翻译面板弹出时偶尔被裁掉一截",
     "拖边框改划词翻译面板的大小时，面板被收起",
     "剪贴板面板点过右键之后，点别处收不起来",
-    "贴图出现时会跳一下"
+    "贴图出现时会跳一下",
+    "系统是深色、软件选了浅色时，侧边栏和面板上的字看不清",
+    "毛玻璃面板的圆角有锯齿",
+    "剪贴板面板开着毛玻璃时没有弹出动画",
+    "剪贴板面板不开毛玻璃时，阴影被切成一个方框"
   ],
   "en": {
     "added": [
@@ -38,7 +46,8 @@
       "Choose single-click or double-click to paste from the clipboard panel",
       "The clipboard panel slides up from the bottom of the screen (can be turned off in Settings)",
       "Reorder the capture toolbar buttons by dragging them in Settings",
-      "New corners-only style for the selection frame"
+      "New corners-only style for the selection frame",
+      "The clipboard panel can cover the taskbar (a switch in Settings)"
     ],
     "improved": [
       "New app icon",
@@ -46,7 +55,10 @@
       "Scrolling capture can go all the way down in one go and copies the result when done",
       "Smoother dragging when selecting a screenshot area",
       "Redesigned capture toolbar with more consistent icons",
-      "Translation results show the service's icon"
+      "Translation results show the service's icon",
+      "Drag across lines to select recognized text",
+      "Clearer input box and results in the translation popup; text no longer overlaps behind the input",
+      "Text capture no longer auto-selects windows; you drag the area yourself"
     ],
     "fixed": [
       "A square patch of frosted glass showed outside the rounded corners of glass panels",
@@ -54,7 +66,11 @@
       "The translation popup was sometimes cut off when it appeared",
       "Resizing the translation popup by its edge closed it",
       "The clipboard panel stayed open after a right-click when clicking elsewhere",
-      "Pinned images jumped when they appeared"
+      "Pinned images jumped when they appeared",
+      "Sidebar and panel text was hard to read with a dark system theme and the light app theme",
+      "Jagged rounded corners on frosted-glass panels",
+      "The clipboard panel had no slide animation with frosted glass on",
+      "The clipboard panel shadow was cut into a square with frosted glass off"
     ]
   }
 }
