@@ -46,23 +46,36 @@ export type ActionId = 'ocr' | 'translate' | 'ai' | 'longshot' | 'gif' | 'pin' |
 type IconProps = { size?: number | string; strokeWidth?: number | string; absoluteStrokeWidth?: boolean };
 type ActionIcon = React.ComponentType<IconProps>;
 
-// 识字、长截图、GIF 原来三个图标都是"方框里几道线"，挤在一起很容易点错。长截图和 GIF 换成
-// 一眼能认出来的：长截图 = 画面往下接着延伸，GIF 直接写字
+// 识字、长截图、GIF 原来三个图标都是"方框里几道线"，挤在一起很容易点错。长截图和 GIF 是自己画的，
+// 画法跟 lucide 一致（24 的画布、同样粗细的圆头线条、占位接近正方形），放在一排里不显得是另一套：
+// 试过纯文字的"GIF"，没有外框、笔画又是实心的，看着像单独贴上去的
 
-/** 长截图：一张竖长的页面，里面两道向下的箭头（一直往下滚） */
+const svgProps = (size: number | string, strokeWidth: number | string) =>
+  ({
+    width: size,
+    height: size,
+    viewBox: '0 0 24 24',
+    fill: 'none',
+    stroke: 'currentColor',
+    strokeWidth,
+    strokeLinecap: 'round',
+    strokeLinejoin: 'round',
+    'aria-hidden': true,
+  }) as const;
+
+/** 长截图：一页内容，旁边一根上下滚动的箭头 */
 const LongshotIcon: ActionIcon = ({ size = 18, strokeWidth = 1.5 }) => (
-  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={strokeWidth} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-    <rect x="5.5" y="2" width="13" height="20" rx="3" />
-    <path d="m8.75 8.25 3.25 3.25 3.25-3.25M8.75 13 12 16.25 15.25 13" />
+  <svg {...svgProps(size, strokeWidth)}>
+    <rect x="3" y="3" width="13" height="18" rx="2" />
+    <path d="M20 5v14M18 7l2-2 2 2M18 17l2 2 2-2M6.5 8h6M6.5 12h6M6.5 16h4" />
   </svg>
 );
 
-/** GIF：直接写字，占满整个图标的宽度 */
-const GifIcon: ActionIcon = ({ size = 18 }) => (
-  <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden>
-    <text x="12" y="17" textAnchor="middle" fontSize="13.5" fontWeight="800" letterSpacing="-0.4" fill="currentColor" fontFamily="var(--cn-font-sans)">
-      GIF
-    </text>
+/** GIF：方框里用线条写的 G、I、F */
+const GifIcon: ActionIcon = ({ size = 18, strokeWidth = 1.5 }) => (
+  <svg {...svgProps(size, strokeWidth)}>
+    <rect x="3" y="3" width="18" height="18" rx="3" />
+    <path d="M9.6 10.2a2.1 2.1 0 1 0 .4 3.3V12H8.8M12.6 9.6v4.8M15.4 14.4V9.6h2.4M15.4 12.1h1.9" />
   </svg>
 );
 
