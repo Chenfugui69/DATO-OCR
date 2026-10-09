@@ -195,7 +195,8 @@ pub fn show_below(monitor: MonitorId, overlay: u64) -> AppResult<()> {
         )?;
         EndDeferWindowPos(batch)?;
     }
-    super::effects::reveal_hwnd_for_tests(super::util::handle_of(backdrop), true);
+    // 底图就是冻结的那张屏幕画面：远程控制的对面要看到它，不然选区里是空的
+    super::effects::set_hwnd_capturable(super::util::handle_of(backdrop), true);
     Ok(())
 }
 
@@ -203,9 +204,10 @@ pub fn hide_all() {
     check_thread("hide_all");
     SURFACES.with_borrow(|surfaces| {
         for surface in surfaces.values() {
+            // 先排除再藏：藏起来的窗口在下一帧合成之前还可能被抓到
+            super::effects::set_hwnd_capturable(super::util::handle_of(surface.hwnd), false);
             // SAFETY: 句柄由本模块持有。
             let _ = unsafe { ShowWindow(surface.hwnd, SW_HIDE) };
-            super::effects::reveal_hwnd_for_tests(super::util::handle_of(surface.hwnd), false);
         }
     });
 }
@@ -215,9 +217,9 @@ pub fn release_all() {
     check_thread("release_all");
     SURFACES.with_borrow_mut(|surfaces| {
         for surface in surfaces.values_mut() {
+            super::effects::set_hwnd_capturable(super::util::handle_of(surface.hwnd), false);
             // SAFETY: 句柄由本模块持有。
             let _ = unsafe { ShowWindow(surface.hwnd, SW_HIDE) };
-            super::effects::reveal_hwnd_for_tests(super::util::handle_of(surface.hwnd), false);
             surface.free_dib();
         }
     });

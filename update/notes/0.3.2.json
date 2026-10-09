@@ -33,7 +33,8 @@
     "系统是深色、软件选了浅色时，侧边栏和面板上的字看不清",
     "毛玻璃面板的圆角有锯齿",
     "剪贴板面板开着毛玻璃时没有弹出动画",
-    "剪贴板面板不开毛玻璃时，阴影被切成一个方框"
+    "剪贴板面板不开毛玻璃时，阴影被切成一个方框",
+    "远程控制、屏幕共享时，对面看不到截图的选区和工具条"
   ],
   "en": {
     "added": [
@@ -70,7 +71,8 @@
       "Sidebar and panel text was hard to read with a dark system theme and the light app theme",
       "Jagged rounded corners on frosted-glass panels",
       "The clipboard panel had no slide animation with frosted glass on",
-      "The clipboard panel shadow was cut into a square with frosted glass off"
+      "The clipboard panel shadow was cut into a square with frosted glass off",
+      "The capture selection and toolbar were invisible over remote control and screen sharing"
     ]
   }
 }

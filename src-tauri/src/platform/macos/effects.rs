@@ -215,6 +215,11 @@ fn is_panel(ns: &NSWindow) -> bool {
 /// 盖住程序坞时面板离屏幕底边留的缝（逻辑像素），和不盖时离程序坞的距离一样。
 pub const OVER_DOCK_GAP: f64 = 8.0;
 
+/// macOS 上遮罩排除抓屏用的是窗口的共享类型，这里不改原来的行为（只有诊断开关才放开）。
+pub fn set_overlay_capturable(window: &WebviewWindow, visible: bool) {
+    reveal_for_tests(window, visible);
+}
+
 /// 浮层盖不盖在程序坞上面：程序坞的窗口层级比普通浮层高，要盖住它得再往上提一档。
 pub fn set_above_dock(window: &WebviewWindow, above: bool) {
     with_window(window, move |ns, _| {

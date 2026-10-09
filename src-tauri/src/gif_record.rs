@@ -138,6 +138,8 @@ pub fn start(
         platform::backdrop::hide_all();
         overlay::for_each(&ui_app, |w| {
             let _ = w.set_ignore_cursor_events(true);
+            // 录制期间遮罩一直显示着：控制条、选区框不能被录进去
+            platform::set_overlay_capturable(w, false);
         });
         let _ = ui_app.emit(events::GIF_STATE, event);
         if let Some(target) = platform::window_at(cx, cy).or(fallback) {

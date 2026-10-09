@@ -121,7 +121,7 @@ pub fn show_with_backdrop(app: &AppHandle, monitor: MonitorId, focus: bool) -> A
     let handle = platform::native_handle(&window)?;
     platform::backdrop::show_below(monitor, handle)?;
     window.show()?;
-    platform::reveal_for_tests(&window, true);
+    platform::set_overlay_capturable(&window, true);
     if focus {
         platform::take_focus(&window)?;
     }
@@ -150,8 +150,9 @@ pub fn for_each(app: &AppHandle, mut f: impl FnMut(&WebviewWindow)) {
 pub fn hide_all(app: &AppHandle) {
     for_each(app, |w| {
         let _ = w.set_ignore_cursor_events(false);
+        // 先排除再藏（见 `platform::set_overlay_capturable`）
+        platform::set_overlay_capturable(w, false);
         let _ = w.hide();
-        platform::reveal_for_tests(w, false);
     });
     platform::backdrop::release_all();
 }

@@ -164,6 +164,8 @@ pub fn start(
         platform::backdrop::hide_all();
         overlay::for_each(&ui_app, |w| {
             let _ = w.set_ignore_cursor_events(true);
+            // 采集期间遮罩一直显示着：提示条、预览条不能被拍进长图
+            platform::set_overlay_capturable(w, false);
         });
         let _ = ui_app.emit(events::LONGSHOT_STATE, event);
         // 焦点必须交给被滚动的窗口：遮罩虽然鼠标穿透了，但还握着键盘焦点的话，"滚动非活动

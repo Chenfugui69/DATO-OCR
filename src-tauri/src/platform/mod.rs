@@ -214,6 +214,16 @@ pub fn set_above_dock(window: &WebviewWindow, above: bool) {
     sys::effects::set_above_dock(window, above);
 }
 
+/// 截图遮罩显示 / 收起时调：显示着的时候能被抓屏看到，收起时排除。
+///
+/// 远程控制、屏幕共享、录屏软件看到的画面都是抓屏抓来的，遮罩一直排除的话，对面只看到屏幕不动，
+/// 看不到选区和工具条（用户用远程控制时报过）。收起时必须排除：刚藏起来的窗口在下一帧合成之前
+/// 还可能被抓到，连着截两张图时第二张里会有上一次的遮罩。
+/// 长截图、录 GIF 期间遮罩一直显示着，那时要另外排除掉（提示条、控制条不能被录进去）。
+pub fn set_overlay_capturable(window: &WebviewWindow, visible: bool) {
+    sys::effects::set_overlay_capturable(window, visible)
+}
+
 /// 窗口不抢焦点地置顶显示（toast 之类）。
 /// 让窗口永远不被激活（点它、显示它都不抢焦点）。悬浮按钮这类"浮在别人上面"的窗口用。
 pub fn set_no_activate(window: &WebviewWindow) {

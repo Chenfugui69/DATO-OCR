@@ -551,21 +551,25 @@ pub fn set_bounds_logical(
     )
 }
 
+/// 见 `platform::set_overlay_capturable`。
+pub fn set_overlay_capturable(window: &WebviewWindow, visible: bool) {
+    set_exclude_from_capture(window, !visible);
+}
+
+/// 同上，给截图底图窗口（原生窗口，只有句柄）用。
+pub fn set_hwnd_capturable(handle: u64, visible: bool) {
+    let affinity = if visible {
+        WDA_NONE
+    } else {
+        WDA_EXCLUDEFROMCAPTURE
+    };
+    // SAFETY: 句柄来自本进程创建的窗口。
+    let _ = unsafe { SetWindowDisplayAffinity(hwnd(handle), affinity) };
+}
+
 /// 诊断模式下，窗口显示时放开抓屏、隐藏时恢复排除。非诊断模式什么都不做。
 pub fn reveal_for_tests(window: &WebviewWindow, visible: bool) {
     if self_capture_allowed() {
         set_exclude_from_capture(window, !visible);
-    }
-}
-
-pub fn reveal_hwnd_for_tests(handle: u64, visible: bool) {
-    if self_capture_allowed() {
-        let affinity = if visible {
-            WDA_NONE
-        } else {
-            WDA_EXCLUDEFROMCAPTURE
-        };
-        // SAFETY: 句柄来自本进程创建的窗口。
-        let _ = unsafe { SetWindowDisplayAffinity(hwnd(handle), affinity) };
     }
 }
