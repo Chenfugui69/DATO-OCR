@@ -166,6 +166,15 @@ fn capture_one(screen: &Screen) -> AppResult<RgbaImage> {
     )
 }
 
+/// 屏幕上这一块现在的画面（按实际像素）。没有屏幕录制权限时不抓（不能为了一个按钮弹授权框）。
+pub fn patch(rect: PhysicalRect) -> Option<RgbaImage> {
+    if !permissions::screen_capture_granted() || rect.width == 0 || rect.height == 0 {
+        return None;
+    }
+    let image = capture_rect(geometry::rect_to_points(rect), (rect.width, rect.height)).ok()?;
+    crate::imaging::crop_opaque(&image, PhysicalRect::new(0, 0, rect.width, rect.height)).ok()
+}
+
 /// 抓屏幕上的一块。`points`：全局点坐标；`size`：这一块的像素尺寸。
 fn capture_rect(points: ffi::CGRect, size: (u32, u32)) -> AppResult<RgbaImage> {
     // SAFETY: 范围是全局点坐标；返回的图由 CgImage 负责释放。

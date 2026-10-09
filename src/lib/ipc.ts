@@ -211,6 +211,12 @@ export const ai = {
 
 export const system = {
   /** 调用方窗口是不是前台窗口 */
+  /** 窗口的位置和所在屏的可用区域（逻辑像素）；null = 直接读 window.screenX / screen.avail* */
+  placement: () =>
+    call<{ x: number; y: number; width: number; height: number; workX: number; workY: number; workWidth: number; workHeight: number } | null>('window_placement'),
+  /** 鼠标已经按在窗口边上：跟着鼠标改大小。false = 改用 Tauri 的 startResizeDragging */
+  startResize: (direction: string, minWidth: number, minHeight: number, topInset: number) =>
+    call<boolean>('window_start_resize', { direction, minWidth, minHeight, topInset }),
   isForeground: () => call<boolean>('window_is_foreground'),
   settings: () => call<Settings>('settings_get'),
   setSettings: (settings: Settings) => call<Settings>('settings_set', { settings }),

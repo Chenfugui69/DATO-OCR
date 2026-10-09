@@ -34,7 +34,7 @@ use super::ffi::CGRect;
 use super::geometry;
 use super::util::{encode_handle, ns_window, on_main, own_pid};
 use crate::error::{AppError, AppResult};
-use crate::platform::{FloatingKind, PhysicalRect};
+use crate::platform::{FloatingKind, PhysicalRect, WindowPlacement};
 
 /// 截图遮罩的窗口层级：盖住菜单栏（24）、程序坞（20）和别的应用的置顶窗口。
 /// 用屏保那一档（1000）；输入法候选窗在更高的层，标注打字时还能看到。
@@ -74,6 +74,11 @@ fn panel_class() -> Option<&'static AnyClass> {
                 sel!(canBecomeMainWindow),
                 never as extern "C-unwind" fn(_, _) -> _,
             );
+            // SAFETY: 签名是 `- (NSRect)constrainFrameRect:(NSRect)rect toScreen:(NSScreen *)screen`。
+            builder.add_method(
+                sel!(constrainFrameRect:toScreen:),
+                unconstrained as extern "C-unwind" fn(_, _, _, _) -> _,
+            );
         }
         Some(builder.register())
     })
@@ -82,6 +87,18 @@ fn panel_class() -> Option<&'static AnyClass> {
 const FOCUSABLE: &CStr = c"focusable";
 
 /// 无边框窗口默认当不了键盘焦点窗口，遮罩和面板要收键盘。和 tao 一样听 `focusable` 的。
+/// 浮层想摆哪就摆哪。系统默认会把窗口往下推、不让顶边越过菜单栏（连程序里 `setFrame` 也拦）；
+/// 划词面板的窗口顶上有一截看不见的预留区，被这么一拦，面板挪到离屏幕顶还有一截的地方就上不去了，
+/// 预留区多高就卡在多高（每次弹出的位置不同、预留区不一样高，卡的位置也就不一样）。
+extern "C-unwind" fn unconstrained(
+    _this: &AnyObject,
+    _: Sel,
+    rect: CGRect,
+    _screen: *mut AnyObject,
+) -> CGRect {
+    rect
+}
+
 extern "C-unwind" fn can_become_key(this: &AnyObject, _: Sel) -> Bool {
     match this.class().instance_variable(FOCUSABLE) {
         // SAFETY: 这个成员变量是上面按 Bool 类型声明的。
@@ -212,12 +229,127 @@ fn is_panel(ns: &NSWindow) -> bool {
     panel_class().is_some_and(|class| ns.isKindOfClass(class))
 }
 
+/// 窗口的位置（左上角，全局点坐标）和它所在那块屏的可用区域。
+/// WKWebView 的 `window.screenX / screenY` 在窗口被程序挪过之后不更新，`screen.availLeft` 也没有，页面读不准。
+pub fn window_placement(window: &WebviewWindow) -> Option<WindowPlacement> {
+    with_window(window, |ns, _| {
+        let frame = geometry::flip(ns.frame());
+        let work = ns
+            .screen()
+            .map(|s| geometry::flip(s.visibleFrame()))
+            .unwrap_or(frame);
+        WindowPlacement {
+            x: frame.origin.x,
+            y: frame.origin.y,
+            width: frame.size.width,
+            height: frame.size.height,
+            work_x: work.origin.x,
+            work_y: work.origin.y,
+            work_width: work.size.width,
+            work_height: work.size.height,
+        }
+    })
+}
+
+thread_local! {
+    /// 正在跟着鼠标改窗口大小的那个定时器
+    static RESIZE_TIMER: RefCell<Option<Retained<NSTimer>>> = const { RefCell::new(None) };
+}
+
+/// 跟着鼠标改窗口大小 / 挪窗口，直到左键松开。记下按下时的外框和鼠标位置，定时看鼠标挪了多少、
+/// 把对应的边（或者整个窗口）跟过去。
+///
+/// - 改大小：tao 的 `drag_resize_window` 在 macOS 上没实现，无边框的面板系统也不给拖边。
+/// - 挪：系统自己的拖动不让窗口顶边越过菜单栏。划词面板的窗口顶上有一截看不见的预留区（`top_inset`），
+///   系统拦的是它，于是面板拖到半屏高就上不去了。自己挪的话，让面板本身停在屏幕顶、预留区伸到屏幕外面。
+pub fn start_resize_drag(
+    window: &WebviewWindow,
+    direction: &str,
+    min: (f64, f64),
+    top_inset: f64,
+) -> bool {
+    let moving = direction == "Move";
+    let (west, east) = (direction.contains("West"), direction.contains("East"));
+    let (north, south) = (direction.contains("North"), direction.contains("South"));
+    with_window(window, move |ns, _| {
+        if let Some(old) = RESIZE_TIMER.take() {
+            old.invalidate();
+        }
+        let start = ns.frame();
+        let from = NSEvent::mouseLocation();
+        let (min_w, min_h) = (min.0.max(80.0), min.1.max(60.0));
+        let target = ns.windowNumber();
+        let tick = RcBlock::new(move |_: NonNull<NSTimer>| {
+            // SAFETY: 定时器挂在主线程的运行循环上，回调在主线程。
+            let mtm = unsafe { MainThreadMarker::new_unchecked() };
+            let window = NSApplication::sharedApplication(mtm).windowWithWindowNumber(target);
+            let held = NSEvent::pressedMouseButtons() & 1 != 0;
+            let Some(ns) = window.filter(|_| held) else {
+                if let Some(timer) = RESIZE_TIMER.take() {
+                    timer.invalidate();
+                }
+                return;
+            };
+            let mouse = NSEvent::mouseLocation();
+            let (dx, dy) = (mouse.x - from.x, mouse.y - from.y);
+            // 屏幕坐标 y 向上：外框的 origin 是左下角
+            let (mut x, mut y) = (start.origin.x, start.origin.y);
+            let (mut w, mut h) = (start.size.width, start.size.height);
+            if east {
+                w = (start.size.width + dx).max(min_w);
+            }
+            if west {
+                w = (start.size.width - dx).max(min_w);
+                x = start.origin.x + start.size.width - w;
+            }
+            if north {
+                h = (start.size.height + dy).max(min_h);
+            }
+            if south {
+                h = (start.size.height - dy).max(min_h);
+                y = start.origin.y + start.size.height - h;
+            }
+            if moving {
+                x = start.origin.x + dx;
+                y = start.origin.y + dy;
+                // 面板本身（外框去掉顶上那一截）不超出这块屏可用区域的顶
+                if let Some(screen) = ns.screen() {
+                    let visible = screen.visibleFrame();
+                    let top = visible.origin.y + visible.size.height;
+                    y = y.min(top + top_inset - h);
+                }
+            }
+            ns.setFrame_display(geometry::rect(x, y, w, h), true);
+        });
+        // SAFETY: 回调只碰主线程的数据。
+        let timer = unsafe {
+            NSTimer::scheduledTimerWithTimeInterval_repeats_block(1.0 / 120.0, true, &tick)
+        };
+        RESIZE_TIMER.set(Some(timer));
+    });
+    true
+}
+
+/// 鼠标是不是在窗口上。往外多算一圈：窗口边上拖着改大小的那一圈在窗口外沿。
+pub fn cursor_in_window(window: &WebviewWindow) -> bool {
+    with_window(window, |ns, _| {
+        let (frame, mouse) = (ns.frame(), NSEvent::mouseLocation());
+        const EDGE: f64 = 6.0;
+        mouse.x >= frame.origin.x - EDGE
+            && mouse.x <= frame.origin.x + frame.size.width + EDGE
+            && mouse.y >= frame.origin.y - EDGE
+            && mouse.y <= frame.origin.y + frame.size.height + EDGE
+    })
+    .unwrap_or(true)
+}
+
 /// 盖住程序坞时面板离屏幕底边留的缝（逻辑像素），和不盖时离程序坞的距离一样。
 pub const OVER_DOCK_GAP: f64 = 8.0;
 
-/// macOS 上遮罩排除抓屏用的是窗口的共享类型，这里不改原来的行为（只有诊断开关才放开）。
+/// 截图遮罩显示着的时候让抓屏看得到（远程控制、屏幕共享的对面才看得到选区和工具条），收起时排除。
+/// 我们自己抓屏是在遮罩显示之前，不会把它拍进去；长截图、录 GIF 期间上层会另外排除。
 pub fn set_overlay_capturable(window: &WebviewWindow, visible: bool) {
-    reveal_for_tests(window, visible);
+    set_exclude_from_capture(window, !visible);
 }
 
 /// 浮层盖不盖在程序坞上面：程序坞的窗口层级比普通浮层高，要盖住它得再往上提一档。
@@ -243,7 +375,16 @@ pub fn take_focus(window: &WebviewWindow) -> AppResult<()> {
             if ns.isKeyWindow() {
                 tracing::debug!(label, app_active, "浮层拿到键盘焦点");
             } else {
-                tracing::warn!(label, app_active, "浮层没拿到键盘焦点，按键可能没反应");
+                tracing::warn!(label, app_active, "浮层没拿到键盘焦点，稍后再要一次");
+                // 刚点完划词按钮、别的程序正在收鼠标事件时，系统有时不给；等这一下过去再要
+                let again = window.clone();
+                super::util::on_main_async(move |mtm| {
+                    if let Some(ns) = ns_window(&again, mtm) {
+                        if ns.isVisible() && !ns.isKeyWindow() {
+                            ns.makeKeyAndOrderFront(None);
+                        }
+                    }
+                });
             }
         }
         panel
@@ -263,20 +404,6 @@ pub fn set_exclude_from_capture(window: &WebviewWindow, exclude: bool) {
             NSWindowSharingType::ReadOnly
         });
     });
-}
-
-/// 诊断开关：`CHENOCR_ALLOW_SELF_CAPTURE=1` 时，浮动窗口**显示期间**不排除抓屏，
-/// 好让 `screencapture` 之类的外部工具拍到它们做视觉验证。
-pub fn self_capture_allowed() -> bool {
-    std::env::var("CHENOCR_ALLOW_SELF_CAPTURE")
-        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
-        .unwrap_or(false)
-}
-
-pub fn reveal_for_tests(window: &WebviewWindow, visible: bool) {
-    if self_capture_allowed() {
-        set_exclude_from_capture(window, !visible);
-    }
 }
 
 /// 点它、显示它都不抢键盘焦点：面板只在里面有输入框需要时才成为焦点窗口。

@@ -618,6 +618,10 @@ pub struct SelectionTranslateSettings {
     pub show_button: bool,
     /// bottomRight | topRight | bottomLeft | topLeft
     pub button_position: String,
+    /// 划词按钮的样子：liquid = 液态玻璃（通透）| frosted = 磨砂玻璃（更实，密集文字上更好认）
+    pub button_style: String,
+    /// 划词按钮圆点的直径（逻辑像素）
+    pub button_size: u32,
     /// none | alt | ctrl：按住它选文字，松开鼠标直接弹翻译面板
     pub modifier: String,
     #[serde(flatten)]
@@ -629,6 +633,8 @@ impl Default for SelectionTranslateSettings {
         Self {
             show_button: true,
             button_position: "bottomRight".into(),
+            button_style: "liquid".into(),
+            button_size: 28,
             modifier: "none".into(),
             extra: Map::new(),
         }
@@ -847,6 +853,10 @@ impl Settings {
         ) {
             sel.button_position = "bottomRight".into();
         }
+        if !matches!(sel.button_style.as_str(), "liquid" | "frosted") {
+            sel.button_style = "liquid".into();
+        }
+        sel.button_size = sel.button_size.clamp(20, 48);
         if !matches!(sel.modifier.as_str(), "none" | "alt" | "ctrl") {
             sel.modifier = "none".into();
         }

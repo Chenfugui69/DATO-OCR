@@ -8,7 +8,9 @@ const ROWS: [y: number, dots: number, end: number][] = [
   [672, 2, 728],
 ];
 
-export function BrandMark({ size }: { size: number }) {
+/** `mono`：不用品牌的黄绿渐变，跟着文字颜色（currentColor）画成单色。 */
+export function BrandMark({ size, mono }: { size: number; mono?: boolean }) {
+  const paint = mono ? 'currentColor' : 'url(#brand-mark)';
   return (
     <svg width={size} height={size} viewBox="192 192 640 640" aria-hidden>
       <defs>
@@ -20,9 +22,9 @@ export function BrandMark({ size }: { size: number }) {
       {ROWS.map(([y, dots, end]) => (
         <g key={y}>
           {Array.from({ length: dots }, (_, i) => (
-            <circle key={i} cx={272 + i * 104} cy={y} r={38} fill="url(#brand-mark)" opacity={0.38 + 0.2 * i} />
+            <circle key={i} cx={272 + i * 104} cy={y} r={38} fill={paint} opacity={0.38 + 0.2 * i} />
           ))}
-          <path d={`M ${272 + dots * 104} ${y} H ${end}`} stroke="url(#brand-mark)" strokeWidth={76} strokeLinecap="round" fill="none" />
+          <path d={`M ${272 + dots * 104} ${y} H ${end}`} stroke={paint} strokeWidth={76} strokeLinecap="round" fill="none" />
         </g>
       ))}
     </svg>

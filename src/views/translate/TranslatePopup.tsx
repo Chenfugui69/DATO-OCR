@@ -22,6 +22,7 @@ import { flushSync } from 'react-dom';
 import { useTranslation } from 'react-i18next';
 
 import { useEvent } from '@/lib/events';
+import { isMac } from '@/lib/platform';
 import { ai, system, translate } from '@/lib/ipc';
 import { useSettings, useSettingsStore } from '@/lib/settings';
 import type { ChatTurn } from '@/lib/types';
@@ -68,6 +69,43 @@ const RESIZE_EDGES = [
 ] as const;
 
 const ANIM_MS = 340;
+
+/** 面板窗口在哪、所在屏的可用区域（逻辑像素）。 */
+async function whereAmI(): Promise<{ pos: { x: number; y: number }; mx: number; my: number; mw: number; mh: number }> {
+  const p = await system.placement().catch(() => null);
+  if (p) return { pos: { x: p.x, y: p.y }, mx: p.workX, my: p.workY, mw: p.workWidth, mh: p.workHeight };
+  const scr = window.screen as Screen & { availLeft?: number; availTop?: number };
+  return { pos: { x: window.screenX, y: window.screenY }, mx: scr.availLeft ?? 0, my: scr.availTop ?? 0, mw: scr.availWidth, mh: scr.availHeight };
+}
+
+type ResizeDirection = Parameters<ReturnType<typeof getCurrentWindow>['startResizeDragging']>[0];
+
+/** 面板最小多大（和 Rust 建窗时的 min_inner_size 一致） */
+const MIN_W = 320;
+const MIN_H = 200;
+
+/**
+ * 鼠标已经按在面板的边 / 角上：开始跟着鼠标改大小。`top`：窗口顶上不属于面板的预留区有多高。
+ * macOS 上 Tauri 自带的那个没实现，走后端自己做的。
+ */
+function startResize(direction: ResizeDirection, top: number): void {
+  void system
+    .startResize(direction, MIN_W, MIN_H + top, top)
+    .catch(() => false)
+    .then((handled) => {
+      if (!handled) void getCurrentWindow().startResizeDragging(direction);
+    });
+}
+
+/** 鼠标已经按在面板上：开始挪面板。macOS 上系统自己的拖动会被顶上的预留区卡住，走后端自己做的。 */
+function startMove(top: number): void {
+  void system
+    .startResize('Move', 0, 0, top)
+    .catch(() => false)
+    .then((handled) => {
+      if (!handled) void getCurrentWindow().startDragging();
+    });
+}
 const EASE = 'cubic-bezier(0.32, 0.72, 0, 1)';
 const frame = () => new Promise<void>((r) => requestAnimationFrame(() => r()));
 const wait = (ms: number) => new Promise<void>((r) => window.setTimeout(r, ms));
@@ -209,6 +247,12 @@ export default function TranslatePopup() {
   }, [adopt]);
 
   const hide = useCallback(() => void getCurrentWindow().hide(), []);
+  // 鼠标在面板外面按下了（Rust 的全局鼠标监听报的）。平时靠失焦收起，但面板有时拿不到键盘焦点、
+  // 就等不到失焦；这条不依赖焦点。和失焦一样：翻译模式才收，对话模式、钉住、正在拖动 / 改大小时不收
+  useEvent('translate-outside', () => {
+    if (modeRef.current !== 'translate' || pinnedRef.current || userResizing.current || userMoving.current) return;
+    hide();
+  });
 
   /** 面板在被拖着挪：过 ms 没再动就算挪完了 */
   const settle = useCallback((ms: number) => {
@@ -239,7 +283,7 @@ export default function TranslatePopup() {
       stop();
       userMoving.current = true;
       settle(1500);
-      void getCurrentWindow().startDragging();
+      startMove(topRef.current);
     };
     window.addEventListener('pointermove', move);
     window.addEventListener('pointerup', stop);
@@ -254,6 +298,15 @@ export default function TranslatePopup() {
       settle(1500);
     };
     window.addEventListener('pointerdown', onDown, true);
+    // macOS：带 data-tauri-drag-region 的空白处，Tauri 会用系统自己的拖动去挪窗口，那个会被顶上的预留区卡住
+    // （面板拖到半屏高就上不去）。赶在它前面接过来，用我们自己的
+    const onMouseDown = (e: MouseEvent) => {
+      const target = e.target as Element | null;
+      if (!isMac || e.button !== 0 || !target?.hasAttribute?.('data-tauri-drag-region')) return;
+      e.stopImmediatePropagation();
+      startMove(topRef.current);
+    };
+    window.addEventListener('mousedown', onMouseDown, true);
     const win = getCurrentWindow();
     let blurTimer: number | undefined;
     let blurAt = 0;
@@ -321,6 +374,7 @@ export default function TranslatePopup() {
       window.clearTimeout(blurTimer);
       window.removeEventListener('keydown', onKey);
       window.removeEventListener('pointerdown', onDown, true);
+      window.removeEventListener('mousedown', onMouseDown, true);
       for (const u of unlisteners) void u.then((fn) => fn());
     };
   }, [hide, logicalWindowSize, beginResize, settle]);
@@ -333,13 +387,9 @@ export default function TranslatePopup() {
       const panel = settings?.ai.panel;
       const base = logicalWindowSize();
       baseSize.current = base;
-      // 位置、屏幕可用区域都直接读浏览器的同步值（逻辑像素），少几次来回，点下去立刻开始动
-      const pos = { x: window.screenX, y: window.screenY };
-      const scr = window.screen as Screen & { availLeft?: number; availTop?: number };
-      const mx = scr.availLeft ?? 0;
-      const my = scr.availTop ?? 0;
-      const mw = scr.availWidth;
-      const mh = scr.availHeight;
+      // 位置、屏幕可用区域：Windows 上直接读浏览器的同步值（逻辑像素），少几次来回，点下去立刻开始动；
+      // macOS 上那些值不准（窗口被程序挪过之后 screenX 不更新，面板会跳到屏幕左边），问后端
+      const { pos, mx, my, mw, mh } = await whereAmI();
       let w: number;
       let h: number;
       if (next === 'side') {
@@ -430,7 +480,7 @@ export default function TranslatePopup() {
     if (animating.current) return;
     animating.current = true;
     try {
-      const pos = { x: window.screenX, y: window.screenY };
+      const { pos } = await whereAmI();
       const cur = logicalWindowSize();
       const target = baseSize.current;
       const grown = grownInPlace.current;
@@ -718,7 +768,7 @@ export default function TranslatePopup() {
           onPointerDown={(e) => {
             e.preventDefault();
             beginResize();
-            void getCurrentWindow().startResizeDragging('SouthEast');
+            startResize('SouthEast', topRef.current);
           }}
         />
         {!sheet &&
@@ -729,7 +779,7 @@ export default function TranslatePopup() {
               onPointerDown={(e) => {
                 e.preventDefault();
                 beginResize();
-                void getCurrentWindow().startResizeDragging(dir);
+                startResize(dir, topRef.current);
               }}
             />
           ))}

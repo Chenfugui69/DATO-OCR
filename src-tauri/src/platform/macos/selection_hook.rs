@@ -14,6 +14,7 @@ use block2::RcBlock;
 use objc2_app_kit::{NSCursor, NSEvent, NSEventMask, NSEventModifierFlags, NSEventType};
 use parking_lot::Mutex;
 
+use super::ffi;
 use super::geometry;
 use super::hook::Monitors;
 use super::util::on_main;
@@ -111,19 +112,81 @@ pub fn set_button_rect(rect: Option<PhysicalRect>) {
     }
 }
 
-/// 系统当前的光标是不是 I 形。拿不到别的应用的光标对象本身，只能比热点和图片大小。
+/// 系统当前的光标像不像 I 形：热点在正中间，而且不是方方正正的大十字。只在问不到系统"有没有选中文字"时用。
+///
+/// 拿不到别的应用的光标对象本身，只能看图片的样子。以前是和 `NSCursor.IBeamCursor` 比热点和大小，
+/// macOS 26 起系统光标不再带图片（大小、热点都是 0），那个比较永远不成立 —— 表现就是选了字按钮
+/// 不出来，只有按住修饰键（不查光标）才出来。macOS 26 的 I 形光标是 23×22、热点 12,11；箭头的热点在左上角。
 fn is_ibeam_cursor() -> bool {
     #[allow(deprecated)]
     let Some(current) = NSCursor::currentSystemCursor() else {
         return false;
     };
-    let ibeam = NSCursor::IBeamCursor();
-    let (a, b) = (current.hotSpot(), ibeam.hotSpot());
-    let (sa, sb) = (current.image().size(), ibeam.image().size());
-    (a.x - b.x).abs() < 0.5
-        && (a.y - b.y).abs() < 0.5
-        && (sa.width - sb.width).abs() < 0.5
-        && (sa.height - sb.height).abs() < 0.5
+    let (size, hot) = (current.image().size(), current.hotSpot());
+    if size.width <= 0.0 || size.height <= 0.0 {
+        return false;
+    }
+    (hot.x / size.width - 0.5).abs() < 0.2 && (hot.y / size.height - 0.5).abs() < 0.2
+}
+
+/// 当前光标的大小和热点，写日志用（按钮该出不出时看是哪一步没认出来）。
+fn cursor_shape() -> String {
+    #[allow(deprecated)]
+    match NSCursor::currentSystemCursor() {
+        Some(c) => {
+            let (size, hot) = (c.image().size(), c.hotSpot());
+            format!(
+                "{:.0}x{:.0} 热点 {:.0},{:.0}",
+                size.width, size.height, hot.x, hot.y
+            )
+        }
+        None => "拿不到".into(),
+    }
+}
+
+/// 问系统：当前有焦点的那个控件里是不是选中了文字。要「辅助功能」权限（取选中的字本来也要）；
+/// 没权限、对方程序不支持（有的浏览器、自绘界面）时返回 None，由光标的样子说了算。
+fn has_selected_text() -> Option<bool> {
+    use objc2_foundation::NSString;
+    // SAFETY: 都是 CoreFoundation / 辅助功能的只读查询；拿到的对象逐个释放。
+    unsafe {
+        if !ffi::AXIsProcessTrusted() {
+            return None;
+        }
+        let attr = |name: &str| NSString::from_str(name);
+        let system = ffi::AXUIElementCreateSystemWide();
+        if system.is_null() {
+            return None;
+        }
+        // 对方程序卡住时别跟着卡
+        ffi::AXUIElementSetMessagingTimeout(system, 0.25);
+        let mut focused: ffi::CFTypeRef = std::ptr::null();
+        let name = attr("AXFocusedUIElement");
+        let err = ffi::AXUIElementCopyAttributeValue(
+            system,
+            std::ptr::from_ref::<NSString>(&name).cast(),
+            &mut focused,
+        );
+        ffi::CFRelease(system);
+        if err != 0 || focused.is_null() {
+            return None;
+        }
+        let mut text: ffi::CFTypeRef = std::ptr::null();
+        let name = attr("AXSelectedText");
+        let err = ffi::AXUIElementCopyAttributeValue(
+            focused,
+            std::ptr::from_ref::<NSString>(&name).cast(),
+            &mut text,
+        );
+        ffi::CFRelease(focused);
+        if err != 0 || text.is_null() {
+            return None;
+        }
+        let selected = (ffi::CFGetTypeID(text) == ffi::CFStringGetTypeID())
+            .then(|| ffi::CFStringGetLength(text) > 0);
+        ffi::CFRelease(text);
+        selected
+    }
 }
 
 fn send(st: &HookState, event: SelectionEvent) {
@@ -153,6 +216,7 @@ fn handle(event: &NSEvent) -> bool {
         if st.button.is_some() {
             send(&st, SelectionEvent::Dismiss);
         }
+        send(&st, SelectionEvent::PointerDown);
         let scale = screens
             .iter()
             .find(|s| s.physical.contains_point(pt.0, pt.1))
@@ -178,22 +242,37 @@ fn handle(event: &NSEvent) -> bool {
             return false;
         }
         let (alt, ctrl) = (down.alt || alt, down.ctrl || ctrl);
-        if down.ibeam || alt || ctrl || is_ibeam_cursor() {
-            let (x0, x1) = (down.at.0.min(pt.0), down.at.0.max(pt.0));
-            let (y0, y1) = (down.at.1.min(pt.1), down.at.1.max(pt.1));
-            send(
-                &st,
-                SelectionEvent::Selected {
-                    anchor: PhysicalRect::new(x0, y0, (x1 - x0) as u32, (y1 - y0) as u32),
-                    end: pt,
-                    alt,
-                    ctrl,
-                },
-            );
+        let (x0, x1) = (down.at.0.min(pt.0), down.at.0.max(pt.0));
+        let (y0, y1) = (down.at.1.min(pt.1), down.at.1.max(pt.1));
+        let selected = SelectionEvent::Selected {
+            anchor: PhysicalRect::new(x0, y0, (x1 - x0) as u32, (y1 - y0) as u32),
+            end: pt,
+            alt,
+            ctrl,
+        };
+        let ibeam = down.ibeam || is_ibeam_cursor();
+        if alt || ctrl {
+            send(&st, selected);
+        } else if let Some(tx) = st.tx.clone() {
+            // 直接问系统有没有选中文字，比猜光标准。要跨进程问，放到别的线程，稍等一下让对方把选区更新完。
+            // 问不到（没有「辅助功能」权限、对方程序不支持）才看光标像不像 I 形
+            let cursor = cursor_shape();
+            std::thread::spawn(move || {
+                std::thread::sleep(std::time::Duration::from_millis(80));
+                let asked = has_selected_text();
+                let show = asked.unwrap_or(ibeam);
+                tracing::debug!(?asked, ibeam, %cursor, show, "划词手势");
+                if show {
+                    let _ = tx.send(selected);
+                }
+            });
         }
     } else {
         // 右键、中键、滚轮：收起按钮
         st.down = None;
+        if kind != NSEventType::ScrollWheel {
+            send(&st, SelectionEvent::PointerDown);
+        }
         if st.button.is_some() {
             send(&st, SelectionEvent::Dismiss);
         }

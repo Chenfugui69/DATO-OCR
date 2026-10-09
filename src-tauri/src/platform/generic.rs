@@ -58,6 +58,26 @@ pub fn apply_theme(app: &AppHandle, theme: &str) {
 /// 它们正好从缝里露出来（用户报过）。
 pub const OVER_DOCK_GAP: f64 = 0.0;
 
+/// Windows 上 `window.screenX` / `screen.avail*` 是准的，页面自己读。
+pub fn window_placement(_window: &WebviewWindow) -> Option<super::types::WindowPlacement> {
+    None
+}
+
+/// Windows 上用 Tauri 自带的 `startResizeDragging`。
+pub fn start_resize_drag(
+    _window: &WebviewWindow,
+    _direction: &str,
+    _min: (f64, f64),
+    _top_inset: f64,
+) -> bool {
+    false
+}
+
+/// Windows 上面板靠失焦收起，用不到这个；说"在"最保险（不会误收）。
+pub fn cursor_in_window(_window: &WebviewWindow) -> bool {
+    true
+}
+
 /// Windows 的置顶窗口本来就在任务栏上面。
 pub fn set_above_dock(_window: &WebviewWindow, _above: bool) {}
 

@@ -161,6 +161,8 @@ fn start(app: &AppHandle, intent: CaptureIntent, instant: bool) -> AppResult<()>
         return Ok(());
     }
     let started = Instant::now();
+    // 提示条、划词按钮平时能被抓屏看到（给远程控制的对面看），抓屏之前先排除
+    wm::conceal_all_floating(app);
     let previous = platform::foreground_window();
     let cursor = platform::cursor_position();
     let settings = st.settings.read().capture.clone();

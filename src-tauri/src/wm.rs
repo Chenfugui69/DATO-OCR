@@ -241,6 +241,30 @@ pub fn track_glass(window: &WebviewWindow) {
     });
 }
 
+/// 提示条、划词按钮这类小浮层显示出来时让抓屏看得到：远程控制、屏幕共享的对面看到的画面是抓屏
+/// 抓来的，一直排除的话对面根本看不见它们（远程用划词时按钮"不出现"就是这个原因）。
+/// 正在截图 / 长截图 / 录 GIF 时不放开，免得被拍进去；收起时调 `conceal_floating`。
+pub fn reveal_floating(app: &AppHandle, window: &WebviewWindow) {
+    let st = state(app);
+    let capturing =
+        st.capture.is_busy() || st.longshot.is_active() || crate::gif_record::is_active();
+    platform::set_exclude_from_capture(window, capturing);
+}
+
+/// 小浮层收起、或者马上要抓屏时：重新排除。要在藏窗口 / 抓屏之前调。
+pub fn conceal_floating(window: &WebviewWindow) {
+    platform::set_exclude_from_capture(window, true);
+}
+
+/// 马上要抓屏了：还显示着的提示条、划词按钮先排除掉，别拍进截图里。
+pub fn conceal_all_floating(app: &AppHandle) {
+    for label in [TOAST, crate::translate::selection::BUTTON_WINDOW] {
+        if let Some(window) = app.get_webview_window(label) {
+            conceal_floating(&window);
+        }
+    }
+}
+
 /// 改了界面语言：已经开着的窗口，标题跟着换。
 pub fn retitle(app: &AppHandle) {
     for (label, title) in [
@@ -312,6 +336,6 @@ pub fn toast(app: &AppHandle, kind: &'static str, message: impl Into<String>) {
         if let Err(err) = platform::show_without_activate(&window) {
             tracing::debug!("显示 toast 失败：{err}");
         }
-        platform::reveal_for_tests(&window, true);
+        reveal_floating(&app, &window);
     });
 }

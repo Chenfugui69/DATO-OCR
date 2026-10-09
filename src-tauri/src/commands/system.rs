@@ -285,8 +285,9 @@ pub async fn show_main(app: AppHandle, page: Option<String>) -> AppResult<()> {
 #[tauri::command]
 pub async fn toast_hide(app: AppHandle) -> AppResult<()> {
     if let Some(w) = tauri::Manager::get_webview_window(&app, wm::TOAST) {
+        // 先排除再藏：藏起来的窗口在下一帧合成之前还可能被抓到
+        wm::conceal_floating(&w);
         crate::platform::hide_window(&w);
-        crate::platform::reveal_for_tests(&w, false);
     }
     Ok(())
 }
@@ -370,6 +371,31 @@ pub async fn window_backdrop(
         crate::platform::set_backdrop_rect(&w, rect.map(|r| r.physical(s)), ms);
     })?;
     Ok(())
+}
+
+/// 窗口的位置和所在屏的可用区域（逻辑像素）。null = 页面自己读 `window.screenX` 那一套就行。
+#[tauri::command]
+pub async fn window_placement(
+    window: tauri::WebviewWindow,
+) -> AppResult<Option<crate::platform::WindowPlacement>> {
+    Ok(crate::platform::window_placement(&window))
+}
+
+/// 鼠标已经按在窗口边上：跟着鼠标改大小。返回 false = 页面改用 Tauri 的 `startResizeDragging`。
+#[tauri::command]
+pub async fn window_start_resize(
+    window: tauri::WebviewWindow,
+    direction: String,
+    min_width: f64,
+    min_height: f64,
+    top_inset: f64,
+) -> AppResult<bool> {
+    Ok(crate::platform::start_resize_drag(
+        &window,
+        &direction,
+        (min_width, min_height),
+        top_inset,
+    ))
 }
 
 /// 界面实际用的语言（设置是「跟随系统」时由这里按系统语言定，前后端用同一个结果）。

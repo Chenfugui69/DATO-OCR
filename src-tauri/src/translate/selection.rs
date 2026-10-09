@@ -25,7 +25,40 @@ use crate::{clipboard, events, wm};
 pub const WINDOW: &str = "translate";
 pub const BUTTON_WINDOW: &str = "selbtn";
 /// 悬浮按钮的逻辑尺寸
-const BUTTON_SIZE: f64 = 30.0;
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ButtonShow {
+    generation: u64,
+    /// 按钮底下的画面是暗的（None = 不知道，页面按应用的深浅色画）
+    dark: Option<bool>,
+    /// 按钮窗口盖住的那块画面（PNG 的 data URL）；None = 抓不到，页面画一个不透底的
+    backdrop: Option<String>,
+}
+
+/// 一张图的平均亮度，0（黑）到 1（白）。
+fn brightness(image: &image::RgbaImage) -> f64 {
+    let mut sum = 0.0;
+    for px in image.pixels() {
+        let [r, g, b, _] = px.0;
+        sum += 0.2126 * f64::from(r) + 0.7152 * f64::from(g) + 0.0722 * f64::from(b);
+    }
+    sum / (255.0 * f64::from(image.width() * image.height()).max(1.0))
+}
+
+fn png_data_url(image: &image::RgbaImage) -> Option<String> {
+    use base64::Engine;
+    let mut png = Vec::new();
+    image
+        .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
+        .ok()?;
+    Some(format!(
+        "data:image/png;base64,{}",
+        base64::engine::general_purpose::STANDARD.encode(png)
+    ))
+}
+
+/// 按钮的窗口比圆点大一圈（四周各留这么多），给玻璃的投影和悬停放大留地方。圆点多大在设置里（button_size）
+const BUTTON_INSET: f64 = 7.0;
 /// 没去碰它的话，按钮显示这么久后自己收起
 const BUTTON_TTL: Duration = Duration::from_millis(3500);
 
@@ -176,7 +209,8 @@ fn prewarm_button(app: &AppHandle) {
         .resizable(false)
         .shadow(false)
         .focused(false)
-        .inner_size(BUTTON_SIZE, BUTTON_SIZE);
+        // 每次显示时按设置里的大小重新摆，这里的尺寸只是个初值
+        .inner_size(42.0, 42.0);
     match platform::build_floating(button, FloatingKind::Panel) {
         Ok(window) => {
             // 点它、显示它都不能抢走用户正在选字的那个窗口的焦点
@@ -325,7 +359,22 @@ fn on_event(app: &AppHandle, event: SelectionEvent) {
             translate_selection(app, at);
         }
         SelectionEvent::Dismiss => hide_button(app),
+        SelectionEvent::PointerDown => outside_click(app),
     }
+}
+
+/// 鼠标按下了：翻译面板开着、而且不是按在面板上，就告诉面板"点了外面"，由它决定收不收（钉住、对话模式不收）。
+/// 面板平时靠失焦收起，但它有时拿不到键盘焦点（那就永远等不到失焦），这条路不依赖焦点。
+fn outside_click(app: &AppHandle) {
+    let ui = app.clone();
+    let _ = app.run_on_main_thread(move || {
+        let Some(window) = ui.get_webview_window(WINDOW) else {
+            return;
+        };
+        if window.is_visible().unwrap_or(false) && !platform::cursor_in_window(&window) {
+            let _ = ui.emit_to(WINDOW, events::TRANSLATE_OUTSIDE, ());
+        }
+    });
 }
 
 fn on_selected(app: &AppHandle, anchor: PhysicalRect, end: (i32, i32), alt: bool, ctrl: bool) {
@@ -335,12 +384,15 @@ fn on_selected(app: &AppHandle, anchor: PhysicalRect, end: (i32, i32), alt: bool
         (s.translate.selection.clone(), s.general.offline_mode)
     };
     if offline || st.capture.is_busy() || st.longshot.is_active() {
+        tracing::debug!(offline, "划词：离线模式或正在截图，不弹按钮");
         return;
     }
     // 在 DATO OCR 自己的窗口里选字（识字结果、翻译气泡）不弹
     if platform::foreground_window().is_some_and(platform::is_own_window) {
+        tracing::debug!("划词：前台是 DATO OCR 自己的窗口，不弹按钮");
         return;
     }
+    tracing::debug!(show_button = sel.show_button, modifier = %sel.modifier, "划词：弹按钮 / 直接翻译");
     let held = match sel.modifier.as_str() {
         "alt" => alt,
         "ctrl" => ctrl,
@@ -350,18 +402,27 @@ fn on_selected(app: &AppHandle, anchor: PhysicalRect, end: (i32, i32), alt: bool
         hide_button(app);
         translate_selection(app, Some(end));
     } else if sel.show_button {
-        show_button(app, anchor, &sel.button_position);
+        show_button(app, anchor, &sel);
     }
 }
 
-fn show_button(app: &AppHandle, anchor: PhysicalRect, position: &str) {
+fn show_button(
+    app: &AppHandle,
+    anchor: PhysicalRect,
+    sel: &crate::settings::SelectionTranslateSettings,
+) {
+    let position = sel.button_position.as_str();
     let Some(monitor) = wm::monitor_at(anchor.right(), anchor.bottom()) else {
         return;
     };
     let s = monitor.scale_factor.max(0.5);
-    let size = (BUTTON_SIZE * s).round() as i32;
+    let size = ((f64::from(sel.button_size) + BUTTON_INSET * 2.0) * s).round() as i32;
     // 鼠标一般在文字行的中间，往下 / 往上让开半行多一点，免得盖住字
-    let (dx, dy) = ((4.0 * s) as i32, (14.0 * s) as i32);
+    // 窗口四周有一圈留白（BUTTON_INSET），偏移里扣掉，看得见的圆点还在原来的位置
+    let (dx, dy) = (
+        ((4.0 - BUTTON_INSET) * s) as i32,
+        ((14.0 - BUTTON_INSET) * s) as i32,
+    );
     let (x, y) = match position {
         "topRight" => (anchor.right() + dx, anchor.y - dy - size),
         "bottomLeft" => (anchor.x - dx - size, anchor.bottom() + dy),
@@ -373,6 +434,11 @@ fn show_button(app: &AppHandle, anchor: PhysicalRect, position: &str) {
     let y = y.clamp(wa.y, (wa.bottom() - size).max(wa.y));
     let rect = PhysicalRect::new(x, y, size as u32, size as u32);
     let generation = BUTTON_GEN.fetch_add(1, Ordering::SeqCst) + 1;
+    // 按钮还没显示，这时候把它要盖住的那块画面抓下来：玻璃按它的明暗用浅色或深色，
+    // 页面再把这块画面放进珠子里（放大一点、模糊一点），看着像透过玻璃看到的
+    let patch = platform::screen_patch(rect);
+    let dark = patch.as_ref().map(|p| brightness(p) < 0.5);
+    let backdrop = patch.as_ref().and_then(png_data_url);
     *BUTTON.lock() = Some(rect);
     platform::set_selection_button_rect(Some(rect));
 
@@ -383,9 +449,17 @@ fn show_button(app: &AppHandle, anchor: PhysicalRect, position: &str) {
             return;
         };
         let _ = platform::place_window(&window, rect.x, rect.y, rect.width, rect.height);
-        let _ = ui.emit_to(BUTTON_WINDOW, events::SELECTION_BUTTON_SHOW, generation);
+        let _ = ui.emit_to(
+            BUTTON_WINDOW,
+            events::SELECTION_BUTTON_SHOW,
+            ButtonShow {
+                generation,
+                dark,
+                backdrop,
+            },
+        );
         let _ = platform::show_without_activate(&window);
-        platform::reveal_for_tests(&window, true);
+        wm::reveal_floating(&ui, &window);
     });
 
     // 没人理它就自己收起；鼠标停在按钮上时不收
@@ -418,6 +492,14 @@ fn show_button(app: &AppHandle, anchor: PhysicalRect, position: &str) {
     });
 }
 
+/// 调试用（`--demo=selbtn`）：不用真的选字，直接在鼠标旁边把按钮亮出来看样子。
+#[cfg(debug_assertions)]
+pub fn demo_button(app: &AppHandle, at: Option<(i32, i32)>) {
+    let (x, y) = at.or_else(platform::cursor_position).unwrap_or((400, 400));
+    let sel = state(app).settings.read().translate.selection.clone();
+    show_button(app, PhysicalRect::new(x, y, 1, 1), &sel);
+}
+
 fn hide_button(app: &AppHandle) {
     if BUTTON.lock().take().is_none() {
         return;
@@ -429,9 +511,9 @@ fn hide_button(app: &AppHandle) {
         if let Some(window) = ui.get_webview_window(BUTTON_WINDOW) {
             // 按钮是用原生调用"显示但不激活"弹出来的，Tauri 记的可见状态可能没跟上，
             // 隐藏也走原生调用，保证真的藏起来
+            wm::conceal_floating(&window);
             platform::hide_window(&window);
             let _ = window.hide();
-            platform::reveal_for_tests(&window, false);
         }
     });
 }

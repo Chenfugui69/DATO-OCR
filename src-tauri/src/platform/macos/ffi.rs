@@ -183,6 +183,9 @@ extern "C" {
     pub static kCFBooleanTrue: CFTypeRef;
 
     pub fn CFRelease(cf: CFTypeRef);
+    pub fn CFGetTypeID(cf: CFTypeRef) -> usize;
+    pub fn CFStringGetTypeID() -> usize;
+    pub fn CFStringGetLength(string: CFStringRef) -> isize;
     pub fn CFMachPortCreateRunLoopSource(
         allocator: *const c_void,
         port: CFMachPortRef,
@@ -200,4 +203,11 @@ extern "C" {
 
     pub fn AXIsProcessTrusted() -> bool;
     pub fn AXIsProcessTrustedWithOptions(options: CFDictionaryRef) -> bool;
+    pub fn AXUIElementCreateSystemWide() -> CFTypeRef;
+    pub fn AXUIElementSetMessagingTimeout(element: CFTypeRef, seconds: f32) -> i32;
+    pub fn AXUIElementCopyAttributeValue(
+        element: CFTypeRef,
+        attribute: CFStringRef,
+        value: *mut CFTypeRef,
+    ) -> i32;
 }

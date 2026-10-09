@@ -79,6 +79,30 @@ pub fn run() {
                         debug_eval(app, spec);
                         return;
                     }
+                    // `--demo=popup:x,y`（屏幕物理像素）：在指定位置弹出划词面板
+                    #[cfg(debug_assertions)]
+                    if let Some(p) = args.iter().find_map(|a| a.strip_prefix("--demo=popup:")) {
+                        if let Some((x, y)) = p.split_once(',') {
+                            if let (Ok(x), Ok(y)) = (x.parse(), y.parse()) {
+                                translate::selection::show_popup(
+                                    app,
+                                    "Apple chip".into(),
+                                    Some((x, y)),
+                                );
+                            }
+                        }
+                        return;
+                    }
+                    // `--demo=selbtn` 或 `--demo=selbtn:x,y`（屏幕物理像素）：不用真的选字，把划词按钮亮出来看样子
+                    #[cfg(debug_assertions)]
+                    if let Some(spec) = args.iter().find_map(|a| a.strip_prefix("--demo=selbtn")) {
+                        let at = spec.strip_prefix(':').and_then(|p| {
+                            let (x, y) = p.split_once(',')?;
+                            Some((x.parse().ok()?, y.parse().ok()?))
+                        });
+                        translate::selection::demo_button(app, at);
+                        return;
+                    }
                 }
                 if let Some(action) = args.iter().find_map(|a| a.strip_prefix("--action=")) {
                     match hotkeys::HotkeyAction::parse(action) {
@@ -231,6 +255,8 @@ pub fn run() {
             commands::system::window_set_region,
             commands::system::permissions_status,
             commands::system::ui_language,
+            commands::system::window_placement,
+            commands::system::window_start_resize,
             commands::system::permission_request,
             commands::system::quit_app,
             commands::system::report_error,

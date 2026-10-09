@@ -43,7 +43,8 @@ export interface EventMap {
   toast: ToastPayload;
   navigate: string;
   'translate-request': { text: string; reserve?: number };
-  'selection-button-show': number;
+  'translate-outside': null;
+  'selection-button-show': { generation: number; dark: boolean | null; backdrop: string | null };
   'ai-context': AiContext;
   'editor-open': EditorDoc;
 }

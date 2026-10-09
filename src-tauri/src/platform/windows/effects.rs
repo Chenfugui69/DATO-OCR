@@ -20,8 +20,8 @@ use windows::Win32::UI::WindowsAndMessaging::GetWindowRect;
 use super::util::{handle_of, hwnd};
 use crate::error::AppResult;
 pub use crate::platform::generic::{
-    apply_theme, build_floating, frame_window, is_foreground, place_window, set_above_dock,
-    take_focus, window_effects, OVER_DOCK_GAP,
+    apply_theme, build_floating, cursor_in_window, frame_window, is_foreground, place_window,
+    set_above_dock, start_resize_drag, take_focus, window_effects, window_placement, OVER_DOCK_GAP,
 };
 use crate::platform::PhysicalRect;
 

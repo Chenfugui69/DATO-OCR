@@ -74,6 +74,10 @@ export interface Settings {
     selection: {
       showButton: boolean;
       buttonPosition: 'bottomRight' | 'topRight' | 'bottomLeft' | 'topLeft';
+      /** 划词按钮的样子 */
+      buttonStyle: 'liquid' | 'frosted';
+      /** 划词按钮圆点的直径（逻辑像素） */
+      buttonSize: number;
       modifier: 'none' | 'alt' | 'ctrl';
     };
   };

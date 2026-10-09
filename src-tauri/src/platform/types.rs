@@ -175,6 +175,22 @@ pub enum SelectionEvent {
     ButtonClicked,
     /// 在别处按下鼠标 / 滚轮：该收起按钮了
     Dismiss,
+    /// 鼠标在某处按下了（任何键）。翻译面板靠它判断"点了面板外面"：面板没拿到键盘焦点时等不到失焦
+    PointerDown,
+}
+
+/// 窗口在哪、它所在那块屏的可用区域（都是逻辑像素，和 `set_bounds_logical` 同一套坐标）。
+#[derive(Clone, Copy, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WindowPlacement {
+    pub x: f64,
+    pub y: f64,
+    pub width: f64,
+    pub height: f64,
+    pub work_x: f64,
+    pub work_y: f64,
+    pub work_width: f64,
+    pub work_height: f64,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

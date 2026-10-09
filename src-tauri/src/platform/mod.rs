@@ -107,6 +107,12 @@ pub fn capture_monitor(id: MonitorId) -> AppResult<RgbaImage> {
 /// `next` 取这个区域的新画面（不透明 RGBA），没有新画面时等到超时返回 None；drop 时停止。
 pub use sys::capture::ScreenRecorder;
 
+/// 屏幕上这一块（屏幕物理像素）现在的画面。拿不到（没权限、平台没做）返回 None。
+/// 划词按钮是一颗玻璃珠：按底下画面的明暗用浅色或深色玻璃，并把这块画面放进珠子里做出透镜 / 磨砂的效果。
+pub fn screen_patch(rect: PhysicalRect) -> Option<RgbaImage> {
+    sys::capture::patch(rect)
+}
+
 /// 预先支付首次抓屏的设备初始化开销（冷 137ms vs 热 49ms），结果丢弃。
 pub fn warm_up_capture() {
     sys::capture::warm_up()
@@ -178,11 +184,6 @@ pub fn set_exclude_from_capture(window: &WebviewWindow, exclude: bool) {
     sys::effects::set_exclude_from_capture(window, exclude)
 }
 
-/// 诊断模式（`CHENOCR_ALLOW_SELF_CAPTURE=1`）下显示时放开抓屏、隐藏时恢复排除。
-pub fn reveal_for_tests(window: &WebviewWindow, visible: bool) {
-    sys::effects::reveal_for_tests(window, visible)
-}
-
 /// 应用设置里的深浅色（system | light | dark）同步给原生层：系统材质（毛玻璃）、原生菜单按它画。
 pub fn apply_theme(app: &AppHandle, theme: &str) {
     sys::effects::apply_theme(app, theme);
@@ -207,6 +208,30 @@ pub fn slide_window(window: &WebviewWindow, to: PhysicalRect, ms: u32) {
 /// 悬浮的底部面板盖住程序坞 / 任务栏时，离屏幕底边留多少（逻辑像素）。
 pub fn over_dock_gap() -> f64 {
     sys::effects::OVER_DOCK_GAP
+}
+
+/// 窗口的位置和所在屏的可用区域。None = 这个平台上页面自己读（`window.screenX` 那一套是准的）。
+pub fn window_placement(window: &WebviewWindow) -> Option<WindowPlacement> {
+    sys::effects::window_placement(window)
+}
+
+/// 鼠标已经按在窗口上：跟着鼠标改窗口大小或者挪窗口，直到松开。
+/// `direction`：North / South / East / West / NorthEast / NorthWest / SouthEast / SouthWest，或者 Move（挪）。
+/// `min`：窗口最小多大；`top_inset`：窗口顶上不属于面板的那一截（划词面板的预留区），挪的时候面板本身
+/// 可以一直挪到屏幕顶，这一截允许伸到屏幕外面。都是逻辑像素。
+/// 返回 false = 这个平台用 Tauri 自带的 `startResizeDragging` / `startDragging` 就行。
+pub fn start_resize_drag(
+    window: &WebviewWindow,
+    direction: &str,
+    min: (f64, f64),
+    top_inset: f64,
+) -> bool {
+    sys::effects::start_resize_drag(window, direction, min, top_inset)
+}
+
+/// 鼠标现在是不是在这个窗口上（含四周拖边改大小的那一圈）。
+pub fn cursor_in_window(window: &WebviewWindow) -> bool {
+    sys::effects::cursor_in_window(window)
 }
 
 /// 浮层要不要盖在程序坞上面（macOS：程序坞比普通浮层高一层；别的平台不用管）。

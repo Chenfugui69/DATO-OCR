@@ -29,6 +29,8 @@ pub const OCR_ENGINE_DOWNLOAD: &str = "ocr-engine-download";
 pub const TOAST: &str = "toast";
 pub const NAVIGATE: &str = "navigate";
 pub const TRANSLATE_REQUEST: &str = "translate-request";
+/// 鼠标在翻译面板外面按下了
+pub const TRANSLATE_OUTSIDE: &str = "translate-outside";
 /// 划词悬浮按钮要显示了（payload：第几次显示，前端用来重放出场动画）
 pub const SELECTION_BUTTON_SHOW: &str = "selection-button-show";
 /// AI 窗口换上新的上下文（payload：AiContext）

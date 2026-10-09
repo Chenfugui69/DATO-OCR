@@ -429,3 +429,20 @@
   color: var(--cn-label-tertiary);
   font: var(--cn-text-caption);
 }
+
+/* 面板窄的时候（划词面板里）：模型下拉框跟着收缩、名字省略，不压到旁边的"思考深度"和右边的按钮上 */
+.ai__bar .cn-select-trigger {
+  flex: 0 1 auto;
+  /* 控件自己带一个内联的最小宽度，要压过它才收缩得动 */
+  min-width: 0 !important;
+  max-width: 240px;
+  overflow: hidden;
+}
+.ai__bar .cn-select-trigger > span:first-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ai__bar > :not(.cn-select-trigger) {
+  flex-shrink: 0;
+}

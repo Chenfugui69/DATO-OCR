@@ -8,7 +8,7 @@
 //! | 层级 = 遮罩 - 1 | 紧贴在遮罩下面，别的应用的置顶窗口夹不进来 |
 //! | `ignoresMouseEvents` | 鼠标穿透，绝不能吃掉本该给遮罩的点击 |
 //! | 普通窗口（不是面板）且不设为焦点 | 永不拿键盘焦点 |
-//! | `sharingType = none` | 长截图采集时不能把上一帧的底图拍进去 |
+//! | 显示时能被抓屏看到，藏之前先设 `sharingType = none` | 远程控制的对面要看到冻结的画面；长截图采集时不能把上一帧的底图拍进去 |
 //! | 不带出现动画 | 要第一帧就是最终画面 |
 //!
 //! 窗口归主线程所有，状态放 `thread_local`，**只能在主线程调用**。
@@ -132,9 +132,8 @@ pub fn show_below(monitor: MonitorId, overlay: u64) -> AppResult<()> {
             .get(&monitor.0)
             .ok_or_else(|| AppError::msg(format!("底图窗口 {monitor} 不存在")))?;
         surface.window.orderFrontRegardless();
-        if effects::self_capture_allowed() {
-            set_shared(&surface.window, true);
-        }
+        // 底图就是冻结的那张屏幕画面：远程控制、屏幕共享的对面要看到它，不然看到的是还在动的真桌面
+        set_shared(&surface.window, true);
         if let Some(overlay) = effects::window_of_handle(overlay, mtm) {
             overlay.orderFrontRegardless();
         }
@@ -143,8 +142,9 @@ pub fn show_below(monitor: MonitorId, overlay: u64) -> AppResult<()> {
 }
 
 fn hide(surface: &Surface) {
-    surface.window.orderOut(None);
+    // 先排除再藏：藏起来的窗口在下一帧合成之前还可能被抓到（长截图一开始就要抓真桌面）
     set_shared(&surface.window, false);
+    surface.window.orderOut(None);
 }
 
 pub fn hide_all() {

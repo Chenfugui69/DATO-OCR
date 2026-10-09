@@ -164,6 +164,20 @@ export function TranslateSettingsGroups({ settings, set }: { settings: Settings;
             onChange={(v) => set((d) => void (d.translate.selection.buttonPosition = v))}
           />
         </Row>
+        <Row title={t('settings.selection.buttonStyle')} desc={t('settings.selection.buttonStyleDesc')}>
+          <Segmented
+            value={sel.buttonStyle}
+            options={[
+              { value: 'liquid', label: t('settings.selection.liquid') },
+              { value: 'frosted', label: t('settings.selection.frosted') },
+            ]}
+            onChange={(v) => set((d) => void (d.translate.selection.buttonStyle = v))}
+          />
+        </Row>
+        <Row title={t('settings.selection.buttonSize')}>
+          <span className="set-row__value cn-numeric">{sel.buttonSize}px</span>
+          <Slider value={sel.buttonSize} min={20} max={48} step={1} onChange={(v) => set((d) => void (d.translate.selection.buttonSize = v))} />
+        </Row>
         <Row title={t('settings.selection.modifier')} desc={t('settings.selection.modifierDesc')}>
           <Segmented
             value={sel.modifier}
