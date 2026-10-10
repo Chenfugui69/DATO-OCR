@@ -3,6 +3,7 @@ name = "chenocr"
 version = "0.3.2"
 description = "DATO OCR · 截图 · 识字 · 翻译 · 剪贴板 · AI"
 authors = ["DATO OCR"]
+license = "GPL-3.0-only"
 edition = "2021"
 rust-version = "1.82"
 

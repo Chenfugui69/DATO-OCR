@@ -17,6 +17,10 @@ scripts/test/*.txt
 *.key
 *.pem
 
+# 方案、规格、交接文档只留在本地，不进开源仓库
+docs/*
+!docs/readme/
+
 .DS_Store
 Thumbs.db
 *.log

@@ -99,10 +99,14 @@ Get it from the [releases page](https://github.com/Chenfugui69/DATO-OCR/releases
 ## For developers
 
 Tauri v2 + React + TypeScript + Rust. Windows is the primary platform; the macOS port is in place, with some features not yet verified by hand.
-Build instructions, debug switches, the code map and design decisions are in the [Chinese README](README.md#给开发者) and under [`docs/`](docs/) (in Chinese).
+Build instructions, debug switches and the code map are in the [Chinese README](README.md#给开发者).
 
 ```bash
 corepack pnpm install
 corepack pnpm fetch-ocr      # Windows only: downloads the offline OCR engine
 corepack pnpm tauri dev
 ```
+
+## License
+
+DATO OCR is released under the [GNU General Public License v3.0](LICENSE). You may use, modify and redistribute it, but any modified version you distribute must also be released under GPL-3.0 with its source code.
