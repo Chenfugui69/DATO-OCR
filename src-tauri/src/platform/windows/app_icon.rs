@@ -15,8 +15,8 @@ use windows::Win32::UI::WindowsAndMessaging::{
 
 use super::util::{pcwstr, wide};
 
-/// 剪贴板卡片标题栏里的图标在高分屏上有 60 多物理像素，按 96 提取才不糊
-const ICON_SIZE: i32 = 96;
+/// 剪贴板卡片标题栏里的图标在 200% 缩放下有 80 多物理像素，按 128 提取才不糊
+const ICON_SIZE: i32 = 128;
 
 pub fn extract(exe: &Path) -> Option<RgbaImage> {
     let icon = private_extract(exe).or_else(|| shell_icon(exe))?;

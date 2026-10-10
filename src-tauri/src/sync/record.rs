@@ -21,6 +21,15 @@ pub struct SyncRecord {
     /// 在原设备上是从哪个应用复制的
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub app: Option<String>,
+    /// 特殊内容的标记：`otp` = 短信验证码（收到的设备要提示）。旧版本不认识这个字段，照普通文字处理
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tag: Option<String>,
+    /// 最早复制它的设备是哪种：iphone | ipad | android | mac | macbook | pc | laptop | apple
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub device: Option<String>,
+    /// 验证码所在的短信原文（`tag = otp` 时）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub width: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -94,6 +103,30 @@ mod tests {
             ..text.clone()
         };
         assert_eq!(SyncRecord::decode(&image.encode()).unwrap(), image);
+    }
+
+    /// 验证码标记要能带过去；旧版本发来的（没有这个字段）照常解开
+    #[test]
+    fn carries_tag_and_accepts_records_without_it() {
+        let otp = SyncRecord {
+            id: "a".into(),
+            origin: "mac".into(),
+            origin_name: "MacBook".into(),
+            kind: "text".into(),
+            text: Some("482913".into()),
+            tag: Some("otp".into()),
+            ..Default::default()
+        };
+        assert_eq!(
+            SyncRecord::decode(&otp.encode()).unwrap().tag.as_deref(),
+            Some("otp")
+        );
+
+        let head = br#"{"id":"b","origin":"pc","originName":"PC","kind":"text","text":"hi","createdAt":1,"sentAt":2}"#;
+        let mut old = b"DCR1".to_vec();
+        old.extend_from_slice(&(head.len() as u32).to_le_bytes());
+        old.extend_from_slice(head);
+        assert_eq!(SyncRecord::decode(&old).unwrap().tag, None);
     }
 
     #[test]

@@ -29,6 +29,7 @@ mod longshot;
 mod maintenance;
 mod net;
 mod ocr;
+mod otp;
 mod paths;
 mod pin;
 mod platform;
@@ -170,6 +171,8 @@ pub fn run() {
             commands::clipboard::clipboard_get,
             commands::clipboard::clipboard_stats,
             commands::clipboard::clipboard_gif_preview,
+            commands::clipboard::clipboard_icon_colors,
+            commands::clipboard::clipboard_file_icon,
             commands::clipboard::clipboard_paste,
             commands::clipboard::clipboard_copy,
             commands::clipboard::clipboard_delete,
@@ -366,6 +369,7 @@ fn on_ready(app: &AppHandle) {
     translate::selection::reconfigure(app);
     clipboard::start(app);
     sync::start(app);
+    otp::start(app);
     update::start(app);
     platform::watch_system_events(on_system_event);
     std::thread::spawn(platform::warm_up_capture);

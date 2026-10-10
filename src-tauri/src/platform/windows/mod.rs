@@ -20,6 +20,7 @@ mod util;
 
 pub use super::generic::{
     after_silent_start, is_reopen_event, menu_label, permissions, request_permission,
+    sms_supported, start_sms_watcher,
 };
 use super::types::DefaultHotkeys;
 

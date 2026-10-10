@@ -9,7 +9,8 @@ use objc2_foundation::NSString;
 
 use super::{geometry, util};
 
-const ICON_SIZE: u32 = 64;
+/// 剪贴板卡片标题栏里的图标有 40 多点，Retina 屏上就是 80–100 像素；按 256 取，缩小显示才清楚
+const ICON_SIZE: u32 = 256;
 
 /// `path` 是 .app 的路径（见 `window_enum::app_info_of`）。
 pub fn extract(path: &Path) -> Option<RgbaImage> {

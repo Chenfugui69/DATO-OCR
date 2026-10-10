@@ -159,7 +159,8 @@ html[data-view='main'][data-glass='off'] body {
   display: flex;
   align-items: center;
   gap: var(--cn-space-3);
-  padding: 0 var(--cn-space-6) var(--cn-space-4);
+  /* 下边距扣掉 .page__body 顶上留的那 6px，标题到内容的距离不变 */
+  padding: 0 var(--cn-space-6) calc(var(--cn-space-4) - 6px);
   flex: none;
 }
 .page__title {
@@ -175,11 +176,13 @@ html[data-view='main'][data-glass='off'] body {
 .page__spacer {
   flex: 1;
 }
+/* 顶上留 6px：第一行卡片的阴影不会被滚动区的上沿切掉；也正好等于日期胶囊吸顶的位置（top: 6px），
+   一滚动胶囊不会往下跳 */
 .page__body {
   flex: 1;
   min-height: 0;
   overflow: auto;
-  padding: 0 var(--cn-space-6) var(--cn-space-6);
+  padding: 6px var(--cn-space-6) var(--cn-space-6);
 }
 .chips {
   display: flex;
@@ -402,6 +405,14 @@ html[data-view='main'][data-glass='off'] body {
 .clip-row__sub img {
   width: 12px;
   height: 12px;
+}
+.clip-row__sub .device-icon {
+  flex: none;
+}
+.clip-detail__device {
+  display: flex;
+  align-items: center;
+  gap: 6px;
 }
 .clip-row__flags {
   display: flex;

@@ -4,7 +4,8 @@
 // - 竖版小面板（row）：内容 + 底部一行来源和时间
 
 import clsx from 'clsx';
-import { File, Globe, Image, Link2, MonitorSmartphone, Palette, Pin, Star, Type } from 'lucide-react';
+import { File, Globe, Image, KeyRound, Link2, MonitorSmartphone, Palette, Pin, Star, Type } from 'lucide-react';
+import { useQuery } from '@tanstack/react-query';
 import { memo, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
@@ -12,6 +13,10 @@ import { readableOn, relativeTime } from '@/lib/format';
 import { clipboard } from '@/lib/ipc';
 import { assetUrl } from '@/lib/platform';
 import type { ClipItem } from '@/lib/types';
+
+import { highlightCode, looksLikeCode } from './codeText';
+import { DeviceIcon, isDeviceKind } from './DeviceIcon';
+import { OtpBody } from './OtpBody';
 
 /** 复制的是单个 GIF 文件：卡片按图片显示（标题、图标都是 GIF） */
 export function isGifItem(item: ClipItem): boolean {
@@ -98,11 +103,50 @@ function fileName(path: string): string {
   return path.split(/[\\/]/).pop() ?? path;
 }
 
+/** 第一段像个标题（不长、后面还有内容、末尾不是句号逗号这类标点）才整段加粗，像 Paste；
+ *  一上来就是整句话的不加粗。段落之间留一点空，不挤成一坨 */
+function TextBody({ text, layout }: { text: string; layout: 'card' | 'row' }) {
+  if (layout === 'row') return <div className="clip-card__text">{text}</div>;
+  const paras = text
+    .replace(/\r\n?/g, '\n')
+    .split('\n')
+    .filter((p) => p.trim() !== '')
+    .slice(0, 40);
+  const first = paras[0]?.trim() ?? '';
+  const titled = paras.length > 1 && first.length <= 90 && !/[。．.!！?？;；,，、…]$/.test(first);
+  return (
+    <div className="clip-card__text clip-card__text--paras">
+      {paras.map((p, i) => (
+        <p key={i} className={i === 0 && titled ? 'clip-card__lead' : undefined}>
+          {p}
+        </p>
+      ))}
+    </div>
+  );
+}
+
+/** 文件路径去掉用户目录那一截（/Users/xx/、C:\Users\xx\），像 Paste 那样显示 Documents/website/backup.zip */
+function shortPath(path: string): string {
+  return path.replace(/^\/Users\/[^/]+\//, '').replace(/^[A-Za-z]:\\Users\\[^\\]+\\/, '');
+}
+
+/** 文件卡片的大图标：系统给这个文件的图标（同类文件后端只取一次）；取不到用线条图标 */
+function FileArt({ path }: { path: string }) {
+  const icon = useQuery({
+    queryKey: ['clip-file-icon', path],
+    queryFn: () => clipboard.fileIcon(path),
+    staleTime: Infinity,
+  });
+  if (icon.data) return <img className="clip-card__fileicon" src={assetUrl(icon.data)} alt="" draggable={false} />;
+  return <File className="clip-card__fileicon clip-card__fileicon--line" strokeWidth={1.2} />;
+}
+
 /** 没有来源应用图标时，标题栏右边用类型图标顶上 */
-const TYPE_ICON = { text: Type, image: Image, link: Link2, files: File, color: Palette } as const;
+const TYPE_ICON = { text: Type, image: Image, link: Link2, files: File, color: Palette, otp: KeyRound } as const;
 
 export const ClipCard = memo(function ClipCard({
   item,
+  tint,
   selected,
   index,
   layout,
@@ -112,6 +156,8 @@ export const ClipCard = memo(function ClipCard({
   onContextMenu,
 }: {
   item: ClipItem;
+  /** 来源应用图标的主色：标题栏用它，没有就按类型配色 */
+  tint?: string;
   selected: boolean;
   index: number;
   layout: 'card' | 'row';
@@ -130,6 +176,10 @@ export const ClipCard = memo(function ClipCard({
   let detail: string | null = null;
   let colorStyle: React.CSSProperties | undefined;
 
+  // 卡片条里图片铺满标题栏以下（像 Paste），尺寸做成图片底部居中的小胶囊
+  const fullBleed = layout === 'card' && (item.type === 'image' || gif);
+  const code = item.type === 'text' && looksLikeCode(text, item.sourceApp);
+
   switch (item.type) {
     case 'image':
       body = (
@@ -146,13 +196,27 @@ export const ClipCard = memo(function ClipCard({
       break;
     }
     case 'link':
-      body = (
-        <div className="clip-card__link">
-          <Globe size={layout === 'card' ? 28 : 18} strokeWidth={1.5} />
-          <div className="clip-card__domain">{domainOf(text)}</div>
-          <div className="clip-card__url">{text}</div>
-        </div>
-      );
+      body =
+        layout === 'card' ? (
+          <div className="clip-card__weblink">
+            <div className="clip-card__linkart">
+              <Globe size={34} strokeWidth={1.3} />
+            </div>
+            <div className="clip-card__linkmeta">
+              <div className="clip-card__domain">{domainOf(text)}</div>
+              <div className="clip-card__url cn-truncate">{text.trim()}</div>
+            </div>
+          </div>
+        ) : (
+          <div className="clip-card__link">
+            <Globe size={18} strokeWidth={1.5} />
+            <div className="clip-card__domain">{domainOf(text)}</div>
+            <div className="clip-card__url">{text}</div>
+          </div>
+        );
+      break;
+    case 'otp':
+      body = <OtpBody item={item} variant={layout} />;
       break;
     case 'files':
       if (gif) {
@@ -160,16 +224,26 @@ export const ClipCard = memo(function ClipCard({
         if (item.width && item.height) detail = `${item.width} × ${item.height}`;
         break;
       }
+      if (layout === 'card') {
+        body = (
+          <div className="clip-card__fileart">
+            <FileArt path={item.files[0] ?? text} />
+            {item.files.length > 1 && <span className="clip-card__filecount">+{item.files.length - 1}</span>}
+          </div>
+        );
+        detail = item.files.length > 1 ? t('clip.moreFilesNamed', { name: fileName(item.files[0] ?? ''), total: item.files.length, more: item.files.length - 1 }) : shortPath(item.files[0] ?? text);
+        break;
+      }
       body = (
         <div className="clip-card__files">
-          <File size={layout === 'card' ? 28 : 18} strokeWidth={1.5} />
+          <File size={18} strokeWidth={1.5} />
           <div className="clip-card__fname">{fileName(item.files[0] ?? text)}</div>
           {item.files.length > 1 && <div className="clip-card__more">{t('clip.moreFiles', { count: item.files.length - 1 })}</div>}
         </div>
       );
       break;
     default:
-      body = <div className="clip-card__text">{text}</div>;
+      body = code ? <pre className="clip-card__code cn-mono">{highlightCode(text)}</pre> : <TextBody text={text} layout={layout} />;
       if (item.charCount != null) detail = t('clip.chars', { count: item.charCount });
   }
 
@@ -187,13 +261,32 @@ export const ClipCard = memo(function ClipCard({
   );
   const time = <span className="clip-card__time">{relativeTime(item.lastUsedAt)}</span>;
   const appName = item.sourceApp ?? t('clip.unknownApp');
+  // 底栏右边的设备图标；同步来的悬停时带上那台设备的名字（这时 sourceApp 就是设备名）
+  const device = isDeviceKind(item.deviceKind) && (
+    <span className="clip-card__device">
+      <DeviceIcon
+        kind={item.deviceKind}
+        size={layout === 'card' ? 15 : 13}
+        title={item.remote ? `${appName} · ${t(`clip.device.${item.deviceKind}`)}` : undefined}
+      />
+    </span>
+  );
   // 从别的设备同步来的：右上角是设备图标，底栏的来源是那台设备的名字
   const TypeIcon = item.remote ? MonitorSmartphone : gif ? GifIcon : (TYPE_ICON[item.type] ?? Type);
 
   return (
     <div
-      className={clsx('clip-card', `clip-card--${layout}`, `clip-card--${gif ? 'gif' : item.type}`, selected && 'clip-card--selected')}
-      style={colorStyle}
+      className={clsx(
+        'clip-card',
+        `clip-card--${layout}`,
+        `clip-card--${gif ? 'gif' : item.type}`,
+        selected && 'clip-card--selected',
+        fullBleed && 'clip-card--bleed',
+        code && 'clip-card--code',
+        // 文字、代码一直排到卡片底，字数浮在渐隐的最后几行上（Paste 的做法），不单独占一条底栏
+        layout === 'card' && item.type === 'text' && 'clip-card--flow',
+      )}
+      style={tint && item.type !== 'color' ? ({ ...colorStyle, '--clip-tint': tint } as React.CSSProperties) : colorStyle}
       onMouseEnter={gif ? () => setHover(true) : undefined}
       onMouseLeave={gif ? () => setHover(false) : undefined}
       onMouseDown={(e) => e.button === 0 && onClick()}
@@ -216,13 +309,17 @@ export const ClipCard = memo(function ClipCard({
             {item.sourceIcon ? (
               <img className="clip-card__appicon" src={assetUrl(item.sourceIcon)} alt="" title={appName} draggable={false} />
             ) : (
-              <TypeIcon className="clip-card__appicon clip-card__appicon--type" strokeWidth={1.6} />
+              <span className="clip-card__typetile" title={item.remote ? appName : undefined}>
+                <TypeIcon width={19} height={19} strokeWidth={2} />
+              </span>
             )}
           </div>
           <div className="clip-card__body">{body}</div>
+          {/* 图片卡片的底栏浮在图片上：尺寸是底部居中的小胶囊 */}
           <div className="clip-card__foot">
-            <span className="clip-card__detail cn-truncate cn-numeric">{detail ?? appName}</span>
+            {(!fullBleed || detail) && <span className="clip-card__detail cn-truncate cn-numeric">{detail ?? appName}</span>}
             {index < 9 && <span className="clip-card__index">Ctrl {index + 1}</span>}
+            {device}
           </div>
         </>
       ) : (
@@ -232,6 +329,7 @@ export const ClipCard = memo(function ClipCard({
             {app}
             {marks}
             {time}
+            {device}
           </div>
         </>
       )}

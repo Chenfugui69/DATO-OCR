@@ -1,6 +1,6 @@
-//! 系统权限：屏幕录制、辅助功能。
+//! 系统权限：屏幕录制、辅助功能、完全磁盘访问。
 //!
-//! macOS 把这两项权限记在"应用"头上。开发时从终端跑的是裸可执行文件，权限算在终端程序
+//! macOS 把这几项权限记在"应用"头上。开发时从终端跑的是裸可执行文件，权限算在终端程序
 //! 头上；打包后的 .app 才算在 DATO OCR 自己头上。授权后一般要重启应用才生效。
 
 use objc2::runtime::AnyObject;
@@ -23,6 +23,8 @@ pub fn request(which: Permission) {
             request_accessibility();
             "Privacy_Accessibility"
         }
+        // 没有弹框的接口：只能打开那一页，让用户点 + 把 DATO OCR 加进去
+        Permission::FullDiskAccess => "Privacy_AllFiles",
     };
     let url = format!("x-apple.systempreferences:com.apple.preference.security?{pane}");
     if let Err(err) = std::process::Command::new("open").arg(url).spawn() {

@@ -20,6 +20,8 @@ use crate::error::AppResult;
 const MIGRATIONS: &[(i64, &str)] = &[
     (1, include_str!("../../migrations/001_init.sql")),
     (2, include_str!("../../migrations/002_sync.sql")),
+    (3, include_str!("../../migrations/003_otp.sql")),
+    (4, include_str!("../../migrations/004_device_kind.sql")),
 ];
 
 pub struct Db {

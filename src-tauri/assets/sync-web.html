@@ -155,6 +155,14 @@
 <textarea id="copy-buf" style="position:fixed;top:-1000px;opacity:0" readonly></textarea>
 
 <script>
+  // 电脑上按它画设备图标。iPad 上的 Safari 默认报自己是 Mac，靠触屏认出来
+  function devicePlatform() {
+    const ua = navigator.userAgent;
+    if (/iPhone/.test(ua)) return 'iphone';
+    if (/iPad/.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1)) return 'ipad';
+    if (/Android/.test(ua)) return 'android';
+    return 'web';
+  }
 (() => {
   const zh = /^zh/i.test(navigator.language || '');
   const T = zh ? {} : {
@@ -206,7 +214,7 @@
     $('pair-btn').disabled = true;
     try {
       const r = await fetch('/api/pair/request', { method: 'POST', headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ code, name, platform: /iPhone|iPad/.test(navigator.userAgent) ? 'ios' : /Android/.test(navigator.userAgent) ? 'android' : 'web', kind: 'web' }) });
+        body: JSON.stringify({ code, name, platform: devicePlatform(), kind: 'web' }) });
       if (!r.ok) throw new Error(await r.text());
       const { id } = await r.json();
       pairing = id;

@@ -25,17 +25,19 @@ import { notify } from '@/ui/overlays';
 import { clipMenu } from './actions';
 import { ClipCard, isGifItem } from './ClipCard';
 import { HScrollbar } from './HScrollbar';
+import { OtpBody } from './OtpBody';
 
 type Filter = 'all' | ClipType | 'pinned' | 'favorite';
 /** 底部卡片条：卡片宽度和间距（高度见 panel.css 的 .panel__cell） */
-const CARD_W = 200;
+/** 卡片条里每张卡片的宽度：和高度（240）差不多，接近 Paste 的方卡片 */
+const CARD_W = 236;
 const CARD_GAP = 14;
 const FILTERS: Filter[] = ['all', 'text', 'image', 'link', 'files', 'pinned', 'favorite'];
 
 function queryOf(filter: Filter, keyword: string) {
   return {
     keyword: keyword || undefined,
-    kinds: filter === 'text' ? (['text', 'color'] as ClipType[]) : ['image', 'link', 'files'].includes(filter) ? [filter as ClipType] : [],
+    kinds: filter === 'text' ? (['text', 'color', 'otp'] as ClipType[]) : ['image', 'link', 'files'].includes(filter) ? [filter as ClipType] : [],
     pinnedOnly: filter === 'pinned',
     favoriteOnly: filter === 'favorite',
   };
@@ -86,6 +88,15 @@ export default function PanelView() {
   const query = useClipItems(useMemo(() => queryOf(filter, debounced), [filter, debounced]), 50);
   const items = useMemo(() => query.data?.pages.flatMap((p) => p.items) ?? [], [query.data]);
   const groups = useQuery({ queryKey: ['clip-groups'], queryFn: clipboard.groups });
+  // 卡片标题栏跟着来源应用图标的主色走（像 Paste）；后端按图标缓存，只在出现新图标时才再问
+  const icons = useMemo(() => [...new Set(items.map((i) => i.sourceIcon).filter((s): s is string => !!s))].sort(), [items]);
+  const iconColors = useQuery({
+    queryKey: ['clip-icon-colors', icons],
+    queryFn: () => clipboard.iconColors(icons),
+    enabled: icons.length > 0,
+    staleTime: Infinity,
+    placeholderData: (prev) => prev,
+  });
 
   const horizontal = style === 'bottom';
   const virt = useVirtualizer({
@@ -426,6 +437,7 @@ export default function PanelView() {
                   >
                     <ClipCard
                       item={item}
+                      tint={item.sourceIcon ? iconColors.data?.[item.sourceIcon] : undefined}
                       index={v.index}
                       layout={horizontal ? 'card' : 'row'}
                       selected={v.index === selected}
@@ -454,6 +466,10 @@ export default function PanelView() {
                 <img src={assetUrl(preview.item.filePath)} alt="" />
               ) : isGifItem(preview.item) && preview.item.thumbPath ? (
                 <img src={assetUrl(preview.item.thumbPath)} alt="" />
+              ) : preview.item.type === 'otp' ? (
+                <div className="panel__preview-text">
+                  <OtpBody item={preview.item} variant="detail" />
+                </div>
               ) : (
                 <div className="panel__preview-text cn-selectable">{preview.detail?.contentText ?? preview.item.preview}</div>
               )}

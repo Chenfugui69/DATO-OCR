@@ -136,6 +136,15 @@ pub fn is_local(ip: IpAddr) -> bool {
     }
 }
 
+/// 本机所有网卡上的地址（含代理软件的虚拟网卡），用来认出"广播里这个地址其实是本机"。
+pub fn own_ips() -> Vec<IpAddr> {
+    if_addrs::get_if_addrs()
+        .unwrap_or_default()
+        .into_iter()
+        .map(|i| i.ip())
+        .collect()
+}
+
 /// 本机的局域网地址（给手机扫码用），好用的排前面。
 pub fn local_ips() -> Vec<IpAddr> {
     let mut ips: Vec<IpAddr> = if_addrs::get_if_addrs()

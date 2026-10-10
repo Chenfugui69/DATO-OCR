@@ -106,6 +106,12 @@ export interface Settings {
     blacklist: string[];
     retentionDays: number;
     retentionMaxItems: number;
+    /** 读「信息」里 iPhone 转发来的短信，认出验证码自动复制（macOS） */
+    smsCodes: boolean;
+    /** 剪贴板里的验证码打码显示（鼠标放到眼睛图标上才显示） */
+    otpMask: boolean;
+    /** 验证码在剪贴板历史里留多久（秒），0 = 不删 */
+    otpExpireSecs: number;
   };
   sync: SyncSettings;
   update: {
@@ -315,6 +321,8 @@ export interface Permissions {
   screenCapture: boolean | null;
   /** 辅助功能：模拟粘贴 / 复制、全局拦截按键 */
   accessibility: boolean | null;
+  /** 完全磁盘访问：读「信息」里的短信（短信验证码） */
+  fullDiskAccess: boolean | null;
 }
 
 export interface AppInfo {
@@ -392,7 +400,7 @@ export type EditorAction = 'copy' | 'save' | 'pin' | 'ocr' | 'translate' | 'ai';
 
 // ───────────────────────── 剪贴板 ─────────────────────────
 
-export type ClipType = 'text' | 'link' | 'color' | 'image' | 'files';
+export type ClipType = 'text' | 'link' | 'color' | 'image' | 'files' | 'otp';
 
 export interface ClipItem {
   id: number;
@@ -417,6 +425,10 @@ export interface ClipItem {
   groupId: number | null;
   createdAt: number;
   lastUsedAt: number;
+  /** 验证码（type = otp）所在的短信原文 */
+  originText: string | null;
+  /** 来自哪种设备：iphone | ipad | android | mac | macbook | pc | laptop | apple（通用剪贴板） */
+  deviceKind: string | null;
 }
 
 export interface ClipDetail extends ClipItem {

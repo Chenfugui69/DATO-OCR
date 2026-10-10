@@ -12,6 +12,7 @@ pub mod cursor;
 pub mod effects;
 pub mod hook;
 pub mod input;
+pub mod messages;
 pub mod ocr;
 pub mod permissions;
 pub mod process;
@@ -86,7 +87,19 @@ pub fn permissions() -> Permissions {
     Permissions {
         screen_capture: Some(permissions::screen_capture_granted()),
         accessibility: Some(permissions::accessibility_granted()),
+        full_disk_access: Some(messages::full_disk_access_granted()),
     }
+}
+
+pub fn sms_supported() -> bool {
+    true
+}
+
+pub fn start_sms_watcher(
+    tx: std::sync::mpsc::Sender<super::types::SmsMessage>,
+    enabled: Box<dyn Fn() -> bool + Send>,
+) {
+    messages::start(tx, enabled);
 }
 
 pub fn request_permission(which: Permission) {

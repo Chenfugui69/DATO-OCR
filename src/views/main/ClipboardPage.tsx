@@ -2,7 +2,7 @@
 
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useVirtualizer } from '@tanstack/react-virtual';
-import { Clipboard, Copy, File, FolderPlus, Globe, Image as ImageIcon, Languages, MoreHorizontal, Palette, Pin, ScanText, Star, Trash2, Type } from 'lucide-react';
+import { Clipboard, Copy, File, FolderPlus, Globe, Image as ImageIcon, KeyRound, Languages, MoreHorizontal, Palette, Pin, ScanText, Star, Trash2, Type } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
@@ -14,12 +14,14 @@ import type { ClipItem, ClipType } from '@/lib/types';
 import { Button, EmptyState, IconButton, SearchField, Select, Spinner } from '@/ui/controls';
 import { ContextMenu, DropdownMenu, confirmDialog, notify, promptDialog, type MenuItemSpec } from '@/ui/overlays';
 import { clipMenu } from '@/views/clipboard-panel/actions';
+import { DeviceIcon, isDeviceKind } from '@/views/clipboard-panel/DeviceIcon';
+import { OtpBody } from '@/views/clipboard-panel/OtpBody';
 import { TranslateBox } from '@/views/translate/TranslateBox';
 
 type Filter = 'all' | ClipType | 'pinned' | 'favorite';
 const FILTERS: Filter[] = ['all', 'text', 'image', 'link', 'files', 'pinned', 'favorite'];
 
-const typeIcon: Record<ClipType, typeof Type> = { text: Type, link: Globe, color: Palette, image: ImageIcon, files: File };
+const typeIcon: Record<ClipType, typeof Type> = { text: Type, link: Globe, color: Palette, image: ImageIcon, files: File, otp: KeyRound };
 
 export function ClipboardPage() {
   const { t } = useTranslation();
@@ -42,7 +44,7 @@ export function ClipboardPage() {
     useMemo(
       () => ({
         keyword: debounced || undefined,
-        kinds: filter === 'text' ? (['text', 'color'] as ClipType[]) : ['image', 'link', 'files'].includes(filter) ? [filter as ClipType] : [],
+        kinds: filter === 'text' ? (['text', 'color', 'otp'] as ClipType[]) : ['image', 'link', 'files'].includes(filter) ? [filter as ClipType] : [],
         pinnedOnly: filter === 'pinned',
         favoriteOnly: filter === 'favorite',
         groupId: group === 'all' ? null : Number(group),
@@ -209,17 +211,22 @@ export function ClipboardPage() {
                       </span>
                       <div className="clip-row__main">
                         <div className="clip-row__text">
-                          {it.type === 'image'
-                            ? t('clip.imageLabel', { w: it.width ?? 0, h: it.height ?? 0 })
-                            : it.type === 'files'
-                              ? (it.preview ?? '').split('\n').join('、')
-                              : (it.preview ?? '').replace(/\s+/g, ' ')}
+                          {it.type === 'image' ? (
+                            t('clip.imageLabel', { w: it.width ?? 0, h: it.height ?? 0 })
+                          ) : it.type === 'files' ? (
+                            (it.preview ?? '').split('\n').join('、')
+                          ) : it.type === 'otp' ? (
+                            <OtpBody item={it} variant="line" />
+                          ) : (
+                            (it.preview ?? '').replace(/\s+/g, ' ')
+                          )}
                         </div>
                         <div className="clip-row__sub">
                           {it.sourceIcon && <img src={assetUrl(it.sourceIcon)} alt="" />}
                           <span>{it.sourceApp ?? t('clip.unknownApp')}</span>
                           <span>·</span>
                           <span>{relativeTime(it.lastUsedAt)}</span>
+                          {isDeviceKind(it.deviceKind) && <DeviceIcon kind={it.deviceKind} size={13} />}
                           {it.note && (
                             <>
                               <span>·</span>
@@ -277,6 +284,8 @@ function ClipDetailPane({ item, onChanged }: { item: ClipItem | undefined; onCha
           item.files.map((f) => <div key={f}>{f}</div>)
         ) : item.type === 'color' ? (
           <div style={{ height: 120, borderRadius: 8, background: item.preview ?? undefined }} />
+        ) : item.type === 'otp' ? (
+          <OtpBody item={item} variant="detail" />
         ) : (
           (d?.contentText ?? item.preview)
         )}
@@ -300,6 +309,15 @@ function ClipDetailPane({ item, onChanged }: { item: ClipItem | undefined; onCha
             <>
               <dt>{t('clip.meta.size')}</dt>
               <dd>{formatBytes(item.sizeBytes)}</dd>
+            </>
+          )}
+          {isDeviceKind(item.deviceKind) && (
+            <>
+              <dt>{t('clip.meta.device')}</dt>
+              <dd className="clip-detail__device">
+                <DeviceIcon kind={item.deviceKind} size={14} />
+                {t(`clip.device.${item.deviceKind}`)}
+              </dd>
             </>
           )}
           <dt>{t('clip.meta.source')}</dt>

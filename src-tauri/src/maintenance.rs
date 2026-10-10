@@ -136,7 +136,8 @@ fn upgrade_thumbnails(app: &AppHandle) -> AppResult<()> {
 /// （`clipboard::app_icon`），换掉引用。旧文件很小，留着：已经打开的面板可能还在显示它。
 /// exe 已经不在了的提不出来，继续用旧的。只做一次。
 fn upgrade_app_icons(app: &AppHandle) -> AppResult<()> {
-    const KEY: &str = "app_icons_96";
+    // 改过一次键名（96 → hd）：换成更清楚的图标后要再跑一遍
+    const KEY: &str = "app_icons_hd";
     let st = state(app);
     if st.db.kv_get(KEY)?.is_some() {
         return Ok(());

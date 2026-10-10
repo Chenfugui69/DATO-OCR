@@ -668,6 +668,12 @@ pub struct ClipboardSettings {
     pub retention_days: u32,
     /// 0 = 不限条数
     pub retention_max_items: u32,
+    /// 读「信息」里 iPhone 转发来的短信，认出验证码自动复制（macOS，要完全磁盘访问权限）
+    pub sms_codes: bool,
+    /// 剪贴板里的验证码打码显示（鼠标放到眼睛图标上才显示）
+    pub otp_mask: bool,
+    /// 验证码在剪贴板历史里留多久（秒），0 = 不删。置顶、收藏的不删
+    pub otp_expire_secs: u32,
     #[serde(flatten)]
     pub extra: Map<String, Value>,
 }
@@ -763,6 +769,9 @@ impl Default for ClipboardSettings {
             blacklist: Vec::new(),
             retention_days: 0,
             retention_max_items: 0,
+            sms_codes: false,
+            otp_mask: true,
+            otp_expire_secs: 60,
             extra: Map::new(),
         }
     }

@@ -20,13 +20,22 @@ use objc2_foundation::{NSArray, NSData, NSString, NSURL};
 use super::util::{self, encode_handle};
 use super::window_enum;
 use crate::error::{AppError, AppResult};
-use crate::platform::{ClipboardPayload, ClipboardSnapshot, WindowHandle};
+use crate::platform::{AppInfo, ClipboardPayload, ClipboardSnapshot, WindowHandle};
 
 const TYPE_TEXT: &str = "public.utf8-plain-text";
 const TYPE_HTML: &str = "public.html";
 const TYPE_RTF: &str = "public.rtf";
 const TYPE_PNG: &str = "public.png";
 const TYPE_TIFF: &str = "public.tiff";
+const TYPE_JPEG: &str = "public.jpeg";
+const TYPE_HEIC: &str = "public.heic";
+/// 通用剪贴板：内容是从同一个 Apple 账号的 iPhone / iPad / 另一台 Mac 上复制过来的。
+/// 系统不告诉是哪台设备、哪个应用
+const TYPE_REMOTE: &str = "com.apple.is-remote-clipboard";
+/// iPhone / iPad 的「照片」复制时带上的照片 ID：有它就知道是从相册复制的
+const TYPE_IOS_PHOTOS: &str = "com.apple.mobileslideshow.asset.localidentifier";
+/// 用 Mac 上的「照片」当来源图标
+const PHOTOS_APP: &str = "/System/Applications/Photos.app";
 const TYPE_FILE_URL: &str = "public.file-url";
 
 /// 应用用这些类型标记"别记进剪贴板历史"（nspasteboard.org 的约定，密码管理器都遵守）
@@ -96,7 +105,10 @@ fn listener_thread() {
             last = now;
             let Some(tx) = SENDER.get() else { return };
             let mut snapshot = read_snapshot();
-            snapshot.source = source;
+            // 通用剪贴板过来的：前台应用和它没关系（认得出的应用 read_snapshot 里已经填了）
+            if !snapshot.from_other_device {
+                snapshot.source = source;
+            }
             snapshot.sequence = now;
             let _ = tx.send(snapshot);
         });
@@ -127,6 +139,81 @@ fn read_files(pb: &NSPasteboard) -> Vec<PathBuf> {
         .collect()
 }
 
+/// 剪贴板里给的是系统临时位置的一张图片文件：其实是"复制了一张图"，不是复制了一个文件。
+/// - iPhone / iPad 上复制的图片（通用剪贴板）落在
+///   `~/Library/Group Containers/group.com.apple.coreservices.useractivityd/shared-pasteboard/…`
+/// - 输入法（微信输入法）、一些应用复制图片时也是先写到自己的缓存目录再放文件地址
+///
+/// 这些文件过一会儿就被系统删掉，按文件记的话卡片没有预览，之后也粘贴不出来。
+/// 访达里复制的图片文件不在这些位置，照旧按文件记。
+fn is_temp_image(path: &std::path::Path) -> bool {
+    const IMAGE_EXT: [&str; 10] = [
+        "png", "jpg", "jpeg", "heic", "heif", "tif", "tiff", "webp", "bmp", "avif",
+    ];
+    let ext_ok = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| IMAGE_EXT.contains(&e.to_ascii_lowercase().as_str()));
+    if !ext_ok {
+        return false;
+    }
+    let home = std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .unwrap_or_default();
+    let temp_roots = [
+        home.join("Library/Caches"),
+        home.join("Library/Group Containers"),
+        home.join("Library/Containers"),
+        PathBuf::from("/private/var/folders"),
+        PathBuf::from("/var/folders"),
+        PathBuf::from("/private/tmp"),
+        PathBuf::from("/tmp"),
+    ];
+    temp_roots.iter().any(|root| path.starts_with(root))
+}
+
+/// 读临时图片文件放进 `snap.image`。PNG 留原字节（透明度），正着的 JPEG 也留原字节（省空间）；
+/// HEIC 之类交给系统解码。
+fn load_temp_image(path: &std::path::Path, snap: &mut ClipboardSnapshot) -> bool {
+    const MAX_BYTES: u64 = 64 * 1024 * 1024;
+    if std::fs::metadata(path).map_or(true, |m| m.len() > MAX_BYTES) {
+        return false;
+    }
+    let Ok(bytes) = std::fs::read(path) else {
+        return false;
+    };
+    let is_png = bytes.starts_with(&[0x89, b'P', b'N', b'G']);
+    let is_jpeg = bytes.starts_with(&[0xFF, 0xD8, 0xFF]);
+    if is_jpeg {
+        return take_jpeg(bytes, snap);
+    }
+    if is_png {
+        let Ok((img, _)) = crate::imaging::decode_upright(&bytes) else {
+            return false;
+        };
+        snap.image = Some(img);
+        snap.image_png = Some(bytes);
+        return true;
+    }
+    snap.image = decode_image(&NSData::with_bytes(&bytes));
+    snap.image.is_some()
+}
+
+/// 照片（JPEG）：按 EXIF 方向摆正。存的时候也用 JPEG —— 转成 PNG 的话一张 1200 万像素的
+/// 手机照片有 60–80MB，超过历史的图片大小上限就存不下了。正着的直接留原字节。
+fn take_jpeg(bytes: Vec<u8>, snap: &mut ClipboardSnapshot) -> bool {
+    let Ok((img, upright)) = crate::imaging::decode_upright(&bytes) else {
+        return false;
+    };
+    snap.image_jpeg = if upright {
+        Some(bytes)
+    } else {
+        crate::imaging::encode_jpeg(&img, 92).ok()
+    };
+    snap.image = Some(img);
+    true
+}
+
 /// PNG / TIFF 数据 → RGBA。
 fn decode_image(data: &NSData) -> Option<RgbaImage> {
     let rep = NSBitmapImageRep::imageRepWithData(data)?;
@@ -151,9 +238,23 @@ fn read_snapshot() -> ClipboardSnapshot {
         .map(|t| t.iter().map(|s| s.to_string()).collect())
         .unwrap_or_default();
     snap.privacy_flagged = PRIVACY_TYPES.iter().any(|p| has_type(&types, p));
+    snap.from_other_device = has_type(&types, TYPE_REMOTE);
+    // 通用剪贴板一般认不出是哪个应用复制的，相册是例外
+    if snap.from_other_device && has_type(&types, TYPE_IOS_PHOTOS) {
+        snap.source = Some(AppInfo {
+            name: crate::i18n::text("照片"),
+            exe_path: Some(PathBuf::from(PHOTOS_APP)).filter(|p| p.exists()),
+        });
+    }
 
     if has_type(&types, TYPE_FILE_URL) {
         snap.files = read_files(&pb);
+        if let [one] = snap.files.as_slice() {
+            let one = one.clone();
+            if is_temp_image(&one) && load_temp_image(&one, &mut snap) {
+                snap.files.clear();
+            }
+        }
     }
     if has_type(&types, TYPE_TEXT) {
         snap.text = pb.stringForType(&ns(TYPE_TEXT)).map(|s| s.to_string());
@@ -175,6 +276,17 @@ fn read_snapshot() -> ClipboardSnapshot {
                     snap.image_png = Some(data.to_vec());
                 }
             }
+        }
+        // iPhone 通用剪贴板过来的照片常常直接带 JPEG / HEIC 数据
+        if snap.image.is_none() && has_type(&types, TYPE_JPEG) {
+            if let Some(data) = pb.dataForType(&ns(TYPE_JPEG)) {
+                take_jpeg(data.to_vec(), &mut snap);
+            }
+        }
+        if snap.image.is_none() && has_type(&types, TYPE_HEIC) {
+            snap.image = pb
+                .dataForType(&ns(TYPE_HEIC))
+                .and_then(|d| decode_image(&d));
         }
         if snap.image.is_none() && has_type(&types, TYPE_TIFF) {
             snap.image = pb
@@ -313,6 +425,28 @@ pub fn restore(backup: Backup) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn temp_image_files_are_images() {
+        let home = PathBuf::from(std::env::var_os("HOME").unwrap());
+        let iphone = home.join(
+            "Library/Group Containers/group.com.apple.coreservices.useractivityd/shared-pasteboard/items/X/IMG_6359.jpeg",
+        );
+        assert!(is_temp_image(&iphone));
+        assert!(is_temp_image(
+            &home.join("Library/Caches/WeType/dsclp/1.png")
+        ));
+        assert!(is_temp_image(std::path::Path::new(
+            "/private/var/folders/ab/T/x.HEIC"
+        )));
+        // 访达里复制的图片文件、临时目录里的非图片：照旧是文件
+        assert!(!is_temp_image(&home.join("Pictures/IMG_6359.jpeg")));
+        assert!(!is_temp_image(std::path::Path::new(
+            "/Volumes/Extreme SSD/a.png"
+        )));
+        assert!(!is_temp_image(&home.join("Library/Caches/x.zip")));
+        assert!(!is_temp_image(&home.join("Library/Caches/x.gif")));
+    }
 
     #[test]
     fn tiff_roundtrip() {

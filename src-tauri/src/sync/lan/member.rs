@@ -74,10 +74,8 @@ pub async fn find_host(code: &str) -> AppResult<(SocketAddr, String)> {
     .map_err(|e| AppError::msg(e.to_string()))??;
     let client = http_client();
     for f in found {
-        for addr in f.addrs {
-            if probe(&client, addr).await {
-                return Ok((addr, f.device_id));
-            }
+        if let Some(addr) = reachable(&client, &f).await {
+            return Ok((addr, f.device_id));
         }
     }
     Err(AppError::msg(
@@ -96,22 +94,48 @@ async fn rediscover(host_id: &str) -> Option<SocketAddr> {
     .ok()?;
     let client = http_client();
     for f in found.into_iter().filter(|f| f.device_id == host_id) {
-        for addr in f.addrs {
-            if probe(&client, addr).await {
-                return Some(addr);
-            }
+        if let Some(addr) = reachable(&client, &f).await {
+            return Some(addr);
         }
     }
     None
 }
 
-async fn probe(client: &reqwest::Client, addr: SocketAddr) -> bool {
-    client
+/// 广播里的地址挨个试，返回第一个连得上、而且应答的确实是这台设备的。
+///
+/// 广播里会带上代理软件 TUN 模式的虚拟地址（198.18.0.1 之类）。本机也开着同样的代理时，
+/// 这个地址在本机指向的是**本机自己**：连上去应答的是本机的同步服务，配对时就报"设备码不对"。
+/// 所以本机自己的地址直接跳过，应答的设备 ID 也要核对。
+async fn reachable(client: &reqwest::Client, found: &discovery::Found) -> Option<SocketAddr> {
+    let mine = discovery::own_ips();
+    for &addr in &found.addrs {
+        if mine.contains(&addr.ip()) {
+            continue;
+        }
+        if probe(client, addr).await.as_deref() == Some(found.device_id.as_str()) {
+            return Some(addr);
+        }
+    }
+    None
+}
+
+/// 问一下这个地址上的 DATO OCR 是哪台设备（设备 ID）；连不上返回 None。
+pub async fn probe(client: &reqwest::Client, addr: SocketAddr) -> Option<String> {
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Info {
+        device_id: String,
+    }
+    let resp = client
         .get(format!("http://{addr}/api/info"))
         .timeout(Duration::from_secs(2))
         .send()
         .await
-        .is_ok_and(|r| r.status().is_success())
+        .ok()?;
+    if !resp.status().is_success() {
+        return None;
+    }
+    resp.json::<Info>().await.ok().map(|i| i.device_id)
 }
 
 /// 配对：申请加入、等主机同意。`on_sas` 拿到核对数字时调用（界面显示出来让用户和主机比对）。

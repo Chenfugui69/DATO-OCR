@@ -5,6 +5,7 @@
 //!
 //! 默认**全量记录**（铁律 6）：隐私标记、黑名单两道开关都默认关闭。
 
+mod app_colors;
 pub mod panel;
 
 use std::collections::VecDeque;
@@ -286,6 +287,17 @@ fn ingest(app: &AppHandle, snap: ClipboardSnapshot) -> AppResult<()> {
         crate::sync::on_local(app, id);
         return Ok(());
     }
+    item.device_kind = Some(
+        if snap.from_other_device {
+            "apple"
+        } else {
+            platform::device_kind()
+        }
+        .to_string(),
+    );
+    if snap.from_other_device {
+        item.source_app = Some(crate::i18n::text("通用剪贴板"));
+    }
     if let Some(source) = &snap.source {
         item.source_app = Some(source.name.clone()).filter(|n| !n.is_empty());
         if let Some(path) = &source.exe_path {
@@ -408,39 +420,95 @@ pub(crate) fn store_remote(
             }
             text.truncate(cut);
         }
-        let hash = sha(text.replace("\r\n", "\n").as_bytes());
         let payload = ClipboardPayload::Text {
             text: text.clone(),
             html: None,
             rtf: None,
         };
+        let item = if record.tag.as_deref() == Some(crate::otp::TAG) {
+            otp_clip(text.trim(), record.detail.as_deref())
+        } else {
+            NewClip {
+                kind: text_kind(&text).into(),
+                preview: Some(preview(&text)),
+                hash: sha(text.replace("\r\n", "\n").as_bytes()),
+                char_count: Some(text.chars().count() as i64),
+                size_bytes: Some(text.len() as i64),
+                content_text: Some(text.clone()),
+                truncated,
+                ..Default::default()
+            }
+        };
         let dup = match existing {
             Some(id) => Some(id),
-            None => st.db.with(|c| repo::find_duplicate(c, &hash))?,
+            None => st.db.with(|c| repo::find_duplicate(c, &item.hash))?,
         };
         if let Some(id) = dup {
             return Ok((bubble(id)?, Some(payload)));
         }
-        (
-            NewClip {
-                kind: text_kind(&text).into(),
-                preview: Some(preview(&text)),
-                hash,
-                char_count: Some(text.chars().count() as i64),
-                size_bytes: Some(text.len() as i64),
-                content_text: Some(text),
-                truncated,
-                ..Default::default()
-            },
-            payload,
-        )
+        (item, payload)
     };
     item.source_app = source;
     item.sync_id = Some(record.id.clone());
     item.device_id = Some(record.origin.clone());
+    item.device_kind = record.device.clone();
     let id = st.db.with(|c| repo::insert(c, &item))?;
     let _ = app.emit(events::CLIPBOARD_CHANGED, ClipChanged { id, is_new: true });
     Ok((id, Some(payload)))
+}
+
+/// 一条验证码记录：`content_text` 是验证码（粘贴出去的就是它），`origin_text` 是短信原文。
+/// 哈希把原文也算进去，和用户自己复制的同一串数字分开。
+fn otp_clip(code: &str, sms: Option<&str>) -> NewClip {
+    let mut hasher = Sha256::new();
+    hasher.update(b"otp\n");
+    hasher.update(code.as_bytes());
+    hasher.update(b"\n");
+    hasher.update(sms.unwrap_or_default().as_bytes());
+    NewClip {
+        kind: "otp".into(),
+        preview: Some(code.to_string()),
+        hash: hasher
+            .finalize()
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect(),
+        char_count: Some(code.chars().count() as i64),
+        size_bytes: Some(code.len() as i64),
+        content_text: Some(code.to_string()),
+        origin_text: sms.map(trim_sms),
+        ..Default::default()
+    }
+}
+
+/// 短信原文最多留这么多字
+fn trim_sms(text: &str) -> String {
+    text.trim().chars().take(2000).collect()
+}
+
+/// 本机认出的短信验证码进历史（去重），返回记录 ID。`source` / `app_path` 是显示的来源应用。
+pub(crate) fn store_otp(
+    app: &AppHandle,
+    code: &str,
+    sms: &str,
+    source: &str,
+    app_path: Option<&Path>,
+) -> AppResult<i64> {
+    let st = state(app);
+    let mut item = otp_clip(code, Some(sms));
+    if let Some(id) = st.db.with(|c| repo::find_duplicate(c, &item.hash))? {
+        st.db.with(|c| repo::touch(c, id))?;
+        let _ = app.emit(events::CLIPBOARD_CHANGED, ClipChanged { id, is_new: false });
+        return Ok(id);
+    }
+    item.source_app = Some(source.to_string());
+    // 短信只有 iPhone 收得到，转发到 Mac 的也是从 iPhone 来的
+    item.device_kind = Some("iphone".into());
+    item.source_app_path = app_path.map(|p| p.to_string_lossy().into_owned());
+    item.source_icon = app_path.and_then(|p| app_icon(app, p));
+    let id = st.db.with(|c| repo::insert(c, &item))?;
+    let _ = app.emit(events::CLIPBOARD_CHANGED, ClipChanged { id, is_new: true });
+    Ok(id)
 }
 
 fn is_gif(path: &Path) -> bool {
@@ -567,15 +635,22 @@ fn classify(
                 ..Default::default()
             }));
         }
-        let bytes = match &snap.image_png {
-            Some(png) => png.clone(),
-            None => imaging::encode_png(img)?,
+        let limit = u64::from(settings.max_image_mb) * 1024 * 1024;
+        let (mut bytes, mut ext) = match (&snap.image_png, &snap.image_jpeg) {
+            (Some(png), _) => (png.clone(), "png"),
+            (None, Some(jpeg)) => (jpeg.clone(), "jpg"),
+            (None, None) => (imaging::encode_png(img)?, "png"),
         };
-        if bytes.len() as u64 > u64::from(settings.max_image_mb) * 1024 * 1024 {
+        // 照片转成 PNG 会大好几倍（1200 万像素 60MB 以上）：没有透明的改存 JPEG。截图压得动，照旧是 PNG
+        if bytes.len() as u64 > limit && ext == "png" && !imaging::has_alpha(img) {
+            bytes = imaging::encode_jpeg(img, 92)?;
+            ext = "jpg";
+        }
+        if bytes.len() as u64 > limit {
             tracing::info!(bytes = bytes.len(), "剪贴板图片超过大小上限，不保存");
             return Ok(None);
         }
-        let rel = st.paths.new_rel_file("clipboard", "png")?;
+        let rel = st.paths.new_rel_file("clipboard", ext)?;
         std::fs::write(st.paths.abs(&rel), &bytes)?;
         let thumb = thumb_rel(&rel);
         let thumb = imaging::write_card_thumbnail(img, &st.paths.abs(&thumb))
@@ -631,12 +706,12 @@ fn classify(
     }))
 }
 
-/// 来源应用图标缓存在 `app-icons/{路径哈希}-96.png`，每个应用只提取一次。
-/// （旧版按 48 提取、不带后缀，已有记录还指着它们，新复制的换成 96 的。）
+/// 来源应用图标缓存在 `app-icons/{路径哈希}-hd.png`，每个应用只提取一次。
+/// （更早按 48 / 64 / 96 提取的旧文件，已有记录还指着它们，启动后的维护任务会换成新的，见 `maintenance`。）
 pub(crate) fn app_icon(app: &AppHandle, exe: &Path) -> Option<String> {
     let st = state(app);
     let key = sha(exe.to_string_lossy().to_lowercase().as_bytes());
-    let rel = format!("app-icons/{}-96.png", &key[..16]);
+    let rel = format!("app-icons/{}-hd.png", &key[..16]);
     let abs = st.paths.abs(&rel);
     if abs.exists() {
         return Some(rel);
@@ -644,6 +719,67 @@ pub(crate) fn app_icon(app: &AppHandle, exe: &Path) -> Option<String> {
     let icon = platform::extract_app_icon(exe)?;
     let bytes = imaging::encode_png(&icon).ok()?;
     std::fs::write(&abs, bytes).ok()?;
+    Some(rel)
+}
+
+/// 卡片标题栏的颜色（`#rrggbb`），按来源应用图标查：常见应用用固定颜色（`app_colors`），
+/// 其余按图标主色算。按图标路径缓存，算不出的不返回（卡片用类型的颜色）。
+pub fn icon_colors(app: &AppHandle, icons: &[String]) -> std::collections::HashMap<String, String> {
+    static CACHE: Mutex<Option<std::collections::HashMap<String, Option<String>>>> =
+        Mutex::new(None);
+    let st = state(app);
+    let mut cache = CACHE.lock();
+    let cache = cache.get_or_insert_with(Default::default);
+    let mut out = std::collections::HashMap::new();
+    for icon in icons {
+        if !icon.starts_with("app-icons/") {
+            continue;
+        }
+        let color = cache.entry(icon.clone()).or_insert_with(|| {
+            let app_path = st
+                .db
+                .with(|c| repo::app_path_of_icon(c, icon))
+                .ok()
+                .flatten();
+            if let Some(known) = app_path.as_deref().and_then(app_colors::known) {
+                return Some(known.to_string());
+            }
+            let img = imaging::load(&st.paths.abs(icon)).ok()?;
+            let [r, g, b] = imaging::dominant_color(&img)?;
+            Some(format!("#{r:02x}{g:02x}{b:02x}"))
+        });
+        if let Some(c) = color {
+            out.insert(icon.clone(), c.clone());
+        }
+    }
+    out
+}
+
+/// "文件"卡片上的大图标：系统给这个文件的图标（macOS 访达里看到的那个）。同一种扩展名只取一次，
+/// 存成 `app-icons/file-{扩展名}-hd.png`；应用、可执行文件、快捷方式各有各的图标，按路径存。
+/// 取不到（Windows 上普通文档取不到）返回 None，卡片用线条图标。
+pub fn file_icon(app: &AppHandle, path: &str) -> Option<String> {
+    let path = Path::new(path);
+    let ext = path
+        .extension()
+        .map(|e| e.to_string_lossy().to_lowercase())
+        .filter(|e| e.len() <= 12 && e.chars().all(|c| c.is_ascii_alphanumeric()));
+    if matches!(ext.as_deref(), Some("app" | "exe" | "lnk" | "ico")) {
+        return app_icon(app, path);
+    }
+    let key = if path.is_dir() {
+        "folder".to_string()
+    } else {
+        ext.unwrap_or_else(|| "file".into())
+    };
+    let st = state(app);
+    let rel = format!("app-icons/file-{key}-hd.png");
+    if st.paths.abs(&rel).exists() {
+        return Some(rel);
+    }
+    let icon = platform::extract_app_icon(path)?;
+    let bytes = imaging::encode_png(&icon).ok()?;
+    std::fs::write(st.paths.abs(&rel), bytes).ok()?;
     Some(rel)
 }
 

@@ -117,3 +117,14 @@ pub fn permissions() -> Permissions {
 }
 
 pub fn request_permission(_which: Permission) {}
+
+/// 这个平台读不到手机短信。
+pub fn sms_supported() -> bool {
+    false
+}
+
+pub fn start_sms_watcher(
+    _tx: std::sync::mpsc::Sender<super::types::SmsMessage>,
+    _enabled: Box<dyn Fn() -> bool + Send>,
+) {
+}

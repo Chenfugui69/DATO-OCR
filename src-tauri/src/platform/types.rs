@@ -113,9 +113,13 @@ pub struct ClipboardSnapshot {
     pub image: Option<RgbaImage>,
     /// 剪贴板里原样带着的 PNG 字节（如有），保留透明度用
     pub image_png: Option<Vec<u8>>,
+    /// 原样的 JPEG 字节（手机照片），存原图比转 PNG 小得多
+    pub image_jpeg: Option<Vec<u8>>,
     pub files: Vec<PathBuf>,
     /// 应用标记了"不要记录到剪贴板历史"（密码管理器常用）
     pub privacy_flagged: bool,
+    /// 从别的苹果设备经通用剪贴板过来的（macOS）。`source` 这时是本机碰巧在前台的应用，不能当来源
+    pub from_other_device: bool,
     pub source: Option<AppInfo>,
     /// 系统剪贴板序列号。自己写入后记下序列号，监听到同一号就跳过（忽略下一次变化）。
     pub sequence: u32,
@@ -224,6 +228,7 @@ pub struct DefaultHotkeys {
 pub enum Permission {
     ScreenCapture,
     Accessibility,
+    FullDiskAccess,
 }
 
 /// 要用户手动授予的系统权限。`None` = 这个平台没有这项权限、不用管。
@@ -234,6 +239,20 @@ pub struct Permissions {
     pub screen_capture: Option<bool>,
     /// 辅助功能：模拟粘贴 / 复制、全局拦截按键
     pub accessibility: Option<bool>,
+    /// 完全磁盘访问：读「信息」里 iPhone 转发来的短信（短信验证码）
+    pub full_disk_access: Option<bool>,
+}
+
+/// 系统短信应用里收到的一条消息（macOS：iPhone 转发到「信息」的短信 / iMessage）。
+#[derive(Clone, Debug)]
+pub struct SmsMessage {
+    pub text: String,
+    /// 发件人（号码或邮箱），可能没有
+    pub sender: Option<String>,
+    /// 收到的时间（Unix 毫秒）
+    pub at_ms: i64,
+    /// 短信应用本身，用作剪贴板历史里的来源图标
+    pub app_path: Option<std::path::PathBuf>,
 }
 
 /// 系统自带 OCR 的一行结果（物理像素，相对输入图像）。

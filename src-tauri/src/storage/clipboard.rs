@@ -31,6 +31,10 @@ pub struct NewClip {
     /// 从别的设备同步来的：记录的全局 ID 和来源设备（本机复制的两个都是 None）
     pub sync_id: Option<String>,
     pub device_id: Option<String>,
+    /// 验证码（type = otp）所在的短信原文
+    pub origin_text: Option<String>,
+    /// 来自哪种设备（iphone / mac / pc …，见迁移 004）
+    pub device_kind: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -59,6 +63,10 @@ pub struct ClipItem {
     pub group_id: Option<i64>,
     pub created_at: i64,
     pub last_used_at: i64,
+    /// 验证码所在的短信原文（只有 type = otp 的有）
+    pub origin_text: Option<String>,
+    /// 来自哪种设备：iphone | ipad | android | mac | macbook | pc | laptop | apple
+    pub device_kind: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -112,7 +120,7 @@ pub struct ClipGroup {
 const ITEM_COLUMNS: &str =
     "id, type, preview, content_html IS NOT NULL, file_path, thumb_path, file_list,
     char_count, size_bytes, width, height, source_app, source_icon, truncated, pinned, favorite,
-    note, group_id, created_at, last_used_at, device_id IS NOT NULL";
+    note, group_id, created_at, last_used_at, device_id IS NOT NULL, origin_text, device_kind";
 
 fn map_item(row: &Row<'_>) -> rusqlite::Result<ClipItem> {
     let files: Option<String> = row.get(6)?;
@@ -140,6 +148,8 @@ fn map_item(row: &Row<'_>) -> rusqlite::Result<ClipItem> {
         group_id: row.get(17)?,
         created_at: row.get(18)?,
         last_used_at: row.get(19)?,
+        origin_text: row.get(21)?,
+        device_kind: row.get(22)?,
     })
 }
 
@@ -155,6 +165,10 @@ fn search_text(item: &NewClip) -> String {
     if let Some(app) = &item.source_app {
         text.push(' ');
         text.push_str(app);
+    }
+    if let Some(origin) = &item.origin_text {
+        text.push(' ');
+        text.push_str(origin);
     }
     text
 }
@@ -186,9 +200,9 @@ pub fn insert(conn: &mut Connection, item: &NewClip) -> AppResult<i64> {
     tx.execute(
         "INSERT INTO clipboard_items (type, content_text, content_html, content_rtf, file_path, thumb_path,
             file_list, preview, hash, char_count, size_bytes, width, height, source_app, source_app_path,
-            source_icon, truncated, created_at, last_used_at, sync_id, device_id, sync_state)
+            source_icon, truncated, created_at, last_used_at, sync_id, device_id, sync_state, origin_text, device_kind)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?18,
-            ?19, ?20, ?21)",
+            ?19, ?20, ?21, ?22, ?23)",
         params![
             item.kind,
             item.content_text,
@@ -212,6 +226,8 @@ pub fn insert(conn: &mut Connection, item: &NewClip) -> AppResult<i64> {
             item.device_id,
             // 2 = 已同步（收到的）；本机的是 0
             if item.device_id.is_some() { 2 } else { 0 },
+            item.origin_text,
+            item.device_kind,
         ],
     )?;
     let id = tx.last_insert_rowid();
@@ -489,6 +505,19 @@ pub fn ids_for_retention(conn: &Connection, days: u32, max_items: u32) -> AppRes
     Ok(ids)
 }
 
+/// 收到时间早于 `before`（毫秒）的验证码。置顶、收藏的不算：用户特意留下的。
+pub fn expired_otp_ids(conn: &Connection, before: i64) -> AppResult<Vec<i64>> {
+    let mut stmt = conn.prepare(
+        "SELECT id FROM clipboard_items
+         WHERE type = 'otp' AND pinned = 0 AND favorite = 0 AND created_at < ?1",
+    )?;
+    let ids = stmt
+        .query_map([before], |r| r.get::<_, i64>(0))?
+        .flatten()
+        .collect();
+    Ok(ids)
+}
+
 /// 数据库里引用到的全部文件（用于孤儿文件清理）。
 /// 按全局 ID 找记录（收到同步记录时去重）。
 pub fn find_by_sync_id(conn: &Connection, sync_id: &str) -> AppResult<Option<i64>> {
@@ -513,11 +542,14 @@ pub struct SyncSource {
     pub height: Option<i64>,
     pub source_app: Option<String>,
     pub created_at: i64,
+    pub origin_text: Option<String>,
+    pub device_kind: Option<String>,
 }
 
 pub fn sync_source(conn: &Connection, id: i64) -> AppResult<SyncSource> {
     conn.query_row(
-        "SELECT sync_id, device_id, type, content_text, file_path, width, height, source_app, created_at
+        "SELECT sync_id, device_id, type, content_text, file_path, width, height, source_app, created_at,
+                origin_text, device_kind
          FROM clipboard_items WHERE id = ?1",
         [id],
         |r| {
@@ -531,6 +563,8 @@ pub fn sync_source(conn: &Connection, id: i64) -> AppResult<SyncSource> {
                 height: r.get(6)?,
                 source_app: r.get(7)?,
                 created_at: r.get(8)?,
+                origin_text: r.get(9)?,
+                device_kind: r.get(10)?,
             })
         },
     )
@@ -576,18 +610,30 @@ pub fn set_size(conn: &Connection, id: i64, bytes: u64, dims: Option<(u32, u32)>
     Ok(())
 }
 
-/// 还指着旧版（48 像素、文件名不带 -96）来源图标的记录：(exe 路径, 图标)，每个图标一行。
+/// 还指着旧版（48 / 64 / 96 像素、文件名不带 -hd）来源图标的记录：(exe 路径, 图标)，每个图标一行。
 pub fn legacy_icons(conn: &Connection) -> AppResult<Vec<(String, String)>> {
     let mut stmt = conn.prepare(
         "SELECT MIN(source_app_path), source_icon FROM clipboard_items
          WHERE source_icon IS NOT NULL AND source_app_path IS NOT NULL
-           AND source_icon NOT LIKE '%-96.png'
+           AND source_icon NOT LIKE '%-hd.png'
          GROUP BY source_icon",
     )?;
     let rows = stmt
         .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?
         .collect::<Result<_, _>>()?;
     Ok(rows)
+}
+
+/// 这个来源图标是哪个应用的（卡片标题栏按应用配色用）。
+pub fn app_path_of_icon(conn: &Connection, icon: &str) -> AppResult<Option<String>> {
+    Ok(conn
+        .query_row(
+            "SELECT source_app_path FROM clipboard_items
+             WHERE source_icon = ?1 AND source_app_path IS NOT NULL LIMIT 1",
+            [icon],
+            |r| r.get(0),
+        )
+        .optional()?)
 }
 
 pub fn replace_icon(conn: &Connection, old: &str, new: &str) -> AppResult<()> {
@@ -622,6 +668,54 @@ mod tests {
             hash: format!("h-{text}"),
             ..Default::default()
         }
+    }
+
+    /// 到期的验证码：只挑 otp、置顶 / 收藏的不动；短信原文能读回来、也能搜到
+    #[test]
+    fn otp_items_expire_and_keep_sms_text() {
+        let db = Db::open_in_memory().unwrap();
+        let otp = |code: &str| NewClip {
+            kind: "otp".into(),
+            content_text: Some(code.into()),
+            preview: Some(code.into()),
+            hash: format!("otp-{code}"),
+            origin_text: Some(format!("【测试】您的验证码为 {code}")),
+            device_kind: Some("iphone".into()),
+            ..Default::default()
+        };
+        let (a, b, _) = db
+            .with(|c| {
+                let a = insert(c, &otp("482913"))?;
+                let b = insert(c, &otp("739102"))?;
+                let t = insert(c, &text_clip("普通文字"))?;
+                c.execute("UPDATE clipboard_items SET pinned = 1 WHERE id = ?1", [b])?;
+                Ok((a, b, t))
+            })
+            .unwrap();
+        let later = now_ms() + 1000;
+        assert_eq!(db.with(|c| expired_otp_ids(c, later)).unwrap(), vec![a]);
+        assert!(db.with(|c| expired_otp_ids(c, 0)).unwrap().is_empty());
+
+        let item = db.with(|c| get_item(c, b)).unwrap();
+        assert_eq!(item.kind, "otp");
+        assert_eq!(
+            item.origin_text.as_deref(),
+            Some("【测试】您的验证码为 739102")
+        );
+        assert_eq!(item.device_kind.as_deref(), Some("iphone"));
+        let found = db
+            .with(|c| {
+                query(
+                    c,
+                    &ClipQuery {
+                        keyword: Some("测试".into()),
+                        limit: 10,
+                        ..Default::default()
+                    },
+                )
+            })
+            .unwrap();
+        assert_eq!(found.items.len(), 2);
     }
 
     #[test]
@@ -733,7 +827,7 @@ mod tests {
         db.with(|c| {
             insert(c, &clip("a", "app-icons/old.png"))?;
             insert(c, &clip("b", "app-icons/old.png"))?;
-            insert(c, &clip("c", "app-icons/new-96.png"))?;
+            insert(c, &clip("c", "app-icons/new-hd.png"))?;
             Ok(())
         })
         .unwrap();
@@ -742,7 +836,7 @@ mod tests {
             legacy,
             vec![("C:/app.exe".to_string(), "app-icons/old.png".to_string())]
         );
-        db.with(|c| replace_icon(c, "app-icons/old.png", "app-icons/old-96.png"))
+        db.with(|c| replace_icon(c, "app-icons/old.png", "app-icons/old-hd.png"))
             .unwrap();
         assert!(db.with(|c| legacy_icons(c)).unwrap().is_empty());
     }

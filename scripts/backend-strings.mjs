@@ -17,8 +17,9 @@ const walk = (dir) => {
     if (name.startsWith('._')) continue;
     const p = join(dir, name);
     if (statSync(p).isDirectory()) walk(p);
-    // 测试文件不算；settings.rs 里的中文是 AI 预设提示词的默认内容（存进设置的，不是界面文案）
-    else if (name.endsWith('.rs') && !name.startsWith('i18n') && !name.endsWith('_tests.rs') && name !== 'settings.rs') files.push(p);
+    // 测试文件不算；settings.rs 里的中文是 AI 预设提示词的默认内容（存进设置的，不是界面文案）；
+    // sms_text.rs 里的是认短信验证码用的关键词
+    else if (name.endsWith('.rs') && !name.startsWith('i18n') && !name.endsWith('_tests.rs') && name !== 'settings.rs' && name !== 'sms_text.rs') files.push(p);
   }
 };
 walk(root);

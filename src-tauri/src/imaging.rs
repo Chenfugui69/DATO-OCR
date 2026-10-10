@@ -167,6 +167,92 @@ pub fn decode(bytes: &[u8]) -> AppResult<RgbaImage> {
         .to_rgba8())
 }
 
+/// 解码并按 EXIF 方向摆正（手机照片常带"旋转 90°"标记，像素本身是横着的）。
+/// 第二个值：原图本来就是正的（原字节可以直接存，不用重新编码）。
+pub fn decode_upright(bytes: &[u8]) -> AppResult<(RgbaImage, bool)> {
+    use image::ImageDecoder;
+    let mut decoder = image::ImageReader::new(Cursor::new(bytes))
+        .with_guessed_format()?
+        .into_decoder()?;
+    let orientation = decoder.orientation()?;
+    let mut img = image::DynamicImage::from_decoder(decoder)?;
+    img.apply_orientation(orientation);
+    Ok((
+        img.to_rgba8(),
+        orientation == image::metadata::Orientation::NoTransforms,
+    ))
+}
+
+/// 应用图标的主色（剪贴板卡片标题栏用，像 Paste 那样跟着来源应用变色）。
+///
+/// 只看不透明、够鲜艳的像素，按色相分 24 格、按"饱和度² × 亮度"加权（越鲜艳越算数，图标的阴影、
+/// 渐变暗部拖不灰它），取相邻三格加起来最重的那一块求平均。鲜艳的像素太少：大半是深色的算黑色图标
+/// （Linear、终端之类），否则返回 None（用类型的颜色）。不压暗：黄色压暗就成了橄榄色。
+pub fn dominant_color(img: &RgbaImage) -> Option<[u8; 3]> {
+    const BINS: usize = 24;
+    let mut weight = [0f64; BINS];
+    let mut sum = [[0f64; 3]; BINS];
+    let (mut opaque, mut dark) = (0f64, 0f64);
+    let step = (img.width().max(img.height()) / 64).max(1) as usize;
+    for y in (0..img.height()).step_by(step) {
+        for x in (0..img.width()).step_by(step) {
+            let p = img.get_pixel(x, y);
+            if p[3] < 200 {
+                continue;
+            }
+            opaque += 1.0;
+            let [r, g, b] = [p[0], p[1], p[2]].map(|c| f64::from(c) / 255.0);
+            let max = r.max(g).max(b);
+            let min = r.min(g).min(b);
+            if max < 0.25 {
+                dark += 1.0;
+                continue;
+            }
+            let sat = (max - min) / max;
+            if sat < 0.3 {
+                continue;
+            }
+            let delta = max - min;
+            let hue = if max == r {
+                60.0 * ((g - b) / delta).rem_euclid(6.0)
+            } else if max == g {
+                60.0 * ((b - r) / delta + 2.0)
+            } else {
+                60.0 * ((r - g) / delta + 4.0)
+            };
+            let bin = ((hue / 360.0 * BINS as f64) as usize).min(BINS - 1);
+            let w = sat * sat * max;
+            weight[bin] += w;
+            for (s, c) in sum[bin].iter_mut().zip([r, g, b]) {
+                *s += c * w;
+            }
+        }
+    }
+    if opaque == 0.0 {
+        return None;
+    }
+    let colorful: f64 = weight.iter().sum();
+    if colorful < opaque * 0.06 {
+        return (dark > opaque * 0.4).then_some([0x1c, 0x1c, 0x1e]);
+    }
+    let window = |i: usize| [(i + BINS - 1) % BINS, i, (i + 1) % BINS];
+    let best = (0..BINS)
+        .max_by(|&a, &b| {
+            let wa: f64 = window(a).iter().map(|&j| weight[j]).sum();
+            let wb: f64 = window(b).iter().map(|&j| weight[j]).sum();
+            wa.total_cmp(&wb)
+        })
+        .unwrap_or(0);
+    let (mut w, mut rgb) = (0f64, [0f64; 3]);
+    for j in window(best) {
+        w += weight[j];
+        for (acc, s) in rgb.iter_mut().zip(sum[j]) {
+            *acc += s;
+        }
+    }
+    Some(rgb.map(|c| (c / w * 255.0).round().clamp(0.0, 255.0) as u8))
+}
+
 pub fn load(path: &Path) -> AppResult<RgbaImage> {
     Ok(image::open(path)?.to_rgba8())
 }
@@ -183,6 +269,55 @@ mod tests {
         let back = image::load_from_memory(&bmp).unwrap().to_rgba8();
         assert_eq!(back.get_pixel(4, 2), &image::Rgba([10, 20, 30, 255]));
         assert_eq!(back.dimensions(), (5, 3));
+    }
+
+    /// 带"顺时针转 90°"标记的 JPEG（手机竖着拍的照片）要摆正，而且不能当成正的直接存原字节
+    #[test]
+    fn decode_upright_applies_exif_orientation() {
+        let mut jpeg = Vec::new();
+        image::codecs::jpeg::JpegEncoder::new(&mut jpeg)
+            .encode_image(&image::RgbImage::new(4, 2))
+            .unwrap();
+        assert_eq!(decode_upright(&jpeg).unwrap().0.dimensions(), (4, 2));
+        assert!(decode_upright(&jpeg).unwrap().1);
+
+        let mut exif = b"Exif\0\0MM\x00\x2a\x00\x00\x00\x08\x00\x01".to_vec();
+        exif.extend_from_slice(b"\x01\x12\x00\x03\x00\x00\x00\x01\x00\x06\x00\x00");
+        exif.extend_from_slice(&[0, 0, 0, 0]);
+        let mut rotated = vec![0xFF, 0xD8, 0xFF, 0xE1];
+        rotated.extend_from_slice(&((exif.len() + 2) as u16).to_be_bytes());
+        rotated.extend_from_slice(&exif);
+        rotated.extend_from_slice(&jpeg[2..]);
+        let (img, upright) = decode_upright(&rotated).unwrap();
+        assert_eq!(img.dimensions(), (2, 4));
+        assert!(!upright);
+    }
+
+    #[test]
+    fn dominant_color_of_icons() {
+        let solid = |c: [u8; 4]| RgbaImage::from_pixel(32, 32, image::Rgba(c));
+        let red = dominant_color(&solid([230, 40, 50, 255])).unwrap();
+        assert!(red[0] > 200 && red[1] < 80 && red[2] < 80, "{red:?}");
+        assert_eq!(dominant_color(&solid([0, 0, 0, 0])), None);
+        assert_eq!(
+            dominant_color(&solid([30, 30, 32, 255])),
+            Some([0x1c, 0x1c, 0x1e])
+        );
+        assert_eq!(dominant_color(&solid([200, 200, 200, 255])), None);
+        // 黄色保持黄色，不压成橄榄色
+        assert_eq!(
+            dominant_color(&solid([255, 204, 0, 255])),
+            Some([255, 204, 0])
+        );
+        // 大片橙色 + 一小块蓝：取橙色
+        let mut img = solid([245, 130, 40, 255]);
+        for x in 0..6 {
+            for y in 0..6 {
+                img.put_pixel(x, y, image::Rgba([20, 90, 240, 255]));
+            }
+        }
+        let orange = dominant_color(&img).unwrap();
+        assert!(orange[0] > 200 && orange[2] < 100, "{orange:?}");
     }
 
     #[test]

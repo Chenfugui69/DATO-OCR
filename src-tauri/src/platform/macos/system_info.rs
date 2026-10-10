@@ -23,6 +23,20 @@ pub fn visuals() -> SystemVisuals {
     }
 }
 
+/// 有内置电池的是 MacBook。新款的型号标识（`Mac14,2` 之类）看不出是不是笔记本，所以问电源。
+pub fn device_kind() -> &'static str {
+    let battery = std::process::Command::new("pmset")
+        .args(["-g", "batt"])
+        .output()
+        .ok()
+        .is_some_and(|o| String::from_utf8_lossy(&o.stdout).contains("InternalBattery"));
+    if battery {
+        "macbook"
+    } else {
+        "mac"
+    }
+}
+
 pub fn pictures_dir() -> Option<PathBuf> {
     std::env::var_os("HOME").map(|home| PathBuf::from(home).join("Pictures"))
 }

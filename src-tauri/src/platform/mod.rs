@@ -88,6 +88,19 @@ pub fn request_permission(which: Permission) {
     sys::request_permission(which)
 }
 
+// ───────────────────────── 手机短信 ─────────────────────────
+
+/// 能不能读到手机转发来的短信（macOS 的「信息」）。
+pub fn sms_supported() -> bool {
+    sys::sms_supported()
+}
+
+/// 开一个后台线程盯着新短信，收到的发进 `tx`。`enabled()` 返回 false 时不读，
+/// 再次打开后只管打开之后收到的。只调一次。
+pub fn start_sms_watcher(tx: Sender<SmsMessage>, enabled: Box<dyn Fn() -> bool + Send>) {
+    sys::start_sms_watcher(tx, enabled)
+}
+
 // ───────────────────────── 抓屏 ─────────────────────────
 
 pub fn list_monitors() -> AppResult<Vec<MonitorInfo>> {
@@ -484,6 +497,12 @@ pub fn system_visuals() -> SystemVisuals {
 /// 可执行文件图标（32×32 RGBA）。
 pub fn extract_app_icon(exe: &Path) -> Option<RgbaImage> {
     sys::app_icon::extract(exe)
+}
+
+/// 本机是哪种设备：`mac` / `macbook` / `pc` / `laptop`（有电池的算笔记本）。剪贴板记录的设备图标用。
+pub fn device_kind() -> &'static str {
+    static KIND: std::sync::OnceLock<&'static str> = std::sync::OnceLock::new();
+    KIND.get_or_init(sys::system_info::device_kind)
 }
 
 /// 默认的"图片"文件夹。

@@ -29,6 +29,21 @@ pub async fn clipboard_gif_preview(app: AppHandle, id: i64) -> AppResult<Option<
         .map_err(|e| crate::error::AppError::msg(e.to_string()))?
 }
 
+/// 来源应用图标的主色：{图标路径: "#rrggbb"}。
+#[tauri::command]
+pub async fn clipboard_icon_colors(
+    app: AppHandle,
+    icons: Vec<String>,
+) -> AppResult<std::collections::HashMap<String, String>> {
+    blocking(move || Ok(clipboard::icon_colors(&app, &icons))).await
+}
+
+/// "文件"卡片的大图标（数据目录里的相对路径），取不到返回 None。
+#[tauri::command]
+pub async fn clipboard_file_icon(app: AppHandle, path: String) -> AppResult<Option<String>> {
+    blocking(move || Ok(clipboard::file_icon(&app, &path))).await
+}
+
 #[tauri::command]
 pub async fn clipboard_stats(app: AppHandle) -> AppResult<ClipStats> {
     state(&app).db.with(|c| repo::stats(c))

@@ -108,6 +108,10 @@ export const editor = {
 export const clipboard = {
   /** GIF 卡片预览：数据目录里那份副本的相对路径（早先的记录现在补一份） */
   gifPreview: (id: number) => call<string | null>('clipboard_gif_preview', { id }),
+  /** 来源应用图标的主色：{图标路径: '#rrggbb'}，算不出的没有 */
+  iconColors: (icons: string[]) => call<Record<string, string>>('clipboard_icon_colors', { icons }),
+  /** 文件卡片的大图标（系统给这个文件的图标），取不到是 null */
+  fileIcon: (path: string) => call<string | null>('clipboard_file_icon', { path }),
   query: (query: ClipQuery) => call<ClipPage>('clipboard_query', { query }),
   get: (id: number) => call<ClipDetail>('clipboard_get', { id }),
   stats: () => call<ClipStats>('clipboard_stats'),

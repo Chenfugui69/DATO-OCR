@@ -52,6 +52,18 @@ pub fn remove_autostart_entry(name: &str) -> bool {
     status.is_ok()
 }
 
+/// 有电池的算笔记本。BatteryFlag：128 = 没有电池，255 = 不知道（按台式机算）。
+pub fn device_kind() -> &'static str {
+    let mut power = SYSTEM_POWER_STATUS::default();
+    // SAFETY: 输出到栈上的结构体。
+    let ok = unsafe { GetSystemPowerStatus(&mut power) }.is_ok();
+    if ok && power.BatteryFlag != 128 && power.BatteryFlag != 255 {
+        "laptop"
+    } else {
+        "pc"
+    }
+}
+
 fn windows_build() -> u32 {
     let mut buf = [0u16; 32];
     let mut size = (buf.len() * 2) as u32;

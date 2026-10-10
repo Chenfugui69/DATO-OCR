@@ -263,8 +263,8 @@ html:not([data-platform='mac'])[data-theme='light'] .panel-root--blur .panel {
 
 /* ── 卡片：200×240，圆角 14 ── */
 .clip-card {
-  /* 标题栏的颜色，按类型取（颜色类卡片整张就是那个颜色） */
-  --clip-tint: #e08600;
+  /* 标题栏的颜色，按类型取苹果的系统色（颜色类卡片整张就是那个颜色） */
+  --clip-tint: #ff9500;
   position: relative;
   width: 100%;
   height: 100%;
@@ -272,7 +272,10 @@ html:not([data-platform='mac'])[data-theme='light'] .panel-root--blur .panel {
   flex-direction: column;
   border-radius: 14px;
   background: var(--cn-bg-elevated);
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06), 0 0 0 0.5px var(--cn-separator);
+  /* 不描边（以前一圈 0.5px 的分隔线，压在图片边上像一道灰框）：只靠柔和的投影和背景分开，像 Paste */
+  box-shadow:
+    0 1px 2px rgba(0, 0, 0, 0.05),
+    0 4px 14px rgba(0, 0, 0, 0.07);
   overflow: hidden;
   cursor: pointer;
   transition:
@@ -280,7 +283,9 @@ html:not([data-platform='mac'])[data-theme='light'] .panel-root--blur .panel {
     box-shadow 160ms var(--cn-ease-out);
 }
 .clip-card:hover {
-  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.1), 0 0 0 0.5px var(--cn-separator);
+  box-shadow:
+    0 2px 4px rgba(0, 0, 0, 0.06),
+    0 8px 22px rgba(0, 0, 0, 0.11);
 }
 .clip-card:active {
   transform: scale(0.98);
@@ -298,34 +303,194 @@ html:not([data-platform='mac'])[data-theme='light'] .panel-root--blur .panel {
     0 8px 20px color-mix(in srgb, var(--cn-accent) 26%, transparent);
 }
 .clip-card--image {
-  --clip-tint: #e5484d;
+  --clip-tint: #ff2d55;
 }
 .clip-card--link {
-  --clip-tint: #0a7cf0;
+  --clip-tint: #007aff;
 }
 .clip-card--files {
-  --clip-tint: #9a55d8;
+  --clip-tint: #af52de;
 }
 .clip-card--gif {
-  --clip-tint: #0f9d8a;
+  --clip-tint: #00a5b5;
+}
+.clip-card--otp {
+  --clip-tint: #34c759;
 }
 
-/* 卡片顶：按类型着色的标题栏。左边类型 + 时间，右边一个大号来源应用图标，往右上角溢出一点被裁掉 */
+/* 卡片顶：标题栏是一块纯色（参照 Paste）——有来源应用图标时取图标的主色（PanelView 传进来的 --clip-tint），
+   没有就按类型配色。左边类型 + 时间，右边应用图标贴着右上角 */
 .clip-card__head {
   position: relative;
   display: flex;
   align-items: center;
   height: 52px;
-  padding: 0 64px 0 12px;
+  padding: 0 64px 0 16px;
   flex: none;
   overflow: hidden;
   color: #fff;
-  background: linear-gradient(
-    135deg,
-    color-mix(in srgb, var(--clip-tint) 86%, #fff),
-    var(--clip-tint) 55%,
-    color-mix(in srgb, var(--clip-tint) 88%, #000)
-  );
+  background: var(--clip-tint);
+}
+/* ── 按类型的卡片样式（参照 Paste） ── */
+
+/* 图片：铺满标题栏以下，底栏浮在图片上，尺寸是底部居中的半透明小胶囊 */
+.clip-card--card.clip-card--bleed .clip-card__foot {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 40px;
+  pointer-events: none;
+}
+.clip-card--card.clip-card--bleed .clip-card__image {
+  box-shadow: none;
+}
+/* 尺寸胶囊、设备小圆点：透出底下图片颜色的磨砂玻璃（不是一块灰色的底），白字，像 Paste */
+.clip-card--card.clip-card--bleed .clip-card__detail,
+.clip-card--card.clip-card--bleed .clip-card__device {
+  background: rgba(255, 255, 255, 0.16);
+  -webkit-backdrop-filter: blur(14px) saturate(1.8) brightness(0.82);
+  backdrop-filter: blur(14px) saturate(1.8) brightness(0.82);
+  box-shadow: inset 0 0 0 0.5px rgba(255, 255, 255, 0.22);
+  color: rgba(255, 255, 255, 0.96);
+  text-shadow: 0 0.5px 1px rgba(0, 0, 0, 0.25);
+}
+.clip-card--card.clip-card--bleed .clip-card__detail {
+  flex: none;
+  padding: 4px 12px;
+  border-radius: var(--cn-radius-full);
+  font: 500 12px/1.3 var(--cn-font-sans);
+  letter-spacing: 0.01em;
+}
+.clip-card--card.clip-card--bleed .clip-card__device {
+  padding: 5px;
+  border-radius: var(--cn-radius-full);
+}
+
+/* 代码：等宽小字，不把第一行当标题，按关键字 / 字符串 / 数字 / 注释上色（Xcode 的配色） */
+.clip-card__code {
+  margin: 0;
+  height: 100%;
+  padding: 10px 12px 0;
+  overflow: hidden;
+  font: 11.5px/16px var(--cn-font-mono);
+  color: var(--cn-label);
+  white-space: pre;
+  tab-size: 2;
+  -webkit-mask-image: linear-gradient(180deg, #000 72%, transparent);
+  mask-image: linear-gradient(180deg, #000 72%, transparent);
+}
+.clip-card--row .clip-card__code {
+  height: auto;
+  max-height: 40px;
+  padding: 8px 12px 0;
+}
+.clip-card__code .tok-kw {
+  color: #ad3da4;
+  font-weight: 600;
+}
+.clip-card__code .tok-str {
+  color: #c41a16;
+}
+.clip-card__code .tok-num {
+  color: #1c00cf;
+}
+.clip-card__code .tok-com {
+  color: #707f8c;
+  font-style: italic;
+}
+.clip-card__code .tok-type {
+  color: #0b4f79;
+}
+.clip-card__code .tok-fn {
+  color: #326d74;
+}
+[data-theme='dark'] .clip-card__code .tok-kw {
+  color: #fc5fa3;
+}
+[data-theme='dark'] .clip-card__code .tok-str {
+  color: #fc6a5d;
+}
+[data-theme='dark'] .clip-card__code .tok-num {
+  color: #d0bf69;
+}
+[data-theme='dark'] .clip-card__code .tok-com {
+  color: #7f8c98;
+}
+[data-theme='dark'] .clip-card__code .tok-type {
+  color: #5dd8ff;
+}
+[data-theme='dark'] .clip-card__code .tok-fn {
+  color: #67b7a4;
+}
+
+/* 链接：上面一块浅色的"预览"区，下面网站名（粗）+ 网址（灰），像 Paste 的链接卡 */
+.clip-card__weblink {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+.clip-card__linkart {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  place-items: center;
+  color: var(--clip-tint);
+  background: color-mix(in srgb, var(--clip-tint) 9%, transparent);
+}
+.clip-card__linkmeta {
+  flex: none;
+  padding: 8px 14px 0;
+  min-width: 0;
+}
+.clip-card__weblink .clip-card__domain {
+  font: 650 13px/18px var(--cn-font-sans);
+}
+.clip-card__weblink .clip-card__url {
+  display: block;
+  font: var(--cn-text-caption);
+  color: var(--cn-label-tertiary);
+  white-space: nowrap;
+}
+
+/* 文件：中间一个大的系统文件图标，路径在底栏 */
+.clip-card__fileart {
+  position: relative;
+  height: 100%;
+  display: grid;
+  place-items: center;
+}
+.clip-card__fileicon {
+  width: 96px;
+  height: 96px;
+  object-fit: contain;
+  filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.12));
+}
+.clip-card__fileicon--line {
+  width: 64px;
+  height: 64px;
+  color: var(--clip-tint);
+  filter: none;
+}
+.clip-card__filecount {
+  position: absolute;
+  right: 14px;
+  bottom: 8px;
+  padding: 2px 8px;
+  border-radius: var(--cn-radius-full);
+  background: var(--cn-fill-tertiary);
+  font: 600 11px/1.3 var(--cn-font-sans);
+  color: var(--cn-label-secondary);
+}
+
+/* 文字卡片：底栏浮在文字上 */
+.clip-card--card.clip-card--flow .clip-card__foot {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 30px;
+  pointer-events: none;
 }
 .clip-card--color .clip-card__head {
   color: inherit;
@@ -342,7 +507,7 @@ html:not([data-platform='mac'])[data-theme='light'] .panel-root--blur .panel {
   display: flex;
   align-items: center;
   gap: 6px;
-  font: 700 15px/1.1 var(--cn-font-sans);
+  font: 650 16px/1.1 var(--cn-font-sans);
   letter-spacing: 0.01em;
   white-space: nowrap;
 }
@@ -355,22 +520,34 @@ html:not([data-platform='mac'])[data-theme='light'] .panel-root--blur .panel {
   color: inherit;
   opacity: 0.92;
 }
+/* 应用图标比标题栏还大一圈，贴着右边、垂直居中，上下和右边都被标题栏裁掉一点，只露出左边的圆角（参照 Paste）。
+   macOS 的图标四周自带约 10% 的透明留白，方块本身只占画布的八成，所以画布要再放大、往外挪 */
 .clip-card__appicon {
   position: absolute;
   top: 50%;
-  right: -8px;
-  width: 58px;
-  height: 58px;
+  right: -7px;
+  width: 64px;
+  height: 64px;
   transform: translateY(-50%);
-  filter: drop-shadow(0 2px 6px rgba(0, 0, 0, 0.22));
 }
-.clip-card__appicon--type {
-  right: -6px;
-  width: 52px;
-  height: 52px;
-  color: inherit;
-  opacity: 0.32;
-  filter: none;
+[data-platform='mac'] .clip-card__appicon {
+  right: -15px;
+  width: 80px;
+  height: 80px;
+}
+/* 没有来源应用图标：半透明白色圆角方块里一个白色类型图标 */
+.clip-card__typetile {
+  position: absolute;
+  top: 50%;
+  right: 10px;
+  width: 36px;
+  height: 36px;
+  display: grid;
+  place-items: center;
+  transform: translateY(-50%);
+  border-radius: 10px;
+  color: #fff;
+  background: rgba(255, 255, 255, 0.24);
 }
 
 /* 竖版小面板底行的小图标 */
@@ -417,13 +594,25 @@ html:not([data-platform='mac'])[data-theme='light'] .panel-root--blur .panel {
 }
 /* 卡片条：字大一号，第一行加粗当标题 */
 .clip-card--card .clip-card__text {
-  padding: 10px 14px 0;
-  font-size: 13.5px;
-  line-height: 19px;
+  padding: 12px 16px 0;
+  font: 400 13px/19px var(--cn-font-sans);
+  color: color-mix(in srgb, var(--cn-label) 86%, transparent);
+  /* 一直排到卡片底，最后两三行渐隐，字数浮在上面 */
+  -webkit-mask-image: linear-gradient(180deg, #000 calc(100% - 70px), transparent calc(100% - 12px));
+  mask-image: linear-gradient(180deg, #000 calc(100% - 70px), transparent calc(100% - 12px));
 }
-.clip-card--card .clip-card__text::first-line {
+.clip-card__text--paras {
+  white-space: normal;
+}
+.clip-card__text--paras p {
+  margin: 0 0 5px;
+  white-space: pre-wrap;
+}
+.clip-card__lead {
   font-weight: 650;
   font-size: 14.5px;
+  line-height: 20px;
+  color: var(--cn-label);
 }
 .clip-card--row .clip-card__text {
   display: -webkit-box;
@@ -591,6 +780,22 @@ html:not([data-platform='mac'])[data-theme='light'] .panel-root--blur .panel {
   font: var(--cn-text-caption);
   color: var(--cn-label-tertiary);
   white-space: nowrap;
+}
+/* 来自哪种设备：卡片底栏右边，比来源应用图标轻得多，不抢视觉 */
+.clip-card__device {
+  display: inline-flex;
+  flex: none;
+  color: var(--cn-label-tertiary);
+}
+.clip-card--card .clip-card__device {
+  position: absolute;
+  right: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+}
+.clip-card--color .clip-card__device {
+  color: inherit;
+  opacity: 0.7;
 }
 .clip-card__index {
   position: absolute;

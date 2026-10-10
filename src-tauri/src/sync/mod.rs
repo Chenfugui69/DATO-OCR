@@ -388,6 +388,13 @@ fn send_local(app: &AppHandle, id: i64) -> AppResult<()> {
         ..Default::default()
     };
     match src.kind.as_str() {
+        // 验证码按普通文字发，带上标记和短信原文：旧版本收到的就是一条文字，照样能粘贴
+        "otp" => {
+            record.kind = "text".into();
+            record.text = src.text.clone();
+            record.tag = Some(crate::otp::TAG.into());
+            record.detail = src.origin_text.clone();
+        }
         "text" | "link" | "color" => {
             let text = src.text.clone().unwrap_or_default();
             if text.len() > MAX_TEXT {
@@ -414,11 +421,17 @@ fn send_local(app: &AppHandle, id: i64) -> AppResult<()> {
         Some(origin) => {
             record.origin = origin.clone();
             record.origin_name = src.source_app.clone().unwrap_or_default();
+            record.device = src.device_kind.clone();
         }
         None => {
             record.origin = me.clone();
             record.origin_name = device_name(app);
             record.app = src.source_app.clone();
+            record.device = Some(
+                src.device_kind
+                    .clone()
+                    .unwrap_or_else(|| platform::device_kind().into()),
+            );
         }
     }
     record.id = match src.sync_id {
@@ -489,12 +502,24 @@ pub fn receive(app: &AppHandle, record: SyncRecord, via: Via, live: bool) {
         }
     };
     tracing::info!(id, from = %record.origin_name, kind = %record.kind, "收到同步记录");
+    let mut written = false;
     if live && st.settings.read().sync.auto_write {
         if let Some(payload) = payload {
-            if let Err(err) = crate::clipboard::write_own(app, &payload, Some(id)) {
-                tracing::warn!("写入剪贴板失败：{err}");
+            match crate::clipboard::write_own(app, &payload, Some(id)) {
+                Ok(()) => written = true,
+                Err(err) => tracing::warn!("写入剪贴板失败：{err}"),
             }
         }
+    }
+    if live && record.tag.as_deref() == Some(crate::otp::TAG) {
+        let code = record.text.as_deref().unwrap_or_default();
+        let from = &record.origin_name;
+        let message = if written {
+            format!("验证码 {code} 已复制（来自 {from}）")
+        } else {
+            format!("收到验证码 {code}（来自 {from}）")
+        };
+        wm::toast(app, "success", message);
     }
     dispatch(app, &record, &via);
 }
@@ -930,11 +955,19 @@ pub fn join(app: &AppHandle, code: String, address: Option<String>) -> AppResult
 }
 
 async fn run_join(app: &AppHandle, code: &str, manual: Option<SocketAddr>) -> AppResult<String> {
+    let my_id = device_id(app);
     let addr = match manual {
-        Some(a) => a,
+        Some(a) => {
+            let who = lan::member::probe(&lan::member::http_client(), a).await;
+            if who.as_deref() == Some(my_id.as_str()) {
+                return Err(AppError::msg(
+                    "这是本机自己的地址，请填另一台电脑上显示的地址",
+                ));
+            }
+            a
+        }
         None => lan::member::find_host(code).await?.0,
     };
-    let my_id = device_id(app);
     let my_name = device_name(app);
     let creds = lan::member::pair(addr, code, &my_id, &my_name, platform_name(), |sas| {
         let sas = sas.to_string();

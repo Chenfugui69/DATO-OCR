@@ -664,6 +664,16 @@ fn sniff_image(bytes: &[u8]) -> bool {
         || bytes.starts_with(b"BM")
 }
 
+/// 手机网页配对时报的平台 → 设备种类（旧版网页 iPhone、iPad 都报 `ios`，按 iPhone 算）。
+fn web_device(platform: &str) -> Option<String> {
+    match platform {
+        "ios" | "iphone" => Some("iphone".into()),
+        "ipad" => Some("ipad".into()),
+        "android" => Some("android".into()),
+        _ => None,
+    }
+}
+
 /// 手机发上来：文字（text/plain）或图片（image/*）。快捷指令把剪贴板当"文件"发，
 /// 类型不一定标对，按内容再认一次。
 async fn web_push(
@@ -686,6 +696,7 @@ async fn web_push(
         id: uuid::Uuid::new_v4().to_string(),
         origin: peer.device_id.clone(),
         origin_name: peer.name.clone(),
+        device: web_device(&peer.platform),
         created_at: now,
         sent_at: now,
         ..Default::default()

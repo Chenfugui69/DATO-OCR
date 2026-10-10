@@ -25,6 +25,9 @@ import { Group, Row } from './settingsParts';
 import { TranslateSettingsGroups } from './TranslateSettings';
 import { UpdateBanner, UpdateDialog, useUpdate } from './UpdateDialog';
 
+/** 验证码保留时间的预设（秒）；0 = 不删 */
+const OTP_EXPIRE_PRESETS = ['30', '60', '300', '0'];
+
 const SECTIONS = ['general', 'permissions', 'capture', 'longshot', 'ocr', 'translate', 'selection', 'ai', 'network', 'clipboard', 'hotkeys', 'appearance', 'storage', 'update', 'about'] as const;
 
 export function SettingsPage({ section }: { section: string | null }) {
@@ -37,6 +40,8 @@ export function SettingsPage({ section }: { section: string | null }) {
   const hotkeys = useQuery({ queryKey: ['hotkeys'], queryFn: system.hotkeys });
   const { status: upd, prompt } = useUpdate();
   const [updOpen, setUpdOpen] = useState(false);
+  // 验证码保留时间选了"自定义"（数值还没改成预设以外的值时也要显示输入框）
+  const [otpCustom, setOtpCustom] = useState(false);
   // macOS 的屏幕录制 / 辅助功能权限；别的平台两项都是 null，不显示这一组。
   // 用户去系统设置里改完回来时窗口重新获得焦点，顺带重查一次
   const perms = useQuery({ queryKey: ['permissions'], queryFn: system.permissions, refetchOnWindowFocus: true });
@@ -64,6 +69,7 @@ export function SettingsPage({ section }: { section: string | null }) {
   const visuals = currentVisuals();
   const c = settings.capture;
   const cb = settings.clipboard;
+  const otpExpireMode = otpCustom || !OTP_EXPIRE_PRESETS.includes(String(cb.otpExpireSecs)) ? 'custom' : String(cb.otpExpireSecs);
 
   return (
     <section className="page">
@@ -358,6 +364,51 @@ export function SettingsPage({ section }: { section: string | null }) {
             </Row>
             <Row title={t('settings.clipboard.blur')} desc={t('settings.clipboard.blurDesc')}>
               <Switch checked={cb.panelBlur} onChange={(v) => set((d) => void (d.clipboard.panelBlur = v))} />
+            </Row>
+            {isMac && (
+              <Row title={t('settings.clipboard.smsCodes')} desc={t('settings.clipboard.smsCodesDesc')}>
+                <Switch checked={cb.smsCodes} onChange={(v) => set((d) => void (d.clipboard.smsCodes = v))} />
+              </Row>
+            )}
+            {isMac && cb.smsCodes && perms.data?.fullDiskAccess === false && (
+              <Row title={t('settings.permissions.fullDisk')} desc={t('settings.permissions.fullDiskDesc')}>
+                <Button size="sm" onClick={() => void system.requestPermission('fullDiskAccess').catch(notify.error)}>
+                  {t('settings.permissions.grant')}
+                </Button>
+              </Row>
+            )}
+            <Row title={t('settings.clipboard.otpMask')} desc={t('settings.clipboard.otpMaskDesc')}>
+              <Switch checked={cb.otpMask} onChange={(v) => set((d) => void (d.clipboard.otpMask = v))} />
+            </Row>
+            <Row title={t('settings.clipboard.otpExpire')} desc={t('settings.clipboard.otpExpireDesc')}>
+              <>
+                {otpExpireMode === 'custom' && (
+                  <>
+                    <TextField
+                      key={cb.otpExpireSecs}
+                      type="number"
+                      min={5}
+                      max={86400}
+                      defaultValue={cb.otpExpireSecs || 120}
+                      style={{ width: 84 }}
+                      onBlur={(e) => {
+                        const secs = Math.round(Number(e.target.value));
+                        if (secs >= 5 && secs <= 86400) set((d) => void (d.clipboard.otpExpireSecs = secs));
+                      }}
+                    />
+                    <span className="set-row__value">{t('settings.clipboard.otpSeconds')}</span>
+                  </>
+                )}
+                <Select
+                  value={otpExpireMode}
+                  width={120}
+                  options={[...OTP_EXPIRE_PRESETS, 'custom'].map((v) => ({ value: v, label: t(`settings.clipboard.otpExpireOpt.${v}`) }))}
+                  onChange={(v) => {
+                    setOtpCustom(v === 'custom');
+                    if (v !== 'custom') set((d) => void (d.clipboard.otpExpireSecs = Number(v)));
+                  }}
+                />
+              </>
             </Row>
             <Row title={t('settings.clipboard.respectPrivacy')} desc={t('settings.clipboard.respectPrivacyDesc')}>
               <Switch checked={cb.respectPrivacyFlag} onChange={(v) => set((d) => void (d.clipboard.respectPrivacyFlag = v))} />

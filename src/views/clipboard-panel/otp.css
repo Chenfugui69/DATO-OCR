@@ -1,0 +1,104 @@
+/* 验证码（type = otp）：大号验证码 + 短信原文，打码时右边一只眼睛 */
+.otp {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+.otp__head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.otp__code {
+  font-size: 24px;
+  line-height: 30px;
+  font-weight: 650;
+  letter-spacing: 0.1em;
+  color: var(--cn-label);
+  white-space: nowrap;
+}
+.otp__eye {
+  display: inline-flex;
+  flex: none;
+  padding: 3px;
+  border-radius: 6px;
+  color: var(--cn-label-secondary);
+  cursor: default;
+}
+.otp__eye:hover {
+  color: var(--cn-label);
+  background: var(--cn-fill-tertiary);
+}
+.otp__sms {
+  font: var(--cn-text-footnote);
+  color: var(--cn-label-secondary);
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow: hidden;
+}
+
+/* 剪贴板面板：底部卡片 */
+.otp--card {
+  height: 100%;
+  padding: 12px 14px 0;
+}
+.otp--card .otp__sms {
+  flex: 1;
+  min-height: 0;
+  -webkit-mask-image: linear-gradient(180deg, #000 72%, transparent);
+  mask-image: linear-gradient(180deg, #000 72%, transparent);
+}
+
+/* 剪贴板面板：竖版小面板 */
+.otp--row {
+  padding: 8px 12px 0;
+  gap: 2px;
+}
+.otp--row .otp__code {
+  font-size: 18px;
+  line-height: 24px;
+}
+.otp--row .otp__sms {
+  display: -webkit-box;
+  -webkit-line-clamp: 1;
+  -webkit-box-orient: vertical;
+}
+
+/* 主窗口详情 */
+.otp--detail .otp__code {
+  font-size: 32px;
+  line-height: 40px;
+}
+.otp--detail .otp__sms {
+  font: var(--cn-text-body);
+  color: var(--cn-label);
+}
+
+/* 主窗口列表里的一行 */
+.otp--line {
+  display: inline-flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  min-width: 0;
+  vertical-align: middle;
+}
+.otp--line .otp__code {
+  font-size: inherit;
+  line-height: inherit;
+  font-weight: 650;
+  letter-spacing: 0.06em;
+}
+.otp--line .otp__eye {
+  padding: 1px;
+}
+.otp--line .otp__sms {
+  font: inherit;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
