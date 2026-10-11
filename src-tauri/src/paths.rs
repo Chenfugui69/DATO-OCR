@@ -93,6 +93,26 @@ impl AppPaths {
         self.root.join("chenocr.db")
     }
 
+    /// MCP 服务开着时写在这里的端口和令牌，`--mcp` 命令行桥接靠它找到服务
+    pub fn mcp_file(&self) -> PathBuf {
+        self.root.join("mcp.json")
+    }
+
+    /// 不经过 Tauri 推算数据目录（`--mcp` 桥接进程里用，它不启动界面）。和 `resolve` 的结果一致：
+    /// 测试开关优先，否则 Windows 是 %APPDATA%，macOS 是 ~/Library/Application Support
+    pub fn guess_root() -> Option<PathBuf> {
+        let base = match std::env::var_os("CHENOCR_TEST_DATA_DIR") {
+            Some(dir) if !dir.is_empty() => PathBuf::from(dir),
+            _ => match std::env::var_os("APPDATA") {
+                Some(appdata) => PathBuf::from(appdata),
+                None => {
+                    PathBuf::from(std::env::var_os("HOME")?).join("Library/Application Support")
+                }
+            },
+        };
+        Some(base.join(DIR_NAME))
+    }
+
     pub fn settings_file(&self) -> PathBuf {
         self.root.join("settings.json")
     }

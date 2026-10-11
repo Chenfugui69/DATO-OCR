@@ -1,0 +1,77 @@
+/* 图片预览窗口（像「快速查看」）：屏幕正中间一个和主窗口差不多大的窗口。
+   窗口本身是透明的，整块圆角卡片由页面画（阴影是系统窗口阴影）；不用整屏磨砂 */
+html[data-view='preview'],
+html[data-view='preview'] body {
+  background: transparent;
+}
+.qv {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border-radius: 12px;
+  background: var(--cn-bg-window);
+  box-shadow: inset 0 0 0 0.5px var(--cn-separator);
+  color: var(--cn-label);
+}
+.qv__bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: none;
+  height: 52px;
+  padding: 0 10px 0 14px;
+  border-bottom: 0.5px solid var(--cn-separator);
+  user-select: none;
+}
+.qv__app {
+  width: 26px;
+  height: 26px;
+}
+.qv__meta {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.qv__title {
+  font: 600 13px/1.2 var(--cn-font-sans);
+}
+.qv__sub {
+  font: 12px/1.2 var(--cn-font-sans);
+  color: var(--cn-label-secondary);
+  font-variant-numeric: tabular-nums;
+}
+.qv__spacer {
+  flex: 1;
+  align-self: stretch;
+}
+.qv__btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 12px;
+  border-radius: var(--cn-radius-full);
+  background: var(--cn-fill-tertiary);
+  color: var(--cn-label);
+  font: 500 12px/1 var(--cn-font-sans);
+}
+.qv__btn:hover {
+  background: var(--cn-fill-secondary);
+}
+.qv__btn--icon {
+  width: 28px;
+  padding: 0;
+  justify-content: center;
+}
+.qv__stage {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+/* 图片底下一层浅灰（深色模式深灰），和顶栏分开；不铺棋盘格，看着干净 */
+.qv .zoom-image {
+  background: var(--cn-bg-grouped);
+}

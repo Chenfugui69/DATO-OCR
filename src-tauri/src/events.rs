@@ -15,6 +15,8 @@ pub const GIF_PROGRESS: &str = "gif-progress";
 
 pub const CLIPBOARD_CHANGED: &str = "clipboard-changed";
 pub const CLIPBOARD_PANEL_SHOW: &str = "clipboard-panel-show";
+/// 大预览窗口要显示哪一条（剪贴板记录 ID）
+pub const CLIP_PREVIEW: &str = "clip-preview";
 /// 多端同步的状态变了（设备上下线、有人申请加入、网盘同步结果…）
 pub const SYNC_CHANGED: &str = "sync-changed";
 /// 检查更新 / 下载安装的状态变了

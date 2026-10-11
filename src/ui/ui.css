@@ -178,6 +178,10 @@
   background: var(--cn-bg-base);
   box-shadow: 0 0 0 3px var(--cn-accent-subtle), inset 0 0 0 1px var(--cn-accent);
 }
+/* 外框已经亮了一圈（focus-within），里面的输入区不要再画全局那个直角焦点框（WebKit 点进文本框也算 focus-visible） */
+.cn-field input:focus-visible {
+  outline: none;
+}
 .cn-field input {
   flex: 1;
   min-width: 0;
@@ -216,6 +220,9 @@
   font: var(--cn-text-body);
   resize: vertical;
   transition: box-shadow var(--cn-duration-fast), background-color var(--cn-duration-fast);
+}
+.cn-textarea:focus-visible {
+  outline: none;
 }
 .cn-textarea:focus {
   background: var(--cn-bg-base);

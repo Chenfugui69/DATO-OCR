@@ -18,8 +18,15 @@ const walk = (dir) => {
     const p = join(dir, name);
     if (statSync(p).isDirectory()) walk(p);
     // 测试文件不算；settings.rs 里的中文是 AI 预设提示词的默认内容（存进设置的，不是界面文案）；
-    // sms_text.rs 里的是认短信验证码用的关键词
-    else if (name.endsWith('.rs') && !name.startsWith('i18n') && !name.endsWith('_tests.rs') && name !== 'settings.rs' && name !== 'sms_text.rs') files.push(p);
+    // 文件开头写了"scripts/backend-strings.mjs 跳过这个文件"的（认短信、认上下文用的关键词表）也不算
+    else if (
+      name.endsWith('.rs') &&
+      !name.startsWith('i18n') &&
+      !name.endsWith('_tests.rs') &&
+      name !== 'settings.rs' &&
+      !readFileSync(p, 'utf8').includes('scripts/backend-strings.mjs` 跳过这个文件')
+    )
+      files.push(p);
   }
 };
 walk(root);

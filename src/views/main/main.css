@@ -529,11 +529,96 @@ html[data-view='main'][data-glass='off'] body {
   margin: 0 auto;
   padding-bottom: var(--cn-space-10);
 }
-.settings-nav {
+/* 设置页两栏：左边分类（彩色图标，像 macOS 的系统设置），右边只显示选中的那一类 */
+.settings-page {
+  flex-direction: row;
+}
+.settings-side {
+  width: 216px;
+  flex: none;
   display: flex;
-  gap: 4px;
-  flex-wrap: wrap;
-  padding: 0 var(--cn-space-6) var(--cn-space-3);
+  flex-direction: column;
+  padding: 0 10px var(--cn-space-4) 14px;
+  box-shadow: inset -0.5px 0 0 var(--cn-separator);
+  overflow-y: auto;
+}
+.settings-side__title {
+  margin: 4px 8px 12px;
+  font: var(--cn-text-large-title);
+  letter-spacing: -0.4px;
+}
+.settings-side__list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.settings-side__item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  height: 34px;
+  padding: 0 8px;
+  border-radius: 8px;
+  font: 500 13px/1 var(--cn-font-sans);
+  color: var(--cn-label);
+  text-align: left;
+  transition: background-color var(--cn-duration-fast);
+}
+.settings-side__item:hover {
+  background: var(--cn-bg-hover);
+}
+.settings-side__item[data-active='true'] {
+  background: var(--cn-accent);
+  color: var(--cn-label-on-accent);
+}
+.set-icon {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  color: #fff;
+  background: linear-gradient(180deg, color-mix(in srgb, var(--tile) 78%, #fff), var(--tile));
+  box-shadow:
+    inset 0 0 0 0.5px rgba(0, 0, 0, 0.1),
+    0 0.5px 1px rgba(0, 0, 0, 0.12);
+}
+.settings-side__item[data-active='true'] .set-icon {
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.35);
+}
+.set-icon--lg {
+  width: 48px;
+  height: 48px;
+  border-radius: 12px;
+  box-shadow:
+    inset 0 0 0 0.5px rgba(0, 0, 0, 0.1),
+    0 2px 6px rgba(0, 0, 0, 0.14);
+}
+.settings-main {
+  flex: 1;
+  min-width: 0;
+  overflow-y: auto;
+  padding: 6px var(--cn-space-6) var(--cn-space-8);
+}
+.settings-main__head {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 2px 0 var(--cn-space-2);
+}
+.settings-main__head h2 {
+  margin: 0;
+  font: 700 22px/1.2 var(--cn-font-sans);
+  letter-spacing: -0.3px;
+}
+.settings-main__head p {
+  margin: 4px 0 0;
+  font: var(--cn-text-callout);
+  color: var(--cn-label-secondary);
 }
 .set-group {
   margin-top: var(--cn-space-6);
@@ -593,6 +678,32 @@ html[data-view='main'][data-glass='off'] body {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+/* 竖着排的一行：标题、切换按钮、下面一大块内容（AI 工具的配置示例） */
+.set-row--stack {
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--cn-space-3);
+}
+.mcp-snippet {
+  position: relative;
+}
+.mcp-snippet pre {
+  margin: 0;
+  padding: 12px 14px;
+  padding-right: 84px;
+  border-radius: var(--cn-radius-md);
+  background: var(--cn-fill-quaternary);
+  font: 12px/1.55 var(--cn-font-mono);
+  color: var(--cn-label);
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+.mcp-snippet .cn-btn,
+.mcp-snippet button {
+  position: absolute;
+  top: 8px;
+  right: 8px;
 }
 .set-row__error {
   font: var(--cn-text-footnote);
@@ -1092,4 +1203,21 @@ html[data-view='main'][data-glass='off'] body {
 }
 .update-dialog__spacer {
   flex: 1;
+}
+
+/* 智能推荐水珠的颜色：一排小水珠，选中的那颗外面一圈强调色 */
+.orb-picker {
+  display: flex;
+  gap: 6px;
+}
+.orb-picker__item {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  transition: box-shadow var(--cn-duration-fast);
+}
+.orb-picker__item[aria-checked='true'] {
+  box-shadow: 0 0 0 2px var(--cn-accent);
 }

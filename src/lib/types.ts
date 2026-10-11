@@ -112,8 +112,16 @@ export interface Settings {
     otpMask: boolean;
     /** 验证码在剪贴板历史里留多久（秒），0 = 不删 */
     otpExpireSecs: number;
+    /** 智能推荐交给 AI 模型挑（关掉 = 只在本机按词打分） */
+    smartAi: boolean;
+    /** 智能推荐用的模型（"服务商 id/模型"），空 = 跟 AI 对话的默认模型 */
+    smartModel: string;
+    /** 智能推荐水珠的颜色：warm | ocean | pearl | mint | violet */
+    orbColor: string;
   };
   sync: SyncSettings;
+  /** 给 AI 工具用的 MCP 服务 */
+  mcp: { enabled: boolean; port: number; allowWrite: boolean };
   update: {
     /** 自动检查更新（启动后一次，之后每 6 小时） */
     autoCheck: boolean;
@@ -694,4 +702,26 @@ export interface RegionTranslation {
   provider: string;
   from: string;
   to: string;
+}
+
+/** MCP 服务的状态（设置 → AI 工具） */
+export interface McpStatus {
+  running: boolean;
+  url: string;
+  token: string;
+  error: string | null;
+  /** 命令行桥接要用的程序路径 */
+  command: string;
+}
+
+/** 剪贴板智能推荐的结果 */
+export interface SmartSuggestion {
+  /** 推荐的条目，最可能的在前；可能是空的 */
+  items: ClipItem[];
+  /** 模型给的一句理由（本机打分没有） */
+  reason: string | null;
+  /** 是 AI 模型挑的（false = 本机按词打分） */
+  byAi: boolean;
+  /** 看的是哪个应用 */
+  app: string | null;
 }

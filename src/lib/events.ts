@@ -33,6 +33,8 @@ export interface EventMap {
   'gif-progress': GifProgress;
   'clipboard-changed': ClipChanged;
   'clipboard-panel-show': { style: 'bottom' | 'vertical' };
+  /** 大预览窗口要显示哪一条 */
+  'clip-preview': number;
   /** 多端同步的状态变了，重新拉一次 */
   'sync-changed': null;
   'update-status': UpdateStatus;

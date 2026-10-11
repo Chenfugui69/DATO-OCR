@@ -28,6 +28,17 @@ const RADIUS: f64 = 16.0;
 const BOTTOM_RADIUS: f64 = 22.0;
 
 static PREVIOUS: Mutex<Option<WindowHandle>> = Mutex::new(None);
+
+/// 打开面板之前用户在用的那个窗口（粘贴回填、智能推荐看"你在做什么"都靠它）。
+pub fn previous_window() -> Option<WindowHandle> {
+    *PREVIOUS.lock()
+}
+/// 面板这次停在屏幕上的位置（物理像素）：面板开着时允许被截屏，智能推荐截"你在做什么"的窗口时要把这块涂掉
+static SHOWN_AT: Mutex<Option<PhysicalRect>> = Mutex::new(None);
+
+pub fn shown_rect() -> Option<PhysicalRect> {
+    *SHOWN_AT.lock()
+}
 /// 这次是滑进来的：（停下的位置，屏幕底边下面的起点）。收起时照原路滑回去
 static SLID: Mutex<Option<(PhysicalRect, PhysicalRect)>> = Mutex::new(None);
 /// 每显示一次加一，滑出动画结束时用来判断中途有没有又被叫出来
@@ -52,6 +63,8 @@ pub fn prewarm(app: &AppHandle) {
         .resizable(false)
         .shadow(false)
         .focused(false)
+        // 卡片要能拖到分组标签上、拖进别的程序：Tauri 默认接管拖放（Windows 上网页里的拖放就失灵了），面板不需要接外面拖进来的文件
+        .disable_drag_drop_handler()
         .inner_size(1200.0, BOTTOM_HEIGHT);
     match platform::build_floating(panel, FloatingKind::Panel) {
         Ok(window) => {
@@ -105,6 +118,7 @@ fn show(app: &AppHandle) -> AppResult<()> {
     let cb = state(app).settings.read().clipboard.clone();
     let style = cb.panel_style.clone();
     let mut slide = None;
+    let mut placed = None;
     // 上一次滑出去时窗口被裁成了一条看不见的缝（Windows 的滑动是边挪边裁），这次不管滑不滑都先放开
     platform::set_rect_region(&window, None);
     // 盖在程序坞上面：底边按整块屏算，不按扣掉程序坞的可用区域；窗口层级也要提到程序坞之上
@@ -167,6 +181,7 @@ fn show(app: &AppHandle) -> AppResult<()> {
                     r
                 }
             };
+            placed = Some(rect);
             if cb.panel_animation && platform::slides_windows(blur) {
                 // 先摆在滑入的起点（看不见），显示出来之后再滑上去
                 let start = platform::slide_start(rect, &monitor);
@@ -179,6 +194,11 @@ fn show(app: &AppHandle) -> AppResult<()> {
     }
     SHOW_GEN.fetch_add(1, Ordering::SeqCst);
     *SLID.lock() = slide;
+    *SHOWN_AT.lock() = placed.or_else(|| {
+        let p = window.outer_position().ok()?;
+        let s = window.outer_size().ok()?;
+        Some(PhysicalRect::new(p.x, p.y, s.width, s.height))
+    });
     let _ = app.emit_to(LABEL, events::CLIPBOARD_PANEL_SHOW, PanelShow { style });
     window.show()?;
     platform::take_focus(&window)?;
@@ -188,6 +208,8 @@ fn show(app: &AppHandle) -> AppResult<()> {
     if let Some((rect, _)) = slide {
         platform::slide_window(&window, rect, SLIDE_IN_MS);
     }
+    // 趁用户还在看面板，后台先把"你在做什么"读好，点 ✨ 时就不用等了
+    super::smart::prefetch(app);
     Ok(())
 }
 
@@ -217,6 +239,7 @@ pub fn dismiss(app: &AppHandle) {
 
 pub fn hide(app: &AppHandle) {
     *SLID.lock() = None;
+    *SHOWN_AT.lock() = None;
     if let Some(window) = app.get_webview_window(LABEL) {
         let _ = window.hide();
         platform::set_exclude_from_capture(&window, true);

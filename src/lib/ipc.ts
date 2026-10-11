@@ -2,7 +2,7 @@
 
 import { Channel, invoke } from '@tauri-apps/api/core';
 
-import type { AiContext, AppInfo, CaptureIntent, ChatEvent, ChatRequest, ClipDetail, ClipGroup, ClipPage, ClipQuery, ClipStats, DavDevice, EditorAction, EditorDoc, EngineStatus, FinishAction, HotkeyStatus, OcrJob, OcrPage, Permissions, PhysicalRect, PinInfo, ProviderInfo, RegionTranslation, SecretsStatus, SessionInfo, Settings, ShotPage, SyncStatus, UpdateStatus, ShotQuery, TranslateRequest, TranslateResult, VisualCapabilities } from './types';
+import type { AiContext, AppInfo, CaptureIntent, ChatEvent, ChatRequest, ClipDetail, ClipGroup, ClipPage, ClipQuery, ClipStats, DavDevice, EditorAction, EditorDoc, EngineStatus, FinishAction, HotkeyStatus, McpStatus, OcrJob, SmartSuggestion, OcrPage, Permissions, PhysicalRect, PinInfo, ProviderInfo, RegionTranslation, SecretsStatus, SessionInfo, Settings, ShotPage, SyncStatus, UpdateStatus, ShotQuery, TranslateRequest, TranslateResult, VisualCapabilities } from './types';
 
 /** Rust 侧 AppError 的结构化形态。 */
 export class AppError extends Error {
@@ -112,6 +112,13 @@ export const clipboard = {
   iconColors: (icons: string[]) => call<Record<string, string>>('clipboard_icon_colors', { icons }),
   /** 文件卡片的大图标（系统给这个文件的图标），取不到是 null */
   fileIcon: (path: string) => call<string | null>('clipboard_file_icon', { path }),
+  /** 智能推荐：根据打开面板前在用的窗口挑出接下来最可能要粘贴的几条 */
+  /** `ai = false`：本机打分（快）；`ai = true`：用刚才那份上下文让 AI 模型挑（慢一些） */
+  smartSuggest: (ai: boolean) => call<SmartSuggestion>('clipboard_smart_suggest', { ai }),
+  /** 在大预览窗口里看一条图片（铺满当前屏，能缩放拖动） */
+  previewOpen: (id: number) => call<void>('clipboard_preview_open', { id }),
+  previewCurrent: () => call<number | null>('clipboard_preview_current'),
+  previewClose: () => call<void>('clipboard_preview_close'),
   query: (query: ClipQuery) => call<ClipPage>('clipboard_query', { query }),
   get: (id: number) => call<ClipDetail>('clipboard_get', { id }),
   stats: () => call<ClipStats>('clipboard_stats'),
@@ -123,7 +130,8 @@ export const clipboard = {
   setNote: (id: number, note: string | null) => call<void>('clipboard_set_note', { id, note }),
   setGroup: (ids: number[], groupId: number | null) => call<void>('clipboard_set_group', { ids, groupId }),
   groups: () => call<ClipGroup[]>('clipboard_groups'),
-  createGroup: (name: string) => call<number>('clipboard_create_group', { name }),
+  createGroup: (name: string, color?: string) => call<number>('clipboard_create_group', { name, color: color ?? null }),
+  setGroupColor: (id: number, color: string | null) => call<void>('clipboard_set_group_color', { id, color }),
   renameGroup: (id: number, name: string) => call<void>('clipboard_rename_group', { id, name }),
   deleteGroup: (id: number) => call<void>('clipboard_delete_group', { id }),
   clear: (scope: 'unpinned' | 'everything') => call<number>('clipboard_clear', { scope }),
@@ -238,6 +246,8 @@ export const system = {
   openUrl: (url: string) => call<void>('open_url', { url }),
   pickDirectory: () => call<string | null>('pick_directory'),
   showMain: (page?: string) => call<void>('show_main', { page: page ?? null }),
+  mcpStatus: () => call<McpStatus>('mcp_status'),
+  mcpRegenerateToken: () => call<McpStatus>('mcp_regenerate_token'),
   quit: () => call<void>('quit_app'),
   hideToast: () => call<void>('toast_hide'),
   /** 要用户手动授予的系统权限（macOS）；别的平台两项都是 null */

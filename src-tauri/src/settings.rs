@@ -29,8 +29,32 @@ pub struct Settings {
     pub update: UpdateSettings,
     pub network: NetworkSettings,
     pub ai: AiSettings,
+    pub mcp: McpSettings,
     #[serde(flatten)]
     pub extra: Map<String, Value>,
+}
+
+/// 给 AI 工具用的 MCP 服务（Claude、Cursor 之类接上后能搜剪贴板、整理分组、查识字记录）。只在本机。
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase", default)]
+pub struct McpSettings {
+    pub enabled: bool,
+    pub port: u16,
+    /// 允许 AI 往剪贴板里加内容、建分组、把内容放进分组（关掉就只能查）
+    pub allow_write: bool,
+    #[serde(flatten)]
+    pub extra: Map<String, Value>,
+}
+
+impl Default for McpSettings {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            port: 47390,
+            allow_write: true,
+            extra: Map::new(),
+        }
+    }
 }
 
 impl Default for Settings {
@@ -49,6 +73,7 @@ impl Default for Settings {
             update: Default::default(),
             network: Default::default(),
             ai: Default::default(),
+            mcp: Default::default(),
             extra: Map::new(),
         }
     }
@@ -674,6 +699,13 @@ pub struct ClipboardSettings {
     pub otp_mask: bool,
     /// 验证码在剪贴板历史里留多久（秒），0 = 不删。置顶、收藏的不删
     pub otp_expire_secs: u32,
+    /// 智能推荐交给 AI 模型挑（会把当前窗口认出的文字和最近剪贴板的摘要发给设置里的 AI 服务商）。
+    /// 关掉 = 只在本机按词打分
+    pub smart_ai: bool,
+    /// 智能推荐用哪个模型（"服务商 id/模型"），空 = 跟「AI 对话」的默认模型。挑个快的小模型推荐会快很多
+    pub smart_model: String,
+    /// 智能推荐水珠的颜色：warm | ocean | pearl | mint | violet（面板光晕跟着它），默认海蓝
+    pub orb_color: String,
     #[serde(flatten)]
     pub extra: Map<String, Value>,
 }
@@ -772,6 +804,9 @@ impl Default for ClipboardSettings {
             sms_codes: false,
             otp_mask: true,
             otp_expire_secs: 60,
+            smart_ai: false,
+            smart_model: String::new(),
+            orb_color: "ocean".into(),
             extra: Map::new(),
         }
     }

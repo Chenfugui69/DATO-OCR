@@ -27,6 +27,7 @@ mod library;
 mod logging;
 mod longshot;
 mod maintenance;
+mod mcp;
 mod net;
 mod ocr;
 mod otp;
@@ -57,6 +58,11 @@ use crate::storage::Db;
 static APP: OnceLock<AppHandle> = OnceLock::new();
 
 pub fn run() {
+    // `--mcp`：给 AI 工具用的命令行桥接，不启动界面（见 mcp::bridge）
+    if std::env::args().any(|a| a == "--mcp") {
+        mcp::bridge::run();
+        return;
+    }
     platform::init_process();
 
     // 测试实例（`CHENOCR_TEST_DATA_DIR`，数据放在别处）不参与单实例：可以和用户正在用的那个同时开着，
@@ -173,6 +179,10 @@ pub fn run() {
             commands::clipboard::clipboard_gif_preview,
             commands::clipboard::clipboard_icon_colors,
             commands::clipboard::clipboard_file_icon,
+            commands::clipboard::clipboard_smart_suggest,
+            commands::clipboard::clipboard_preview_open,
+            commands::clipboard::clipboard_preview_current,
+            commands::clipboard::clipboard_preview_close,
             commands::clipboard::clipboard_paste,
             commands::clipboard::clipboard_copy,
             commands::clipboard::clipboard_delete,
@@ -183,6 +193,7 @@ pub fn run() {
             commands::clipboard::clipboard_groups,
             commands::clipboard::clipboard_create_group,
             commands::clipboard::clipboard_rename_group,
+            commands::clipboard::clipboard_set_group_color,
             commands::clipboard::clipboard_delete_group,
             commands::clipboard::clipboard_clear,
             commands::clipboard::clipboard_panel_hide,
@@ -252,6 +263,8 @@ pub fn run() {
             commands::system::pick_directory,
             commands::system::show_main,
             commands::system::toast_hide,
+            commands::system::mcp_status,
+            commands::system::mcp_regenerate_token,
             commands::system::window_set_bounds,
             commands::system::window_backdrop,
             commands::system::window_is_foreground,
@@ -370,6 +383,8 @@ fn on_ready(app: &AppHandle) {
     clipboard::start(app);
     sync::start(app);
     otp::start(app);
+    let ui = app.clone();
+    std::thread::spawn(move || mcp::reconfigure(&ui));
     update::start(app);
     platform::watch_system_events(on_system_event);
     std::thread::spawn(platform::warm_up_capture);
@@ -484,6 +499,8 @@ fn shutdown(app: &AppHandle) {
     if let Some(st) = app.try_state::<AppState>() {
         // 退出时必须杀掉识字子进程，防止残留
         st.ocr.shutdown();
+        // 删掉 mcp.json：命令行桥接就知道 DATO OCR 没在运行，不会去连一个没人听的端口
+        let _ = std::fs::remove_file(st.paths.mcp_file());
     }
     tracing::info!("DATO OCR 退出");
 }

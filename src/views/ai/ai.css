@@ -446,3 +446,176 @@
 .ai__bar > :not(.cn-select-trigger) {
   flex-shrink: 0;
 }
+
+/* ── 独立 AI 窗口（ai--roomy）：开场水珠 + 内容卡片 + 快捷提问卡片；输入框是一整块卡片，模型选择在它底部 ── */
+.ai__top {
+  display: flex;
+  align-items: center;
+  gap: var(--cn-space-2);
+  padding: var(--cn-space-2) var(--cn-space-3) 0;
+  flex: none;
+}
+.ai-hero {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  max-width: 560px;
+  margin: 0 auto;
+  padding: 6vh var(--cn-space-4) var(--cn-space-4);
+  text-align: center;
+  animation: cn-fade-in 240ms var(--cn-ease-out);
+}
+.ai-hero .orb {
+  margin-bottom: 6px;
+}
+.ai-hero__title {
+  margin: 0;
+  font: 700 22px/1.25 var(--cn-font-sans);
+  letter-spacing: -0.3px;
+  color: var(--cn-label);
+}
+.ai-hero__sub {
+  margin: 0;
+  font: var(--cn-text-callout);
+  color: var(--cn-label-secondary);
+}
+/* 带进来的内容：一张卡片，能看到前几行 / 图片缩略图 */
+.ai-hero__ctx {
+  width: 100%;
+  margin-top: 10px;
+  padding: 10px 12px 12px;
+  border-radius: 14px;
+  background: var(--cn-bg-elevated);
+  box-shadow:
+    0 1px 2px rgba(0, 0, 0, 0.05),
+    0 4px 16px rgba(0, 0, 0, 0.06),
+    inset 0 0 0 0.5px var(--cn-separator);
+  text-align: left;
+}
+.ai-hero__ctx-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font: 600 12px/1 var(--cn-font-sans);
+  color: var(--cn-label-secondary);
+}
+.ai-hero__ctx-x {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  color: var(--cn-label-tertiary);
+}
+.ai-hero__ctx-x:hover {
+  background: var(--cn-bg-hover);
+  color: var(--cn-label);
+}
+.ai-hero__ctx-text {
+  margin-top: 8px;
+  font: 13px/1.55 var(--cn-font-sans);
+  color: var(--cn-label);
+  white-space: pre-wrap;
+  word-break: break-word;
+  display: -webkit-box;
+  -webkit-line-clamp: 4;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.ai-hero__ctx-images {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+  overflow-x: auto;
+}
+.ai-hero__ctx-images img {
+  height: 96px;
+  border-radius: 8px;
+  object-fit: cover;
+  box-shadow: inset 0 0 0 0.5px var(--cn-separator);
+}
+/* 快捷提问：两列小卡片 */
+.ai-hero__prompts {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 8px;
+  width: 100%;
+  margin-top: 4px;
+}
+.ai-hero__prompt {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 38px;
+  padding: 0 12px;
+  border-radius: 10px;
+  background: var(--cn-fill-quaternary);
+  color: var(--cn-label);
+  font: 500 13px/1 var(--cn-font-sans);
+  text-align: left;
+  transition:
+    background-color var(--cn-duration-fast),
+    transform var(--cn-duration-fast);
+}
+.ai-hero__prompt svg {
+  flex: none;
+  color: var(--cn-accent);
+}
+.ai-hero__prompt:hover {
+  background: var(--cn-fill-tertiary);
+}
+.ai-hero__prompt:active {
+  transform: scale(0.98);
+}
+/* 输入框卡片：顶上（对话开始后）是内容小标签，中间输入，底部模型 / 思考深度 + 发送 */
+.ai--roomy .ai__composer {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 4px;
+  align-self: center;
+  width: min(760px, calc(100% - 24px));
+  margin: 0 0 var(--cn-space-3);
+  padding: 10px 10px 8px 12px;
+  border-radius: 18px;
+  background: var(--cn-bg-elevated);
+  box-shadow:
+    0 1px 3px rgba(0, 0, 0, 0.06),
+    0 6px 22px rgba(0, 0, 0, 0.08),
+    inset 0 0 0 0.5px var(--cn-separator);
+}
+.ai--roomy .ai__composer:focus-within {
+  box-shadow:
+    0 1px 3px rgba(0, 0, 0, 0.06),
+    0 6px 22px rgba(0, 0, 0, 0.08),
+    inset 0 0 0 1px color-mix(in srgb, var(--cn-accent) 55%, transparent);
+}
+.ai--roomy .ai__composer .ai__context {
+  padding: 0 0 4px;
+}
+.ai--roomy .ai__composer textarea {
+  min-height: 40px;
+  padding: 2px 0;
+}
+.ai__composer-foot {
+  display: flex;
+  align-items: center;
+  gap: var(--cn-space-2);
+}
+.ai__composer-foot .cn-select-trigger {
+  height: 28px;
+  border-radius: var(--cn-radius-full);
+  background: var(--cn-fill-quaternary);
+  box-shadow: none;
+}
+.ai--roomy .ai__send {
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+}
+/* 窗口拉宽了，对话也别铺满：一栏居中，读起来不累 */
+.ai--roomy .ai__list > .ai-msg {
+  width: min(760px, 100%);
+  margin-left: auto;
+  margin-right: auto;
+}

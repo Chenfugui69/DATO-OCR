@@ -4,7 +4,7 @@
 // - 竖版小面板（row）：内容 + 底部一行来源和时间
 
 import clsx from 'clsx';
-import { File, Globe, Image, KeyRound, Link2, MonitorSmartphone, Palette, Pin, Star, Type } from 'lucide-react';
+import { Eye, File, Globe, Image, KeyRound, Languages, Link2, MonitorSmartphone, Palette, Pin, ScanText, Sparkles, Star, Type } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
 import { memo, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -15,6 +15,7 @@ import { assetUrl } from '@/lib/platform';
 import type { ClipItem } from '@/lib/types';
 
 import { highlightCode, looksLikeCode } from './codeText';
+import { CLIP_DRAG_TYPE } from './BoardTabs';
 import { DeviceIcon, isDeviceKind } from './DeviceIcon';
 import { OtpBody } from './OtpBody';
 
@@ -141,13 +142,34 @@ function FileArt({ path }: { path: string }) {
   return <File className="clip-card__fileicon clip-card__fileicon--line" strokeWidth={1.2} />;
 }
 
+/** 卡片上悬停出来的快捷操作 */
+export type CardAction = 'preview' | 'translate' | 'ocr' | 'ai';
+
+/** 这类卡片有哪些快捷操作：图片能识字，文字能翻译，都能问 AI、放大预览（验证码、文件、颜色没有） */
+function actionsFor(item: ClipItem): CardAction[] {
+  switch (item.type) {
+    case 'image':
+      return ['ocr', 'ai', 'preview'];
+    case 'text':
+    case 'link':
+      return ['translate', 'ai', 'preview'];
+    default:
+      return [];
+  }
+}
+const ACTION_ICON = { preview: Eye, translate: Languages, ocr: ScanText, ai: Sparkles } as const;
+
 /** 没有来源应用图标时，标题栏右边用类型图标顶上 */
 const TYPE_ICON = { text: Type, image: Image, link: Link2, files: File, color: Palette, otp: KeyRound } as const;
 
 export const ClipCard = memo(function ClipCard({
   item,
   tint,
+  board,
   selected,
+  flashing,
+  suggested,
+  onAction,
   index,
   layout,
   onClick,
@@ -158,7 +180,15 @@ export const ClipCard = memo(function ClipCard({
   item: ClipItem;
   /** 来源应用图标的主色：标题栏用它，没有就按类型配色 */
   tint?: string;
+  /** 正在看某个分组：标题栏统一用分组的颜色，标题是卡片的名字（备注），不放应用图标（像 Paste 的图钉板） */
+  board?: { color: string; name: string };
   selected: boolean;
+  /** 粘贴前闪一下 */
+  flashing?: boolean;
+  /** 智能推荐挑中的：暖色描边 + 角上一个 ✨ */
+  suggested?: boolean;
+  /** 卡片上的快捷操作（卡片条里才有） */
+  onAction?: (action: CardAction, item: ClipItem) => void;
   index: number;
   layout: 'card' | 'row';
   /** 按下左键：选中 */
@@ -273,6 +303,8 @@ export const ClipCard = memo(function ClipCard({
   );
   // 从别的设备同步来的：右上角是设备图标，底栏的来源是那台设备的名字
   const TypeIcon = item.remote ? MonitorSmartphone : gif ? GifIcon : (TYPE_ICON[item.type] ?? Type);
+  const headTint = board?.color ?? tint;
+  const typeLabel = gif ? t('clip.gif') : t(`clip.type.${item.type}`);
 
   return (
     <div
@@ -281,32 +313,39 @@ export const ClipCard = memo(function ClipCard({
         `clip-card--${layout}`,
         `clip-card--${gif ? 'gif' : item.type}`,
         selected && 'clip-card--selected',
+        flashing && 'clip-card--flash',
+        suggested && 'clip-card--suggested',
         fullBleed && 'clip-card--bleed',
         code && 'clip-card--code',
         // 文字、代码一直排到卡片底，字数浮在渐隐的最后几行上（Paste 的做法），不单独占一条底栏
         layout === 'card' && item.type === 'text' && 'clip-card--flow',
       )}
-      style={tint && item.type !== 'color' ? ({ ...colorStyle, '--clip-tint': tint } as React.CSSProperties) : colorStyle}
+      style={headTint && item.type !== 'color' ? ({ ...colorStyle, '--clip-tint': headTint } as React.CSSProperties) : colorStyle}
       onMouseEnter={gif ? () => setHover(true) : undefined}
       onMouseLeave={gif ? () => setHover(false) : undefined}
       onMouseDown={(e) => e.button === 0 && onClick()}
       onClick={onActivate}
       onDoubleClick={onDoubleClick}
       onContextMenu={onContextMenu}
-      draggable={item.type === 'text' || item.type === 'link'}
-      onDragStart={(e) => e.dataTransfer.setData('text/plain', text)}
+      // 拖到面板顶上的分组标签上归进分组；文字、链接还能直接拖进别的程序
+      draggable
+      onDragStart={(e) => {
+        e.dataTransfer.setData(CLIP_DRAG_TYPE, String(item.id));
+        if (item.type === 'text' || item.type === 'link') e.dataTransfer.setData('text/plain', text);
+        e.dataTransfer.effectAllowed = 'copyMove';
+      }}
     >
       {layout === 'card' ? (
         <>
-          <div className="clip-card__head">
+          <div className={clsx('clip-card__head', board && 'clip-card__head--board')}>
             <div className="clip-card__title">
-              <span className="clip-card__type">
-                {gif ? t('clip.gif') : t(`clip.type.${item.type}`)}
+              <span className="clip-card__type cn-truncate">
+                {board ? item.note || typeLabel : typeLabel}
                 {marks}
               </span>
-              {time}
+              {!board && time}
             </div>
-            {item.sourceIcon ? (
+            {board ? null : item.sourceIcon ? (
               <img className="clip-card__appicon" src={assetUrl(item.sourceIcon)} alt="" title={appName} draggable={false} />
             ) : (
               <span className="clip-card__typetile" title={item.remote ? appName : undefined}>
@@ -315,6 +354,36 @@ export const ClipCard = memo(function ClipCard({
             )}
           </div>
           <div className="clip-card__body">{body}</div>
+          {/* 快捷操作：标题栏底边正中，悬停才出来（不盖在图片、文字上） */}
+          {onAction && actionsFor(item).length > 0 && (
+            // 按钮自己处理点击：不能冒到卡片上变成"选中 / 粘贴"
+            <div className="clip-card__actions" onMouseDown={(e) => e.stopPropagation()} onDoubleClick={(e) => e.stopPropagation()}>
+              {actionsFor(item).map((a) => {
+                const Icon = ACTION_ICON[a];
+                return (
+                  <button
+                    key={a}
+                    type="button"
+                    className="clip-card__action"
+                    title={t(`clip.action.${a}`)}
+                    aria-label={t(`clip.action.${a}`)}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onAction(a, item);
+                    }}
+                  >
+                    <Icon size={14} strokeWidth={2} />
+                  </button>
+                );
+              })}
+            </div>
+          )}
+          {suggested && (
+            <span className="clip-card__suggested" aria-label={t('clip.smart.badge')}>
+              <Sparkles size={11} strokeWidth={2.4} />
+              {t('clip.smart.badge')}
+            </span>
+          )}
           {/* 图片卡片的底栏浮在图片上：尺寸是底部居中的小胶囊 */}
           <div className="clip-card__foot">
             {(!fullBleed || detail) && <span className="clip-card__detail cn-truncate cn-numeric">{detail ?? appName}</span>}

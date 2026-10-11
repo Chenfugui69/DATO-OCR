@@ -436,17 +436,33 @@ pub fn list_groups(conn: &Connection) -> AppResult<Vec<ClipGroup>> {
     Ok(groups)
 }
 
-pub fn create_group(conn: &Connection, name: &str) -> AppResult<i64> {
+pub fn create_group(conn: &Connection, name: &str, color: Option<&str>) -> AppResult<i64> {
     let name = name.trim();
     if name.is_empty() {
         return Err(AppError::msg("分组名不能为空"));
     }
+    let exists: bool = conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM clipboard_groups WHERE name = ?1)",
+        [name],
+        |r| r.get(0),
+    )?;
+    if exists {
+        return Err(AppError::msg("已经有同名的分组了"));
+    }
     conn.execute(
-        "INSERT INTO clipboard_groups(name, sort_order, created_at)
-         VALUES (?1, (SELECT COALESCE(MAX(sort_order), 0) + 1 FROM clipboard_groups), ?2)",
-        params![name, now_ms()],
+        "INSERT INTO clipboard_groups(name, color, sort_order, created_at)
+         VALUES (?1, ?2, (SELECT COALESCE(MAX(sort_order), 0) + 1 FROM clipboard_groups), ?3)",
+        params![name, color, now_ms()],
     )?;
     Ok(conn.last_insert_rowid())
+}
+
+pub fn set_group_color(conn: &Connection, id: i64, color: Option<&str>) -> AppResult<()> {
+    conn.execute(
+        "UPDATE clipboard_groups SET color = ?1 WHERE id = ?2",
+        params![color, id],
+    )?;
+    Ok(())
 }
 
 pub fn rename_group(conn: &Connection, id: i64, name: &str) -> AppResult<()> {

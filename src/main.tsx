@@ -20,6 +20,7 @@ const views: [match: (label: string) => boolean, name: string, load: () => Promi
   [(l) => l.startsWith('capture-'), 'capture', () => import('@/views/capture/CaptureView')],
   [(l) => l.startsWith('pin-'), 'pin', () => import('@/views/pin/PinView')],
   [(l) => l === 'clipboard', 'clipboard', () => import('@/views/clipboard-panel/PanelView')],
+  [(l) => l === 'preview', 'preview', () => import('@/views/clipboard-panel/PreviewView')],
   [(l) => l === 'toast', 'toast', () => import('@/views/toast/ToastView')],
   [(l) => l === 'ocr', 'ocr', () => import('@/views/ocr/OcrView')],
   [(l) => l === 'editor', 'editor', () => import('@/views/editor/EditorView')],

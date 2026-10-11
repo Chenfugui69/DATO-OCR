@@ -81,6 +81,10 @@ pub async fn settings_set(app: AppHandle, mut settings: Settings) -> AppResult<S
     if before.translate.selection != next.translate.selection {
         translate::selection::reconfigure(&app);
     }
+    if before.mcp != next.mcp {
+        let ui = app.clone();
+        std::thread::spawn(move || crate::mcp::reconfigure(&ui));
+    }
     if before.sync != next.sync {
         // 开关局域网、换端口、改设备名、网盘间隔…：按新设置重开（起服务、mDNS 都可能慢一点，别卡住保存）
         let ui = app.clone();
@@ -436,4 +440,17 @@ pub fn report_error(window: tauri::Window, scope: String, message: String) {
 #[tauri::command]
 pub async fn window_is_foreground(window: tauri::WebviewWindow) -> AppResult<bool> {
     Ok(crate::platform::window_is_foreground(&window))
+}
+
+/// 给 AI 工具用的 MCP 服务的状态（设置页显示地址、令牌、配置示例）。
+#[tauri::command]
+pub async fn mcp_status(app: AppHandle) -> AppResult<crate::mcp::McpStatus> {
+    Ok(crate::mcp::status(&app))
+}
+
+/// 换一个 MCP 令牌（之前配好的、填了令牌的客户端要重新配置）。
+#[tauri::command]
+pub async fn mcp_regenerate_token(app: AppHandle) -> AppResult<crate::mcp::McpStatus> {
+    crate::mcp::regenerate_token(&app);
+    Ok(crate::mcp::status(&app))
 }

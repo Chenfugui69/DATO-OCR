@@ -2,7 +2,28 @@
 // 分组：通用 · 截图 · 长截图 · 文字识别 · 翻译 · 剪贴板 · 快捷键 · 外观 · 存储 · 关于
 
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { ExternalLink, FolderOpen, RotateCcw } from 'lucide-react';
+import {
+  ClipboardList,
+  Crop,
+  ExternalLink,
+  FolderOpen,
+  HardDrive,
+  Info,
+  Keyboard,
+  Languages,
+  type LucideIcon,
+  Palette,
+  Plug,
+  RefreshCw,
+  RotateCcw,
+  ScanText,
+  ScrollText,
+  Settings2,
+  ShieldCheck,
+  Sparkles,
+  TextSelect,
+  Wifi,
+} from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
@@ -19,16 +40,53 @@ import { HotkeyInput } from '@/ui/HotkeyInput';
 import { confirmDialog, notify } from '@/ui/overlays';
 
 import { AiSettingsGroups } from './AiSettings';
+import { McpSettingsGroup } from './McpSettings';
+import { ORB_COLORS, WaterOrb } from '@/views/clipboard-panel/WaterOrb';
+import '@/views/clipboard-panel/orb.css';
 import { FrameStyleRows } from './FrameStyleRows';
 import { ToolbarOrder } from './ToolbarOrder';
-import { Group, Row } from './settingsParts';
+import { Group, Row, SettingsSectionContext } from './settingsParts';
 import { TranslateSettingsGroups } from './TranslateSettings';
 import { UpdateBanner, UpdateDialog, useUpdate } from './UpdateDialog';
 
 /** 验证码保留时间的预设（秒）；0 = 不删 */
 const OTP_EXPIRE_PRESETS = ['30', '60', '300', '0'];
 
-const SECTIONS = ['general', 'permissions', 'capture', 'longshot', 'ocr', 'translate', 'selection', 'ai', 'network', 'clipboard', 'hotkeys', 'appearance', 'storage', 'update', 'about'] as const;
+const SECTIONS = ['general', 'permissions', 'capture', 'longshot', 'ocr', 'translate', 'selection', 'ai', 'mcp', 'network', 'clipboard', 'hotkeys', 'appearance', 'storage', 'update', 'about'] as const;
+type Section = (typeof SECTIONS)[number];
+
+/** 左边栏每个分类的图标和底色（像 macOS 的系统设置：彩色圆角方块里一个白色图标） */
+const SECTION_ICON: Record<Section, [LucideIcon, string]> = {
+  general: [Settings2, '#8e8e93'],
+  permissions: [ShieldCheck, '#007aff'],
+  capture: [Crop, '#0a84ff'],
+  longshot: [ScrollText, '#5856d6'],
+  ocr: [ScanText, '#34c759'],
+  translate: [Languages, '#00a6b4'],
+  selection: [TextSelect, '#32ade6'],
+  ai: [Sparkles, '#af52de'],
+  mcp: [Plug, '#7d5cf0'],
+  network: [Wifi, '#007aff'],
+  clipboard: [ClipboardList, '#ff9500'],
+  hotkeys: [Keyboard, '#636366'],
+  appearance: [Palette, '#ff2d55'],
+  storage: [HardDrive, '#8e8e93'],
+  update: [RefreshCw, '#30b158'],
+  about: [Info, '#8e8e93'],
+};
+
+function SectionIcon({ section, large }: { section: Section; large?: boolean }) {
+  const [Icon, color] = SECTION_ICON[section];
+  return (
+    <span className={large ? 'set-icon set-icon--lg' : 'set-icon'} style={{ '--tile': color } as React.CSSProperties}>
+      <Icon size={large ? 24 : 14} strokeWidth={2} />
+    </span>
+  );
+}
+
+function isSection(s: string | null | undefined): s is Section {
+  return !!s && (SECTIONS as readonly string[]).includes(s);
+}
 
 export function SettingsPage({ section }: { section: string | null }) {
   const { t } = useTranslation();
@@ -47,12 +105,14 @@ export function SettingsPage({ section }: { section: string | null }) {
   const perms = useQuery({ queryKey: ['permissions'], queryFn: system.permissions, refetchOnWindowFocus: true });
   const permRows = (['screenCapture', 'accessibility'] as (keyof Permissions)[]).filter((k) => perms.data?.[k] != null);
 
+  // 左边栏选中的分类；别处（剪贴板面板的"剪贴板设置…"、托盘）可以指定打开哪一类
+  const [current, setCurrent] = useState<Section>(isSection(section) ? section : 'general');
   useEffect(() => {
-    if (!section) return;
-    // 等这一帧布局完再滚
-    const id = window.setTimeout(() => document.getElementById(`set-${section}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 60);
-    return () => window.clearTimeout(id);
+    if (isSection(section)) setCurrent(section);
   }, [section]);
+  useEffect(() => {
+    scroller.current?.scrollTo({ top: 0 });
+  }, [current]);
 
   if (!settings) return null;
   const set = (mutate: (d: Settings) => void) => {
@@ -69,27 +129,34 @@ export function SettingsPage({ section }: { section: string | null }) {
   const visuals = currentVisuals();
   const c = settings.capture;
   const cb = settings.clipboard;
+  const smartModels = settings.ai.providers
+    .filter((p) => p.enabled)
+    .flatMap((p) => p.models.map((m) => ({ value: `${p.id}/${m}`, label: `${p.name} · ${m}` })));
   const otpExpireMode = otpCustom || !OTP_EXPIRE_PRESETS.includes(String(cb.otpExpireSecs)) ? 'custom' : String(cb.otpExpireSecs);
 
   return (
-    <section className="page">
-      <div className="page__head">
-        <h1 className="page__title">{t('nav.settings')}</h1>
-      </div>
-      <nav className="settings-nav">
-        {SECTIONS.filter((s) => s !== 'permissions' || permRows.length > 0).map((s) => (
-          <button
-            key={s}
-            type="button"
-            className="chip"
-            data-active={section === s}
-            onClick={() => document.getElementById(`set-${s}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
-          >
-            {t(`settings.section.${s}`)}
-          </button>
-        ))}
-      </nav>
-      <div ref={scroller} className="page__body">
+    <section className="page settings-page">
+      {/* 左：分类列表（彩色图标）；右：只显示选中的那一类 */}
+      <aside className="settings-side">
+        <h1 className="settings-side__title">{t('nav.settings')}</h1>
+        <nav className="settings-side__list">
+          {SECTIONS.filter((s) => s !== 'permissions' || permRows.length > 0).map((s) => (
+            <button key={s} type="button" className="settings-side__item" data-active={current === s} onClick={() => setCurrent(s)}>
+              <SectionIcon section={s} />
+              <span className="cn-truncate">{t(`settings.section.${s}`)}</span>
+            </button>
+          ))}
+        </nav>
+      </aside>
+      <div ref={scroller} className="settings-main">
+        <header className="settings-main__head">
+          <SectionIcon section={current} large />
+          <div>
+            <h2>{t(`settings.section.${current}`)}</h2>
+            <p>{t(`settings.sectionDesc.${current}`)}</p>
+          </div>
+        </header>
+        <SettingsSectionContext.Provider value={current}>
         <div className="settings">
           {prompt && upd && <UpdateBanner status={upd} onOpen={() => setUpdOpen(true)} />}
           <Group id="general" title={t('settings.section.general')}>
@@ -332,6 +399,8 @@ export function SettingsPage({ section }: { section: string | null }) {
 
           <AiSettingsGroups settings={settings} set={set} />
 
+          <McpSettingsGroup settings={settings} set={set} />
+
           <Group id="clipboard" title={t('settings.section.clipboard')} note={t('settings.clipboard.privacyNote')}>
             <Row title={t('settings.clipboard.enabled')}>
               <Switch checked={cb.enabled} onChange={(v) => set((d) => void (d.clipboard.enabled = v))} />
@@ -365,6 +434,36 @@ export function SettingsPage({ section }: { section: string | null }) {
             <Row title={t('settings.clipboard.blur')} desc={t('settings.clipboard.blurDesc')}>
               <Switch checked={cb.panelBlur} onChange={(v) => set((d) => void (d.clipboard.panelBlur = v))} />
             </Row>
+            <Row title={t('settings.clipboard.orbColor')} desc={t('settings.clipboard.orbColorDesc')}>
+              <div className="orb-picker" role="radiogroup">
+                {ORB_COLORS.map((c) => (
+                  <button
+                    key={c}
+                    type="button"
+                    role="radio"
+                    aria-checked={(cb.orbColor || 'ocean') === c}
+                    className="orb-picker__item"
+                    title={t(`settings.clipboard.orb.${c}`)}
+                    onClick={() => set((d) => void (d.clipboard.orbColor = c))}
+                  >
+                    <WaterOrb color={c} size={22} interactive />
+                  </button>
+                ))}
+              </div>
+            </Row>
+            <Row title={t('settings.clipboard.smartAi')} desc={t('settings.clipboard.smartAiDesc')}>
+              <Switch checked={cb.smartAi} onChange={(v) => set((d) => void (d.clipboard.smartAi = v))} />
+            </Row>
+            {cb.smartAi && (
+              <Row title={t('settings.clipboard.smartModel')} desc={t('settings.clipboard.smartModelDesc')}>
+                <Select
+                  value={smartModels.some((m) => m.value === cb.smartModel) ? cb.smartModel : ''}
+                  width={220}
+                  options={[{ value: '', label: t('settings.clipboard.smartModelDefault') }, ...smartModels]}
+                  onChange={(v) => set((d) => void (d.clipboard.smartModel = v))}
+                />
+              </Row>
+            )}
             {isMac && (
               <Row title={t('settings.clipboard.smsCodes')} desc={t('settings.clipboard.smsCodesDesc')}>
                 <Switch checked={cb.smsCodes} onChange={(v) => set((d) => void (d.clipboard.smsCodes = v))} />
@@ -644,6 +743,7 @@ export function SettingsPage({ section }: { section: string | null }) {
             </Row>
           </Group>
         </div>
+        </SettingsSectionContext.Provider>
       </div>
       {upd && <UpdateDialog status={upd} open={updOpen} onClose={() => setUpdOpen(false)} />}
     </section>

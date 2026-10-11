@@ -453,6 +453,67 @@ pub async fn chat(app: AppHandle, req: ChatRequest, channel: Channel<ChatEvent>)
     Ok(())
 }
 
+/// 不显示在界面上的一问一答（剪贴板的智能推荐用）：用指定的模型（没指定或用不了就用默认模型）、不带图片，
+/// 等整段回答回来再返回。
+/// 温度压到 0、不开思考，要的是稳定、快。
+pub async fn complete(
+    app: &AppHandle,
+    model: Option<&str>,
+    system: &str,
+    user: &str,
+    max_tokens: u32,
+) -> AppResult<String> {
+    if state(app).settings.read().general.offline_mode {
+        return Err(AppError::msg("已开启离线模式，AI 对话不可用"));
+    }
+    let (provider, model) = resolve(app, model)?;
+    let key = key_of(app, &provider.id);
+    let client = net::client(app, Purpose::Ai);
+    let params = Params {
+        model,
+        system: system.to_string(),
+        temperature: 0.0,
+        max_tokens,
+        effort: None,
+    };
+    let messages = [Prepared {
+        role: "user".into(),
+        text: user.to_string(),
+        images: Vec::new(),
+    }];
+    let mut out = String::new();
+    let collect = |piece: Piece| {
+        if let Piece::Text(t) = piece {
+            out.push_str(t);
+        }
+    };
+    match provider.kind.as_str() {
+        "anthropic" => {
+            anthropic::stream(
+                &client,
+                &provider.base_url,
+                key.as_deref(),
+                &params,
+                &messages,
+                collect,
+            )
+            .await?
+        }
+        _ => {
+            openai::stream(
+                &client,
+                &provider.base_url,
+                key.as_deref(),
+                &params,
+                &messages,
+                collect,
+            )
+            .await?
+        }
+    }
+    Ok(out)
+}
+
 /// 停止一次进行中的回答。
 pub fn cancel(id: &str) {
     if let Some(handle) = RUNNING.lock().as_mut().and_then(|m| m.remove(id)) {

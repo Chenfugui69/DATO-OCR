@@ -7,6 +7,9 @@
 
 mod app_colors;
 pub mod panel;
+pub mod preview;
+pub mod smart;
+mod smart_words;
 
 use std::collections::VecDeque;
 use std::path::Path;
@@ -484,6 +487,31 @@ fn otp_clip(code: &str, sms: Option<&str>) -> NewClip {
 /// 短信原文最多留这么多字
 fn trim_sms(text: &str) -> String {
     text.trim().chars().take(2000).collect()
+}
+
+/// 别处交给 DATO OCR 的一段文字（AI 工具经 MCP 存进来的）进历史：按内容去重，返回记录 ID。
+pub(crate) fn store_external_text(app: &AppHandle, text: &str, source: &str) -> AppResult<i64> {
+    let st = state(app);
+    let hash = sha(text.replace("\r\n", "\n").as_bytes());
+    if let Some(id) = st.db.with(|c| repo::find_duplicate(c, &hash))? {
+        st.db.with(|c| repo::touch(c, id))?;
+        let _ = app.emit(events::CLIPBOARD_CHANGED, ClipChanged { id, is_new: false });
+        return Ok(id);
+    }
+    let item = NewClip {
+        kind: text_kind(text).into(),
+        preview: Some(preview(text)),
+        hash,
+        char_count: Some(text.chars().count() as i64),
+        size_bytes: Some(text.len() as i64),
+        content_text: Some(text.to_string()),
+        source_app: Some(source.to_string()),
+        device_kind: Some(platform::device_kind().to_string()),
+        ..Default::default()
+    };
+    let id = st.db.with(|c| repo::insert(c, &item))?;
+    let _ = app.emit(events::CLIPBOARD_CHANGED, ClipChanged { id, is_new: true });
+    Ok(id)
 }
 
 /// 本机认出的短信验证码进历史（去重），返回记录 ID。`source` / `app_path` 是显示的来源应用。

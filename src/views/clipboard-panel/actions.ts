@@ -10,7 +10,15 @@ import type { NativeItem } from '@/ui/nativeMenu';
 export function clipMenu(
   item: ClipItem,
   t: TFunction,
-  opts: { groups: ClipGroup[]; onTranslate?: (item: ClipItem) => void; inPanel: boolean },
+  opts: {
+    groups: ClipGroup[];
+    onTranslate?: (item: ClipItem) => void;
+    inPanel: boolean;
+    /** 面板里正在看某个分组：可以给卡片起名（显示在卡片标题栏上，存在备注里） */
+    inBoard?: boolean;
+    /** 菜单里弹的对话框关掉之后（面板要盯一下焦点） */
+    onDialogClosed?: () => void;
+  },
 ): NativeItem[] {
   const run = (p: Promise<unknown>) => void p.catch(notify.error);
   const items: NativeItem[] = [
@@ -28,7 +36,17 @@ export function clipMenu(
     { label: t('clip.pin'), checked: item.pinned, onSelect: () => run(clipboard.setPinned(item.id, !item.pinned)) },
     { label: t('clip.favorite'), checked: item.favorite, onSelect: () => run(clipboard.setFavorite(item.id, !item.favorite)) },
   );
-  if (!opts.inPanel) {
+  if (opts.inBoard) {
+    items.push({
+      label: t('clip.board.nameCard'),
+      onSelect: () =>
+        run(
+          promptDialog({ title: t('clip.board.nameCard'), initial: item.note ?? '', placeholder: t('clip.board.nameCardPlaceholder') })
+            .then((note) => (note === null ? undefined : clipboard.setNote(item.id, note.trim() || null)))
+            .finally(() => opts.onDialogClosed?.()),
+        ),
+    });
+  } else if (!opts.inPanel) {
     items.push({
       label: t('clip.note'),
       onSelect: () =>

@@ -1,0 +1,68 @@
+/* 能缩放、拖动的图片（ZoomImage）：剪贴板面板里的预览和单独的预览窗口共用，所以样式跟着组件走 */
+.zoom-image {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  cursor: zoom-in;
+  touch-action: none;
+  background: repeating-conic-gradient(var(--cn-fill-quaternary) 0% 25%, transparent 0% 50%) 50% / 14px 14px;
+}
+.zoom-image[data-zoomed='true'] {
+  cursor: grab;
+}
+.zoom-image[data-zoomed='true']:active {
+  cursor: grabbing;
+}
+.zoom-image img {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  max-width: none;
+  transform-origin: center;
+  user-select: none;
+  will-change: transform;
+  image-rendering: auto;
+}
+.zoom-image__img--animate {
+  transition: transform 220ms var(--cn-ease-out);
+}
+/* 底部一排：缩小 / 百分比（回到适应窗口）/ 放大 */
+.zoom-image__bar {
+  position: absolute;
+  left: 50%;
+  bottom: 12px;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 3px;
+  border-radius: var(--cn-radius-full);
+  background: rgba(0, 0, 0, 0.5);
+  -webkit-backdrop-filter: blur(12px);
+  backdrop-filter: blur(12px);
+  box-shadow: inset 0 0 0 0.5px rgba(255, 255, 255, 0.14);
+  color: rgba(255, 255, 255, 0.95);
+  cursor: default;
+}
+.zoom-image__bar button {
+  display: grid;
+  place-items: center;
+  min-width: 26px;
+  height: 26px;
+  padding: 0;
+  border-radius: var(--cn-radius-full);
+  color: inherit;
+  font: 500 11px/1 var(--cn-font-sans);
+  font-variant-numeric: tabular-nums;
+}
+.zoom-image__bar button:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.16);
+}
+.zoom-image__bar button:disabled {
+  opacity: 0.35;
+}
+.zoom-image__bar .zoom-image__pct {
+  min-width: 48px;
+  padding: 0 6px;
+}

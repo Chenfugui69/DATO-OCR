@@ -6,7 +6,7 @@
 import './ai.css';
 
 import * as Popover from '@radix-ui/react-popover';
-import { ArrowUp, Brain, ChevronRight, Copy, FileText, ImageIcon, RotateCw, Settings2, Square, SquarePen, X } from 'lucide-react';
+import { ArrowUp, Brain, ChevronRight, Copy, FileText, ImageIcon, RotateCw, Settings2, Sparkles, Square, SquarePen, X } from 'lucide-react';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 
@@ -19,6 +19,8 @@ import { useSettings, useSettingsStore } from '@/lib/settings';
 import { THINKING_LEVELS, type ChatImage, type ChatMessage, type ChatTurn, type ThinkingLevel } from '@/lib/types';
 import { Button, EmptyState, IconButton, Select, Slider } from '@/ui/controls';
 import { notify } from '@/ui/overlays';
+import { type OrbColor, ORB_COLORS, WaterOrb } from '@/views/clipboard-panel/WaterOrb';
+import '@/views/clipboard-panel/orb.css';
 
 export interface ChatContext {
   text?: string | null;
@@ -261,47 +263,104 @@ export function AiChat({
   }
 
   const hasContext = !!context?.text?.trim() || (context?.images.length ?? 0) > 0;
-  return (
-    <div className={compact ? 'ai ai--compact' : 'ai'} data-layout={cfg?.panel.layout ?? 'bubble'} style={style}>
-      <div className="ai__bar">
-        <Select value={activeModel} width={compact ? 168 : 220} options={models} onChange={setModel} />
-        <ThinkingPicker value={thinking} />
-        <span style={{ flex: 1 }} />
-        <IconButton icon={SquarePen} size="sm" label={t('ai.newChat')} disabled={busy || turns.length === 0} onClick={() => setTurns([])} />
-        {toolbar}
-      </div>
-
-      {hasContext && (
-        <div className="ai__context">
-          {context?.text?.trim() && (
-            <span className="ai-chip" title={context.text}>
-              <FileText size={13} strokeWidth={1.75} />
-              <span className="ai-chip__text">
-                {t(context.source === 'ocr' ? 'ai.contextOcr' : 'ai.contextText', { count: context.text.trim().length })}
-              </span>
-              {turns.length === 0 && (
-                <button type="button" aria-label={t('common.remove')} onClick={() => setContext({ images: context.images, source: context.source })}>
-                  <X size={12} />
-                </button>
-              )}
-            </span>
+  // 独立窗口（不是划词面板里那个小的）：开场是一颗水珠 + 内容卡片 + 快捷提问卡片，模型选择挪进输入框底部
+  const roomy = !compact;
+  const orb: OrbColor = (ORB_COLORS as readonly string[]).includes(settings?.clipboard.orbColor ?? '') ? (settings!.clipboard.orbColor as OrbColor) : 'ocean';
+  const contextChips = hasContext && (
+    <div className="ai__context">
+      {context?.text?.trim() && (
+        <span className="ai-chip" title={context.text}>
+          <FileText size={13} strokeWidth={1.75} />
+          <span className="ai-chip__text">
+            {t(context.source === 'ocr' ? 'ai.contextOcr' : 'ai.contextText', { count: context.text.trim().length })}
+          </span>
+          {turns.length === 0 && (
+            <button type="button" aria-label={t('common.remove')} onClick={() => setContext({ images: context.images, source: context.source })}>
+              <X size={12} />
+            </button>
           )}
-          {context?.images.map((img, i) => (
-            <span key={i} className="ai-chip ai-chip--image">
-              {imageUrl(img) ? <img src={imageUrl(img)} alt="" /> : <ImageIcon size={13} />}
-              {turns.length === 0 && (
-                <button
-                  type="button"
-                  aria-label={t('common.remove')}
-                  onClick={() => setContext({ text: context.text, images: context.images.filter((_, k) => k !== i) })}
-                >
-                  <X size={12} />
-                </button>
-              )}
+        </span>
+      )}
+      {context?.images.map((img, i) => (
+        <span key={i} className="ai-chip ai-chip--image">
+          {imageUrl(img) ? <img src={imageUrl(img)} alt="" /> : <ImageIcon size={13} />}
+          {turns.length === 0 && (
+            <button
+              type="button"
+              aria-label={t('common.remove')}
+              onClick={() => setContext({ text: context.text, images: context.images.filter((_, k) => k !== i) })}
+            >
+              <X size={12} />
+            </button>
+          )}
+        </span>
+      ))}
+    </div>
+  );
+  const modelPickers = (
+    <>
+      <Select value={activeModel} width={compact ? 168 : 200} options={models} onChange={setModel} />
+      <ThinkingPicker value={thinking} />
+    </>
+  );
+  /** 独立窗口的开场：水珠 + 一句话 + 带进来的内容 + 快捷提问 */
+  const hero = (
+    <div className="ai-hero">
+      <WaterOrb color={orb} size={58} interactive />
+      <h2 className="ai-hero__title">{hasContext ? t('ai.heroContext') : t('ai.heroTitle')}</h2>
+      <p className="ai-hero__sub">{hasContext ? t('ai.heroContextSub') : t('ai.heroSub')}</p>
+      {hasContext && (
+        <div className="ai-hero__ctx">
+          <div className="ai-hero__ctx-head">
+            <FileText size={13} strokeWidth={1.9} />
+            <span>
+              {context?.text?.trim()
+                ? t(context.source === 'ocr' ? 'ai.contextOcr' : 'ai.contextText', { count: context.text.trim().length })
+                : t('ai.contextImage')}
             </span>
+            <span style={{ flex: 1 }} />
+            <button type="button" className="ai-hero__ctx-x" aria-label={t('common.remove')} onClick={() => setContext(null)}>
+              <X size={13} />
+            </button>
+          </div>
+          {context?.text?.trim() && <div className="ai-hero__ctx-text cn-selectable">{context.text.trim()}</div>}
+          {(context?.images.length ?? 0) > 0 && (
+            <div className="ai-hero__ctx-images">
+              {context!.images.map((img, i) => (imageUrl(img) ? <img key={i} src={imageUrl(img)} alt="" /> : null))}
+            </div>
+          )}
+        </div>
+      )}
+      {hasContext && (cfg?.quickPrompts.length ?? 0) > 0 && (
+        <div className="ai-hero__prompts">
+          {cfg!.quickPrompts.map((q) => (
+            <button key={q.id} type="button" className="ai-hero__prompt" onClick={() => void ask(q.label, q.prompt)}>
+              <Sparkles size={14} strokeWidth={2} />
+              <span className="cn-truncate">{q.label}</span>
+            </button>
           ))}
         </div>
       )}
+    </div>
+  );
+  return (
+    <div className={compact ? 'ai ai--compact' : 'ai ai--roomy'} data-layout={cfg?.panel.layout ?? 'bubble'} style={style}>
+      {roomy ? (
+        <div className="ai__top">
+          <span style={{ flex: 1 }} />
+          <IconButton icon={SquarePen} size="sm" label={t('ai.newChat')} disabled={busy || turns.length === 0} onClick={() => setTurns([])} />
+          {toolbar}
+        </div>
+      ) : (
+        <div className="ai__bar">
+          {modelPickers}
+          <span style={{ flex: 1 }} />
+          <IconButton icon={SquarePen} size="sm" label={t('ai.newChat')} disabled={busy || turns.length === 0} onClick={() => setTurns([])} />
+          {toolbar}
+        </div>
+      )}
+
+      {!roomy && contextChips}
 
       <div
         ref={listRef}
@@ -320,7 +379,7 @@ export function AiChat({
         }}
       >
         {turns.length === 0 ? (
-          <div className="ai__hello">{hasContext ? t('ai.helloContext') : t('ai.hello')}</div>
+          roomy ? hero : <div className="ai__hello">{hasContext ? t('ai.helloContext') : t('ai.hello')}</div>
         ) : (
           turns.map((m, i) => (
             <div key={m.id} className={`ai-msg ai-msg--${m.role}`}>
@@ -362,7 +421,7 @@ export function AiChat({
         )}
       </div>
 
-      {hasContext && turns.length === 0 && (cfg?.quickPrompts.length ?? 0) > 0 && (
+      {!roomy && hasContext && turns.length === 0 && (cfg?.quickPrompts.length ?? 0) > 0 && (
         <div className="ai__quick">
           {cfg!.quickPrompts.map((q) => (
             <button key={q.id} type="button" className="ai-quick__chip" onClick={() => void ask(q.label, q.prompt)}>
@@ -372,7 +431,9 @@ export function AiChat({
         </div>
       )}
 
-      <div className="ai__input">
+      <div className={roomy ? 'ai__input ai__composer' : 'ai__input'}>
+        {/* 对话开始后，带进来的内容缩成输入框顶上的小标签 */}
+        {roomy && turns.length > 0 && contextChips}
         <textarea
           ref={inputRef}
           value={input}
@@ -391,7 +452,17 @@ export function AiChat({
             }
           }}
         />
-        {busy ? (
+        {roomy ? (
+          <div className="ai__composer-foot">
+            {modelPickers}
+            <span style={{ flex: 1 }} />
+            {busy ? (
+              <IconButton icon={Square} label={t('ai.stop')} className="ai__send" onClick={stop} />
+            ) : (
+              <IconButton icon={ArrowUp} label={t('ai.send')} className="ai__send" disabled={!input.trim()} onClick={() => void ask(input)} />
+            )}
+          </div>
+        ) : busy ? (
           <IconButton icon={Square} label={t('ai.stop')} className="ai__send" onClick={stop} />
         ) : (
           <IconButton icon={ArrowUp} label={t('ai.send')} className="ai__send" disabled={!input.trim()} onClick={() => void ask(input)} />

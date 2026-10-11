@@ -1,6 +1,6 @@
 //! 剪贴板历史命令。
 
-use tauri::AppHandle;
+use tauri::{AppHandle, Emitter};
 use tauri_plugin_opener::OpenerExt;
 
 use super::blocking;
@@ -36,6 +36,39 @@ pub async fn clipboard_icon_colors(
     icons: Vec<String>,
 ) -> AppResult<std::collections::HashMap<String, String>> {
     blocking(move || Ok(clipboard::icon_colors(&app, &icons))).await
+}
+
+/// 智能推荐：根据打开面板前在用的窗口，挑出接下来最可能要粘贴的几条。
+#[tauri::command]
+pub async fn clipboard_smart_suggest(
+    app: AppHandle,
+    ai: bool,
+) -> AppResult<clipboard::smart::Suggestion> {
+    clipboard::smart::suggest(app, ai).await
+}
+
+/// 在大预览窗口里看一条（图片）：铺满当前屏，能缩放拖动。主线程上建 / 摆窗口。
+#[tauri::command]
+pub async fn clipboard_preview_open(app: AppHandle, id: i64) -> AppResult<()> {
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    let ui = app.clone();
+    app.run_on_main_thread(move || {
+        let _ = tx.send(clipboard::preview::open(&ui, id));
+    })?;
+    rx.await.map_err(|e| AppError::msg(e.to_string()))?
+}
+
+/// 大预览窗口页面加载完来取当前要看的那条。
+#[tauri::command]
+pub async fn clipboard_preview_current() -> AppResult<Option<i64>> {
+    Ok(clipboard::preview::current())
+}
+
+#[tauri::command]
+pub async fn clipboard_preview_close(app: AppHandle) -> AppResult<()> {
+    let ui = app.clone();
+    app.run_on_main_thread(move || clipboard::preview::close(&ui))?;
+    Ok(())
 }
 
 /// "文件"卡片的大图标（数据目录里的相对路径），取不到返回 None。
@@ -85,13 +118,28 @@ pub async fn clipboard_set_note(app: AppHandle, id: i64, note: Option<String>) -
         .with(|c| repo::set_note(c, id, note.as_deref()))
 }
 
+/// 分组变了：让面板、主窗口都刷新（卡片的分组、分组标签上的数量）。
+fn groups_changed(app: &AppHandle) {
+    let _ = app.emit(
+        crate::events::CLIPBOARD_CHANGED,
+        clipboard::ClipChanged {
+            id: 0,
+            is_new: false,
+        },
+    );
+}
+
 #[tauri::command]
 pub async fn clipboard_set_group(
     app: AppHandle,
     ids: Vec<i64>,
     group_id: Option<i64>,
 ) -> AppResult<()> {
-    state(&app).db.with(|c| repo::set_group(c, &ids, group_id))
+    state(&app)
+        .db
+        .with(|c| repo::set_group(c, &ids, group_id))?;
+    groups_changed(&app);
+    Ok(())
 }
 
 #[tauri::command]
@@ -100,18 +148,43 @@ pub async fn clipboard_groups(app: AppHandle) -> AppResult<Vec<ClipGroup>> {
 }
 
 #[tauri::command]
-pub async fn clipboard_create_group(app: AppHandle, name: String) -> AppResult<i64> {
-    state(&app).db.with(|c| repo::create_group(c, &name))
+pub async fn clipboard_create_group(
+    app: AppHandle,
+    name: String,
+    color: Option<String>,
+) -> AppResult<i64> {
+    let id = state(&app)
+        .db
+        .with(|c| repo::create_group(c, &name, color.as_deref()))?;
+    groups_changed(&app);
+    Ok(id)
 }
 
 #[tauri::command]
 pub async fn clipboard_rename_group(app: AppHandle, id: i64, name: String) -> AppResult<()> {
-    state(&app).db.with(|c| repo::rename_group(c, id, &name))
+    state(&app).db.with(|c| repo::rename_group(c, id, &name))?;
+    groups_changed(&app);
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn clipboard_set_group_color(
+    app: AppHandle,
+    id: i64,
+    color: Option<String>,
+) -> AppResult<()> {
+    state(&app)
+        .db
+        .with(|c| repo::set_group_color(c, id, color.as_deref()))?;
+    groups_changed(&app);
+    Ok(())
 }
 
 #[tauri::command]
 pub async fn clipboard_delete_group(app: AppHandle, id: i64) -> AppResult<()> {
-    state(&app).db.with(|c| repo::delete_group(c, id))
+    state(&app).db.with(|c| repo::delete_group(c, id))?;
+    groups_changed(&app);
+    Ok(())
 }
 
 /// scope：`unpinned` = 保留置顶/收藏/有备注/已分组的；`everything` = 全部清空
