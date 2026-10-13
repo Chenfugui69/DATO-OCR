@@ -1,0 +1,66 @@
+{
+  "added": [
+    "邮箱验证码：连上邮箱后，新邮件里的验证码自动复制（QQ、163、Gmail、iCloud、Proton，或自己填服务器）",
+    "Mac 上自动复制 iPhone 转发来的短信验证码，开着多端同步时其他电脑也会收到",
+    "剪贴板可以分组；点水珠按你正在做的事推荐接下来要粘贴的内容",
+    "剪贴板里的图片可以打开大图预览",
+    "让 Claude、Cursor 这类 AI 工具搜剪贴板和识字记录（MCP，设置里打开）",
+    "新增翻译服务：百度、彩云小译、小牛、微软 Azure、腾讯云、火山（填自己的密钥）",
+    "可以自己添加翻译：AI 模型、DeepLX，或任意网络接口",
+    "AI 对话可以加图片：点加号、拖进来或直接粘贴；鼠标移到小图上看大图",
+    "录好的 GIF 会出现在截图库里",
+    "截图工具条可以选磨砂玻璃样式",
+    "设置里调划词翻译面板的外观时，可以在旁边看到真实大小的预览"
+  ],
+  "improved": [
+    "AI 回答一段段淡入，带跟随的光标，页面平滑跟到底部；思考过程默认收起",
+    "划词小圆点跟着松开鼠标的位置出现，不再跑到很远的角上；选中网址、文件路径、代码时不再弹出",
+    "划词小圆点的液态玻璃有了真实的折射效果，图标在密集文字上也看得清",
+    "翻译服务可以按住拖动来排序",
+    "划词翻译面板的排版和动效重新打磨",
+    "剪贴板卡片、设置页、AI 对话窗口重新设计",
+    "智能推荐的光效在显示结果时一直亮着",
+    "Mac 高刷新率屏幕上拖动截图选区更跟手"
+  ],
+  "fixed": [
+    "手机上复制的带格式文字在 Mac 的剪贴板里被当成文件",
+    "划词小圆点的投影被切成一条直线，连续选字时珠子里套着上一颗圆点的影子",
+    "划词翻译面板不开毛玻璃时，背后的字会透到翻译结果上",
+    "打开划词面板的 AI 对话时，面板上下边缘闪过一条深色",
+    "毛玻璃面板四个角上残留一圈淡影",
+    "局域网配对时提示「设备码不对」"
+  ],
+  "en": {
+    "added": [
+      "Email verification codes: connect a mailbox and codes from new emails are copied automatically (QQ, 163, Gmail, iCloud, Proton, or your own server)",
+      "On Mac, verification codes from texts forwarded by your iPhone are copied automatically and reach your other computers when sync is on",
+      "Clipboard groups, and smart suggestions: click the orb to get what you are most likely to paste next",
+      "Large preview for images in the clipboard",
+      "Let AI tools such as Claude and Cursor search your clipboard and OCR history (MCP, turn it on in Settings)",
+      "More translation services: Baidu, Caiyun, NiuTrans, Microsoft Azure, Tencent Cloud and Volcengine (with your own keys)",
+      "Add your own translators: an AI model, DeepLX, or any web API",
+      "Add images to AI chat with the plus button, by dragging them in, or by pasting; hover a thumbnail for a large view",
+      "Recorded GIFs now appear in the screenshot library",
+      "Optional frosted-glass style for the capture toolbar",
+      "A real-size preview next to Settings while adjusting the translation popup's appearance"
+    ],
+    "improved": [
+      "AI answers fade in piece by piece with a trailing cursor and smooth scrolling; the thought process is collapsed by default",
+      "The selection dot appears where you release the mouse instead of a far corner, and no longer shows for links, file paths or code",
+      "The liquid-glass selection dot now refracts what is behind it, and its icon stays readable over dense text",
+      "Drag translation services to reorder them",
+      "Refined layout and motion in the translation popup",
+      "Redesigned clipboard cards, Settings and AI chat window",
+      "The smart-suggestion glow stays lit while results are shown",
+      "Dragging the capture selection keeps up better on high-refresh-rate Mac displays"
+    ],
+    "fixed": [
+      "Formatted text copied on a phone showed up as a file in the Mac clipboard",
+      "The selection dot's shadow was cut into a straight line, and repeated selections showed the previous dot inside the new one",
+      "Text behind the translation popup showed through the results with frosted glass off",
+      "A dark strip flashed at the top and bottom of the popup when opening AI chat",
+      "A faint halo was left at the four corners of frosted-glass panels",
+      "\"Wrong device code\" when pairing over the local network"
+    ]
+  }
+}
