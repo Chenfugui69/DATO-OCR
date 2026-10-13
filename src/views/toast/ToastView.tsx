@@ -8,6 +8,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useEvent } from '@/lib/events';
 import { system } from '@/lib/ipc';
 import type { ToastPayload } from '@/lib/types';
+import { toastStay } from '@/lib/toast';
 
 interface Item extends ToastPayload {
   id: number;
@@ -23,7 +24,7 @@ export default function ToastView() {
   useEvent('toast', (p) => {
     const id = ++seq.current;
     setItems((list) => [...list.filter((i) => !i.leaving).slice(-2), { ...p, id, leaving: false }]);
-    const stay = p.kind === 'error' ? 3000 : 1500;
+    const stay = toastStay(p.kind, p.message);
     window.setTimeout(() => {
       setItems((list) => list.map((i) => (i.id === id ? { ...i, leaving: true } : i)));
       window.setTimeout(() => setItems((list) => list.filter((i) => i.id !== id)), 170);

@@ -21,7 +21,7 @@ use std::time::{Duration, Instant};
 use image::RgbaImage;
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_dialog::DialogExt;
 
 use crate::error::{AppError, AppResult};
@@ -86,6 +86,8 @@ pub struct CaptureState {
     /// 截图/长截图进行中。热键再按一次直接忽略（规格 02 §3.9.1）
     busy: AtomicBool,
     next_id: AtomicU64,
+    /// 从主窗口按钮开始的截图：主窗口被藏起来了，截图结束（含录完 GIF / 长截图、取消、失败）要叫回来
+    main_hidden: AtomicBool,
 }
 
 impl CaptureState {
@@ -100,6 +102,27 @@ impl CaptureState {
 
     pub(crate) fn release_busy(&self) {
         self.busy.store(false, Ordering::SeqCst);
+    }
+
+    pub(crate) fn mark_main_hidden(&self) {
+        self.main_hidden.store(true, Ordering::SeqCst);
+    }
+
+    fn take_main_hidden(&self) -> bool {
+        self.main_hidden.swap(false, Ordering::SeqCst)
+    }
+}
+
+/// 截图前藏起来的主窗口放回来。`focus`：让它拿焦点（取消、复制、保存这类回到原处的结束方式）；
+/// 否则只显示，别抢刚弹出来的贴图 / 识字 / 翻译窗口的焦点。
+fn restore_main(app: &AppHandle, focus: bool) {
+    if !state(app).capture.take_main_hidden() {
+        return;
+    }
+    if focus {
+        wm::show_main(app, None);
+    } else if let Some(main) = app.get_webview_window(wm::MAIN) {
+        let _ = main.show();
     }
 }
 
@@ -128,6 +151,8 @@ pub fn trigger(app: &AppHandle, intent: CaptureIntent) {
 /// 已经藏起来了，用户看到的就是"点了没反应"。把主窗口叫回来，停在设置页的"系统权限"上。
 fn report_start_failure(app: &AppHandle, err: &AppError) {
     tracing::error!("启动截图失败：{err}");
+    let ui_app = app.clone();
+    let _ = app.run_on_main_thread(move || restore_main(&ui_app, true));
     if platform::permissions().screen_capture == Some(false) {
         wm::show_main(app, Some("settings:permissions"));
         wm::toast(
@@ -411,6 +436,7 @@ pub fn end_session(app: &AppHandle, session_id: u64, restore_focus: bool) {
                 let _ = platform::focus_window(prev);
             }
         }
+        restore_main(&ui_app, restore_focus);
         state(&ui_app).capture.release_busy();
     });
 }

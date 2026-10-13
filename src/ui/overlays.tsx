@@ -11,6 +11,7 @@ import { useTranslation } from 'react-i18next';
 import { create } from 'zustand';
 
 import { shortcutLabel } from '@/lib/platform';
+import { toastStay } from '@/lib/toast';
 
 import { Button, Icon, TextField } from './controls';
 
@@ -238,7 +239,7 @@ let toastSeq = 0;
 function push(kind: ToastItem['kind'], message: string) {
   const id = ++toastSeq;
   useToastStore.setState((s) => ({ toasts: [...s.toasts.slice(-2), { id, kind, message }] }));
-  const stay = kind === 'error' ? 3000 : 1500;
+  const stay = toastStay(kind, message);
   setTimeout(() => {
     useToastStore.setState((s) => ({ toasts: s.toasts.map((t) => (t.id === id ? { ...t, leaving: true } : t)) }));
     setTimeout(() => useToastStore.setState((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) })), 170);
