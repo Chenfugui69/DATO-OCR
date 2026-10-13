@@ -181,9 +181,12 @@ html:not([data-platform='mac'])[data-theme='dark'] .panel-root--blur .panel {
 /* ── 动画 ── */
 /*
  * 智能推荐模式：面板边缘的光（颜色跟着水珠，orb.css 里的 --orb-* / --smart-glow），推荐期间一直亮着。
- * 三层：从边缘往里散开的柔光（呼吸）、沿上下边缘来回游走的两团光、卡片后面缓慢飘动的底光。
+ * 四层：从边缘往里散开的柔光（呼吸）、沿上下边缘来回游走的两团光、隔几秒从左到右扫过整块面板的一道流光、
+ * 卡片后面缓慢飘动的底光。
  * 没有硬边框，光都是渐变出来的软光；动的只有透明度和位移（GPU 直接合成，不重画面板），低配机器也不卡。
- * 亮度分档：think 正在看你在做什么，最亮；refine AI 还在细化；rest 推荐结果在显示，柔和但不熄；fade 清掉后退场
+ * 所以要更有活力是靠多一层会动的光、把亮度留住，而不是加模糊、混合模式、会重画的阴影动画。
+ * 亮度分档：think 正在看你在做什么，最亮；refine AI 还在细化；rest 推荐结果在显示，只比 think 暗一点
+ * （以前降到四成，本机推荐零点几秒就出结果，看着就是"闪了一下就没了"）；fade 清掉后退场
  */
 .panel {
   /* 底光放在卡片后面（z-index: -1），要在面板自己的层里 */
@@ -192,21 +195,25 @@ html:not([data-platform='mac'])[data-theme='dark'] .panel-root--blur .panel {
 .panel__glow--think {
   --glow-halo: 1;
   --glow-sweep: 1;
+  --glow-sheen: 1;
   --glow-aurora: 1;
 }
 .panel__glow--refine {
-  --glow-halo: 0.65;
-  --glow-sweep: 0.85;
-  --glow-aurora: 0.8;
+  --glow-halo: 0.85;
+  --glow-sweep: 1;
+  --glow-sheen: 1;
+  --glow-aurora: 1;
 }
 .panel__glow--rest {
-  --glow-halo: 0.4;
-  --glow-sweep: 0.6;
-  --glow-aurora: 0.65;
+  --glow-halo: 0.72;
+  --glow-sweep: 0.9;
+  --glow-sheen: 1;
+  --glow-aurora: 0.95;
 }
 .panel__glow--fade {
   --glow-halo: 0;
   --glow-sweep: 0;
+  --glow-sheen: 0;
   --glow-aurora: 0;
 }
 .panel__glow {
@@ -218,7 +225,8 @@ html:not([data-platform='mac'])[data-theme='dark'] .panel-root--blur .panel {
   pointer-events: none;
 }
 .panel__glow-halo,
-.panel__glow-sweep {
+.panel__glow-sweep,
+.panel__glow-sheen {
   position: absolute;
   inset: 0;
   border-radius: inherit;
@@ -270,7 +278,30 @@ html:not([data-platform='mac'])[data-theme='dark'] .panel-root--blur .panel {
   animation-direction: alternate-reverse;
   animation-duration: 9s;
 }
-/* 底光：卡片后面两团柔光左右慢慢飘，卡片之间的缝里透出来，不挡卡片上的字 */
+/* 流光：一道很淡的斜光从左到右扫过整块面板，扫完歇一会儿再来。淡到不影响看卡片上的字 */
+.panel__glow-sheen {
+  opacity: var(--glow-sheen);
+}
+.panel__glow-sheen::before {
+  content: '';
+  position: absolute;
+  top: -20%;
+  bottom: -20%;
+  left: 0;
+  width: 38%;
+  background: linear-gradient(
+    100deg,
+    /* 斜着的渐变在左右两条边上到不了头尾的颜色，两头各留一截透明，免得光带边上有一道直线 */
+    transparent 15%,
+    rgba(var(--smart-glow), 0.12) 38%,
+    rgba(255, 255, 255, 0.07) 50%,
+    color-mix(in srgb, var(--orb-4) 11%, transparent) 62%,
+    transparent 85%
+  );
+  will-change: transform;
+  animation: glow-sheen 6.5s linear infinite;
+}
+/* 底光：卡片后面三团柔光左右慢慢飘，卡片之间的缝里透出来，不挡卡片上的字 */
 .panel__aurora {
   position: absolute;
   inset: 0;
@@ -287,8 +318,9 @@ html:not([data-platform='mac'])[data-theme='dark'] .panel-root--blur .panel {
   position: absolute;
   inset: 0 -25%;
   background:
-    radial-gradient(28% 75% at 28% 105%, rgba(var(--smart-glow), 0.36), transparent 70%),
-    radial-gradient(26% 70% at 72% 110%, color-mix(in srgb, var(--orb-4) 32%, transparent), transparent 70%);
+    radial-gradient(28% 80% at 26% 105%, rgba(var(--smart-glow), 0.46), transparent 70%),
+    radial-gradient(26% 75% at 74% 110%, color-mix(in srgb, var(--orb-4) 42%, transparent), transparent 70%),
+    radial-gradient(22% 60% at 50% -12%, color-mix(in srgb, var(--orb-2) 34%, transparent), transparent 70%);
   will-change: transform;
   animation: glow-drift 11s ease-in-out infinite alternate;
 }
@@ -296,6 +328,7 @@ html:not([data-platform='mac'])[data-theme='dark'] .panel-root--blur .panel {
 @starting-style {
   .panel__glow-halo,
   .panel__glow-sweep,
+  .panel__glow-sheen,
   .panel__aurora {
     opacity: 0;
   }
@@ -316,6 +349,15 @@ html:not([data-platform='mac'])[data-theme='dark'] .panel-root--blur .panel {
     transform: translateX(147%);
   }
 }
+@keyframes glow-sheen {
+  from {
+    transform: translateX(-110%);
+  }
+  62%,
+  to {
+    transform: translateX(280%);
+  }
+}
 @keyframes glow-drift {
   from {
     transform: translateX(-12%);
@@ -331,7 +373,14 @@ html:not([data-platform='mac'])[data-theme='dark'] .panel-root--blur .panel {
 .panel-root:not(.panel-root--fx) .panel__aurora::before {
   animation: none;
 }
+/* 流光不动的话就是一道停在半路的光带，干脆不要 */
+.panel-root:not(.panel-root--fx) .panel__glow-sheen {
+  display: none;
+}
 @media (prefers-reduced-motion: reduce) {
+  .panel__glow-sheen {
+    display: none;
+  }
   .panel__glow-halo::before,
   .panel__glow-sweep::before,
   .panel__glow-sweep::after,

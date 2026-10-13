@@ -12,7 +12,7 @@ import type { Shot } from '@/lib/types';
 import { Button, EmptyState, SearchField, Spinner } from '@/ui/controls';
 import { ContextMenu, confirmDialog, notify, Tooltip } from '@/ui/overlays';
 
-type Filter = 'all' | 'favorite' | 'longshot';
+type Filter = 'all' | 'favorite' | 'longshot' | 'gif';
 
 export function LibraryPage() {
   const { t } = useTranslation();
@@ -20,6 +20,8 @@ export function LibraryPage() {
   const [debounced, setDebounced] = useState('');
   const [filter, setFilter] = useState<Filter>('all');
   const [selected, setSelected] = useState<number | null>(null);
+  /** 鼠标停在上面、正在播放的那张 GIF */
+  const [playing, setPlaying] = useState<number | null>(null);
   const sentinel = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -30,7 +32,7 @@ export function LibraryPage() {
   const query = useShots({
     keyword: debounced || undefined,
     favoriteOnly: filter === 'favorite',
-    kind: filter === 'longshot' ? 'longshot' : null,
+    kind: filter === 'longshot' || filter === 'gif' ? filter : null,
   });
   const shots = useMemo(() => query.data?.pages.flatMap((p) => p.items) ?? [], [query.data]);
   const total = query.data?.pages[0]?.total ?? 0;
@@ -63,13 +65,14 @@ export function LibraryPage() {
     }
   };
 
+  // GIF 是动图：不能进编辑器、不能另存成图片；复制是按文件复制，贴图、识字用第一帧
   const menu = (s: Shot) => [
-    { label: t('library.edit'), icon: PenLine, onSelect: () => run(editor.openShot(s.id)) },
+    ...(s.kind === 'gif' ? [] : [{ label: t('library.edit'), icon: PenLine, onSelect: () => run(editor.openShot(s.id)) }]),
     { label: t('library.copy'), icon: Copy, onSelect: () => run(library.copy(s.id)) },
     { label: t('library.pin'), icon: Pin, onSelect: () => run(library.pin(s.id)) },
     { label: t('library.ocr'), icon: ScanText, onSelect: () => run(library.ocr(s.id)) },
     { separator: true },
-    { label: t('library.saveAs'), icon: Download, onSelect: () => run(library.saveAs(s.id)) },
+    ...(s.kind === 'gif' ? [] : [{ label: t('library.saveAs'), icon: Download, onSelect: () => run(library.saveAs(s.id)) }]),
     { label: t('library.reveal'), icon: FolderOpen, onSelect: () => run(library.reveal(s.id)) },
     { label: s.favorite ? t('library.unfavorite') : t('library.favorite'), icon: Star, onSelect: () => run(library.setFavorite(s.id, !s.favorite)) },
     { separator: true },
@@ -85,7 +88,7 @@ export function LibraryPage() {
         </div>
         <span className="page__spacer" />
         <div className="chips">
-          {(['all', 'favorite', 'longshot'] as Filter[]).map((f) => (
+          {(['all', 'favorite', 'longshot', 'gif'] as Filter[]).map((f) => (
             <button key={f} type="button" className="chip" data-active={filter === f} onClick={() => setFilter(f)}>
               {t(`library.filter.${f}`)}
             </button>
@@ -119,11 +122,14 @@ export function LibraryPage() {
                         e.stopPropagation();
                         setSelected(s.id);
                       }}
-                      onDoubleClick={() => run(editor.openShot(s.id))}
+                      onDoubleClick={() => run(s.kind === 'gif' ? library.reveal(s.id) : editor.openShot(s.id))}
+                      onMouseEnter={s.kind === 'gif' ? () => setPlaying(s.id) : undefined}
+                      onMouseLeave={s.kind === 'gif' ? () => setPlaying((p) => (p === s.id ? null : p)) : undefined}
                       title={formatDateTime(s.createdAt)}
                     >
                       <div className="shot__thumb">
-                        <img src={assetUrl(s.thumbPath ?? s.filePath)} alt="" loading="lazy" draggable={false} />
+                        {/* GIF 平时是第一帧的缩略图，鼠标移上去才播（一页动图一起播太吵，也费电） */}
+                        <img src={assetUrl(playing === s.id ? s.filePath : (s.thumbPath ?? s.filePath))} alt="" loading="lazy" draggable={false} />
                       </div>
                       <div className="shot__meta">
                         <span>{s.sourceApp ?? formatDateTime(s.createdAt).slice(11)}</span>
@@ -134,6 +140,7 @@ export function LibraryPage() {
                       </div>
                       <div className="shot__badge">
                         {s.kind === 'longshot' && <span>{t('library.longshot')}</span>}
+                        {s.kind === 'gif' && <span>GIF</span>}
                         {s.favorite && (
                           <span>
                             <Star size={10} fill="currentColor" strokeWidth={0} />

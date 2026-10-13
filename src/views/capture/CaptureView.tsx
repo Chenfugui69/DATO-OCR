@@ -3,12 +3,13 @@
 // 这个窗口是透明的：冻结的屏幕画面在它正下方的原生底图窗口里，这里只画压暗层、选区、
 // 标注、放大镜和工具条。选区是**真镂空**，洞里看到的就是原始像素。
 
+import clsx from 'clsx';
 import './capture.css';
 import '@/views/annotate/annotate.css';
 
 import { Window } from '@tauri-apps/api/window';
 import { Copy, Eye, Languages, X } from 'lucide-react';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { flushSync } from 'react-dom';
 import { useTranslation } from 'react-i18next';
 
@@ -1008,17 +1009,20 @@ function Toolbars({
   tools,
   mid,
   order,
+  frosted,
 }: {
   rect: Rect;
   s: number;
   viewport: { width: number; height: number };
+  /** 磨砂玻璃样式：工具条底下垫一块系统的毛玻璃（模糊冻结的画面） */
+  frosted?: boolean;
   /** 三组按钮各自的顺序（设置里可调）：绘制工具、识字翻译那一组、最右边那一组 */
   tools?: Tool[];
   mid?: MidAction[];
   order?: TailAction[];
 }) {
   const { t } = useTranslation();
-  useEngineVersion(engine);
+  const version = useEngineVersion(engine);
   const tool = useOverlay((x) => x.tool);
   const translating = useOverlay((x) => x.translating);
   const options = useOverlay((x) => x.options);
@@ -1037,6 +1041,43 @@ function Toolbars({
   const css = { x: rect.x / s, y: rect.y / s, width: rect.width / s, height: rect.height / s };
   const pos = placeToolbar(css, bar, viewport);
   const above = !pos.inside && pos.y < css.y;
+
+  // 磨砂玻璃：毛玻璃是原生的一层，挪它要过一趟进程间调用，跟不上工具条每一帧的位置。
+  // 所以工具条在动的时候（拖选区、调大小）先撤掉、用普通样式，停稳了再垫上。
+  const [backed, setBacked] = useState(false);
+  const backedRef = useRef(false);
+  useEffect(() => {
+    if (!frosted) return;
+    if (backedRef.current) {
+      backedRef.current = false;
+      setBacked(false);
+      void capture.toolbarGlass(null, 0).catch(() => {});
+    }
+    let stale = false;
+    const timer = window.setTimeout(() => {
+      const area: [number, number, number, number] = [pos.x * s, pos.y * s, bar.width * s, bar.height * s];
+      capture.toolbarGlass(area, Math.round(12 * s)).then(
+        () => {
+          if (stale) return;
+          backedRef.current = true;
+          setBacked(true);
+        },
+        () => {},
+      );
+    }, 120);
+    return () => {
+      stale = true;
+      window.clearTimeout(timer);
+    };
+  }, [frosted, pos.x, pos.y, bar.width, bar.height, s]);
+  // 工具条收起（截完了、取消了、换成长截图）时撤掉
+  useEffect(
+    () => () => {
+      if (backedRef.current) void capture.toolbarGlass(null, 0).catch(() => {});
+      backedRef.current = false;
+    },
+    [],
+  );
   let subY = above ? pos.y - 4 - sub.height : pos.y + bar.height + 4;
   if (subY + sub.height > viewport.height || subY < 0) subY = above ? pos.y + bar.height + 4 : pos.y - 4 - sub.height;
 
@@ -1050,19 +1091,24 @@ function Toolbars({
   const anchor = useToolAnchor(barRef, subTool);
   const subX = Math.max(4, Math.min(pos.x + (anchor ?? bar.width / 2) - sub.width / 2, viewport.width - sub.width - 4));
   const subOptions = picked && pickedTool ? engine.optionsOf(picked, options) : options;
-  return (
-    <>
+
+  // 拖选区框、调大小时工具条只是跟着换位置，里面几十个按钮一个都没变。位置直接写到元素上（下面的副作用），
+  // 工具条本身只在内容真的变了（换工具、撤销栈、按钮顺序、能不能点）时才重画 —— 165Hz 的屏上每帧只有 6ms，
+  // 每动一下都把整条工具条重画一遍是拖动时最大的一笔开销。
+  const barClass = clsx(pos.inside && 'cap-toolbar--inside', frosted && backed && 'an-toolbar--backed');
+  const canUndo = engine.canUndo;
+  const toolbar = useMemo(
+    () => (
       <Toolbar
         ref={barRef}
-        className={pos.inside ? 'cap-toolbar--inside' : undefined}
-        style={{ transform: `translate(${pos.x}px, ${pos.y}px)` }}
+        className={barClass}
         tool={tool}
         onTool={(next) => {
           if (engine.text) engine.commitText();
           engine.select(null);
           set({ tool: next, cursorStyle: 'tool' });
         }}
-        canUndo={engine.canUndo}
+        canUndo={canUndo}
         onUndo={() => engine.undo()}
         tools={tools}
         actions={[mid?.length ? mid : MID_ACTIONS, order?.length ? order : TAIL_ACTIONS]}
@@ -1070,6 +1116,18 @@ function Toolbars({
         disabledTools={{ mosaic: !pixelsReady }}
         disabledActions={{ translate: translating }}
       />
+    ),
+    // version：撤销栈、选中的标注变了工具条上的状态可能跟着变
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [barClass, tool, canUndo, tools, mid, order, pixelsReady, translating, version],
+  );
+  // 位置：重画之后、上屏之前写上去（重画不会动这个内联样式，但第一次出现时要有）
+  useLayoutEffect(() => {
+    if (barRef.current) barRef.current.style.transform = `translate(${pos.x}px, ${pos.y}px)`;
+  });
+  return (
+    <>
+      {toolbar}
       {subTool && (
         <SubToolbar
           ref={subRef}
@@ -1236,7 +1294,15 @@ export default function CaptureView() {
             <SelectionOverlay engine={engine} displayScale={s} />
             <TextEditor engine={engine} displayScale={s} />
           </div>
-          <Toolbars rect={selection} s={s} viewport={viewport} tools={cfg?.toolbarTools} mid={cfg?.toolbarActions} order={cfg?.toolbarOrder} />
+          <Toolbars
+            rect={selection}
+            s={s}
+            viewport={viewport}
+            tools={cfg?.toolbarTools}
+            mid={cfg?.toolbarActions}
+            order={cfg?.toolbarOrder}
+            frosted={cfg?.toolbarStyle === 'frosted'}
+          />
         </>
       )}
       {phase === 'longshot' && selection && <LongshotUI rect={selection} s={s} viewport={viewport} />}

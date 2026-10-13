@@ -6,8 +6,10 @@
 //! 内置免费源都是非官方网页接口，同一个源两次请求至少隔 3 秒，别把接口打爆。
 
 pub mod detect;
+pub mod more;
 pub mod providers;
 pub mod selection;
+pub mod worth;
 
 use std::collections::{HashMap, VecDeque};
 use std::time::{Duration, Instant};
@@ -46,6 +48,10 @@ struct Cache {
 impl Cache {
     fn get(&self, key: &str) -> Option<TranslateResult> {
         self.map.get(key).cloned()
+    }
+    fn clear(&mut self) {
+        self.map.clear();
+        self.order.clear();
     }
     fn put(&mut self, key: String, value: TranslateResult) {
         if self.map.insert(key.clone(), value).is_none() {
@@ -89,47 +95,123 @@ pub struct ProviderInfo {
     pub id: String,
     pub name: String,
     pub free: bool,
-    /// 能不能用：免费源总是能用；自填源要填了密钥
+    /// 用户自己添加的（不是内置的）；`kind` 是它的类型：ai | deeplx | http
+    pub custom: bool,
+    pub kind: Option<String>,
+    /// 能不能用：免费源总是能用；自填源要把必填的几项填了
     pub configured: bool,
     /// 用户在设置里有没有打开它
     pub enabled: bool,
+    /// 要用户填的几项（密钥、应用 ID、区域……）和现在填没填
+    pub fields: Vec<FieldInfo>,
 }
 
-fn provider_name(id: &str) -> &'static str {
-    match id {
-        "bing" => "必应翻译",
-        "transmart" => "腾讯翻译",
-        "youdao" => "有道翻译",
-        "google" => "谷歌翻译",
-        "deepl" => "DeepL",
-        "openai" => "AI 大模型",
-        _ => "未知",
-    }
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FieldInfo {
+    pub key: String,
+    pub label: String,
+    pub secret: bool,
+    pub required: bool,
+    pub hint: String,
+    pub set: bool,
+    /// 填的值：密钥类的是打码后的样子，其余的是原样
+    pub value: Option<String>,
 }
 
 fn is_free(id: &str) -> bool {
-    matches!(id, "bing" | "transmart" | "youdao" | "google")
+    more::builtin(id).is_some_and(|b| b.free)
+}
+
+/// 某个源的某一项存在密钥表里的键。DeepL、AI 大模型沿用老版本的键，别的按 `translate.<源>.<项>`。
+fn field_key(provider: &str, field: &str) -> String {
+    match (provider, field) {
+        ("deepl", "key") => SECRET_DEEPL.into(),
+        ("openai", "key") => SECRET_OPENAI.into(),
+        _ => format!("translate.{provider}.{field}"),
+    }
+}
+
+fn field(app: &AppHandle, provider: &str, name: &str) -> String {
+    secret(app, &field_key(provider, name)).unwrap_or_default()
+}
+
+/// 存 / 清掉某个源的某一项（密钥、应用 ID、区域……都加密存在密钥表里，不进设置文件、不参与同步）。
+pub fn set_field(
+    app: &AppHandle,
+    provider: &str,
+    name: &str,
+    value: Option<&str>,
+) -> AppResult<()> {
+    let known = match more::builtin(provider) {
+        Some(b) => b.fields,
+        None => more::CUSTOM_FIELDS,
+    };
+    if !known.iter().any(|f| f.key == name) {
+        return Err(AppError::msg("这个翻译源没有这一项"));
+    }
+    state(app)
+        .db
+        .with(|c| secrets::set(c, &field_key(provider, name), value))?;
+    // 换了密钥：以前失败 / 成功的结果都不算数了
+    state(app).translate.cache.lock().clear();
+    Ok(())
+}
+
+fn fields_of(app: &AppHandle, provider: &str, specs: &[more::FieldSpec]) -> Vec<FieldInfo> {
+    specs
+        .iter()
+        .map(|f| {
+            let value = secret(app, &field_key(provider, f.key));
+            FieldInfo {
+                key: f.key.into(),
+                label: crate::i18n::text(f.label),
+                secret: f.secret,
+                required: f.required,
+                hint: crate::i18n::text(f.hint),
+                set: value.is_some(),
+                value: value.map(|v| if f.secret { secrets::masked(&v) } else { v }),
+            }
+        })
+        .collect()
 }
 
 /// 全部翻译源，按设置里的顺序。
 pub fn list_providers(app: &AppHandle) -> Vec<ProviderInfo> {
     let st = state(app);
-    let entries = st.settings.read().translate.providers.clone();
-    entries
-        .into_iter()
-        .map(|p| {
-            let configured = match p.id.as_str() {
-                "deepl" => secret(app, SECRET_DEEPL).is_some(),
-                "openai" => secret(app, SECRET_OPENAI).is_some(),
-                _ => true,
-            };
-            ProviderInfo {
-                name: crate::i18n::text(provider_name(&p.id)),
-                free: is_free(&p.id),
-                configured,
-                enabled: p.enabled,
-                id: p.id,
+    let settings = st.settings.read().translate.clone();
+    settings
+        .providers
+        .iter()
+        .filter_map(|p| {
+            if let Some(b) = more::builtin(&p.id) {
+                let fields = fields_of(app, b.id, b.fields);
+                return Some(ProviderInfo {
+                    name: crate::i18n::text(b.name),
+                    free: b.free,
+                    custom: false,
+                    kind: None,
+                    configured: fields.iter().all(|f| f.set || !f.required),
+                    enabled: p.enabled,
+                    fields,
+                    id: p.id.clone(),
+                });
             }
+            let c = settings.custom.iter().find(|c| c.id == p.id)?;
+            let ready = match c.kind.as_str() {
+                "ai" => !c.url.trim().is_empty() && !c.model.trim().is_empty(),
+                _ => !c.url.trim().is_empty(),
+            };
+            Some(ProviderInfo {
+                name: c.name.clone(),
+                free: false,
+                custom: true,
+                kind: Some(c.kind.clone()),
+                configured: ready,
+                enabled: p.enabled,
+                fields: fields_of(app, &c.id, more::CUSTOM_FIELDS),
+                id: p.id.clone(),
+            })
         })
         .collect()
 }
@@ -227,12 +309,56 @@ pub async fn translate(app: &AppHandle, req: TranslateRequest) -> AppResult<Tran
             },
             "openai" => match secret(app, SECRET_OPENAI) {
                 Some(k) => {
-                    providers::openai(&ctx, &settings.custom_base_url, &settings.custom_model, &k)
-                        .await
+                    providers::openai(
+                        &ctx,
+                        &settings.custom_base_url,
+                        &settings.custom_model,
+                        &k,
+                        "",
+                    )
+                    .await
                 }
                 None => Err(AppError::msg("未填写 AI 接口密钥")),
             },
-            other => Err(AppError::msg(format!("未知翻译源 {other}"))),
+            id @ ("baidu" | "caiyun" | "niutrans" | "azure" | "tencentcloud" | "volcengine") => {
+                let get = |name: &str| field(app, id, name);
+                let missing = more::builtin(id)
+                    .is_some_and(|b| b.fields.iter().any(|f| f.required && get(f.key).is_empty()));
+                if missing {
+                    Err(AppError::msg("这个翻译源的密钥还没填全"))
+                } else {
+                    match id {
+                        "baidu" => more::baidu(&ctx, &get("appid"), &get("key")).await,
+                        "caiyun" => more::caiyun(&ctx, &get("token")).await,
+                        "niutrans" => more::niutrans(&ctx, &get("apikey")).await,
+                        "azure" => more::azure(&ctx, &get("key"), &get("region")).await,
+                        "tencentcloud" => {
+                            more::tencent_cloud(
+                                &ctx,
+                                &get("secretId"),
+                                &get("secretKey"),
+                                &get("region"),
+                            )
+                            .await
+                        }
+                        _ => more::volcengine(&ctx, &get("accessKey"), &get("secretKey")).await,
+                    }
+                }
+            }
+            other => match settings.custom.iter().find(|c| c.id == other) {
+                Some(c) => {
+                    let key = field(app, &c.id, "key");
+                    match c.kind.as_str() {
+                        "ai" => providers::openai(&ctx, &c.url, &c.model, &key, &c.prompt).await,
+                        "deeplx" => more::deeplx(&ctx, &c.url, &key).await,
+                        _ => {
+                            more::http_template(&ctx, &c.url, &c.headers, &c.body, &c.path, &key)
+                                .await
+                        }
+                    }
+                }
+                None => Err(AppError::msg(format!("未知翻译源 {other}"))),
+            },
         };
         match result {
             Ok(out) if !out.text.trim().is_empty() => {

@@ -12,10 +12,10 @@ use windows::Win32::Graphics::Gdi::{
 use xcap::Monitor;
 
 use crate::error::{AppError, AppResult};
-use crate::platform::{MonitorId, MonitorInfo, PhysicalRect};
+use crate::platform::{MonitorId, MonitorInfo, PhysicalRect, WindowHandle};
 
 /// 屏幕上这一块现在的画面。Windows 上还没做（抓整块屏再裁太重），页面按应用的深浅色自己画。
-pub fn patch(_rect: PhysicalRect) -> Option<RgbaImage> {
+pub fn patch(_rect: PhysicalRect, _below: Option<WindowHandle>) -> Option<RgbaImage> {
     None
 }
 

@@ -29,6 +29,7 @@ pub type CGEventTapProxy = *mut c_void;
 
 // CGWindowListOption
 pub const kCGWindowListOptionOnScreenOnly: u32 = 1 << 0;
+pub const kCGWindowListOptionOnScreenBelowWindow: u32 = 1 << 2;
 pub const kCGWindowListExcludeDesktopElements: u32 = 1 << 4;
 pub const kCGNullWindowID: CGWindowID = 0;
 // CGWindowImageOption

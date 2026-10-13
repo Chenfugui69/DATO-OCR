@@ -173,6 +173,7 @@ pub fn run() {
             commands::capture::editor_finish,
             commands::capture::editor_close,
             commands::capture::editor_open_shot,
+            commands::capture::capture_toolbar_glass,
             commands::clipboard::clipboard_query,
             commands::clipboard::clipboard_get,
             commands::clipboard::clipboard_stats,
@@ -180,6 +181,9 @@ pub fn run() {
             commands::clipboard::clipboard_icon_colors,
             commands::clipboard::clipboard_file_icon,
             commands::clipboard::clipboard_smart_suggest,
+            commands::clipboard::mail_codes_status,
+            commands::clipboard::mail_codes_set_password,
+            commands::clipboard::mail_codes_test,
             commands::clipboard::clipboard_preview_open,
             commands::clipboard::clipboard_preview_current,
             commands::clipboard::clipboard_preview_close,
@@ -238,6 +242,8 @@ pub fn run() {
             commands::tools::translate_detect,
             commands::tools::translate_popup_text,
             commands::tools::translate_popup_reserve,
+            commands::tools::translate_popup_preview,
+            commands::tools::translate_set_field,
             commands::ai::ai_models,
             commands::ai::ai_chat,
             commands::ai::ai_cancel,
@@ -245,6 +251,8 @@ pub fn run() {
             commands::ai::ai_set_key,
             commands::ai::ai_open,
             commands::ai::ai_context,
+            commands::ai::ai_attach_image,
+            commands::ai::ai_release_images,
             commands::system::settings_get,
             commands::system::settings_set,
             commands::system::settings_reset,
@@ -441,6 +449,10 @@ fn on_system_event(event: SystemEvent) {
                     platform::warm_up_capture();
                     WARMING.store(false, Ordering::SeqCst);
                 });
+            }
+            if event == SystemEvent::Resumed {
+                // 睡了一觉，邮箱那条连接多半已经断了：关掉让它马上重连，别等到超时
+                otp::mail::kick();
             }
             if event == SystemEvent::DisplayChanged {
                 let ui = app.clone();

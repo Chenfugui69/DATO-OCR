@@ -122,8 +122,9 @@ pub use sys::capture::ScreenRecorder;
 
 /// 屏幕上这一块（屏幕物理像素）现在的画面。拿不到（没权限、平台没做）返回 None。
 /// 划词按钮是一颗玻璃珠：按底下画面的明暗用浅色或深色玻璃，并把这块画面放进珠子里做出透镜 / 磨砂的效果。
-pub fn screen_patch(rect: PhysicalRect) -> Option<RgbaImage> {
-    sys::capture::patch(rect)
+/// `below`：只要这个窗口底下的画面（它自己不算）—— 按钮还显示着就要换位置时，别把旧的那颗抓进去。
+pub fn screen_patch(rect: PhysicalRect, below: Option<WindowHandle>) -> Option<RgbaImage> {
+    sys::capture::patch(rect, below)
 }
 
 /// 预先支付首次抓屏的设备初始化开销（冷 137ms vs 热 49ms），结果丢弃。
@@ -260,6 +261,12 @@ pub fn set_above_dock(window: &WebviewWindow, above: bool) {
 /// 长截图、录 GIF 期间遮罩一直显示着，那时要另外排除掉（提示条、控制条不能被录进去）。
 pub fn set_overlay_capturable(window: &WebviewWindow, visible: bool) {
     sys::effects::set_overlay_capturable(window, visible)
+}
+
+/// 让这个窗口里的页面按屏幕的刷新率刷新（macOS 上网页默认压在 60 帧上下，高刷屏上拖动不跟手）。
+/// 只能在 UI 线程调用。Windows 上的网页本来就跟着屏幕刷新率，不用做事。
+pub fn unlock_frame_rate(window: &WebviewWindow) {
+    sys::effects::unlock_frame_rate(window);
 }
 
 /// 窗口不抢焦点地置顶显示（toast 之类）。

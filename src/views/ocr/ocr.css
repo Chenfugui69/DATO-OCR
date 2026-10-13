@@ -260,6 +260,75 @@ html[data-view='editor'][data-glass='off'] body {
   border-radius: var(--cn-radius-md);
   background: var(--cn-fill-quaternary);
   padding: 6px 8px 8px 10px;
+  transition:
+    background-color 160ms var(--cn-ease-out),
+    box-shadow 160ms var(--cn-ease-out),
+    padding 200ms var(--cn-ease-out);
+  /* 入场：一张接一张地浮上来 */
+  animation: tr-card-in 300ms var(--cn-ease-out) both;
+  animation-delay: calc(var(--tr-i, 0) * 45ms);
+}
+@keyframes tr-card-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px) scale(0.985);
+  }
+}
+/* 折叠 / 展开：高度在 0 和内容高度之间过渡 */
+.tr-card__fold {
+  display: grid;
+  grid-template-rows: 1fr;
+  transition:
+    grid-template-rows 220ms var(--cn-ease-out),
+    opacity 180ms var(--cn-ease-out);
+}
+.tr-card__fold > * {
+  min-height: 0;
+  overflow: hidden;
+}
+.tr-card[data-collapsed] .tr-card__fold {
+  grid-template-rows: 0fr;
+  opacity: 0;
+  pointer-events: none;
+}
+.tr-card[data-collapsed] .tr-card__body {
+  margin-top: 0;
+}
+/* 译文出来的那一下：从略模糊、偏下一点浮上来 */
+.tr-reveal {
+  animation: tr-reveal 320ms var(--cn-ease-out) both;
+}
+@keyframes tr-reveal {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+    filter: blur(3px);
+  }
+}
+/* 复制成功：图标换成对勾，弹一下 */
+.tr-card__copied {
+  color: var(--cn-green, #34c759) !important;
+  animation: tr-copied 320ms var(--cn-ease-out);
+}
+@keyframes tr-copied {
+  40% {
+    transform: scale(1.22);
+  }
+}
+/* 折起来时标题后面那行译文：淡入 */
+.tr-card[data-collapsed] .tr-card__peek {
+  animation: tr-reveal 240ms var(--cn-ease-out) both;
+}
+@media (prefers-reduced-motion: reduce) {
+  .tr-card,
+  .tr-reveal,
+  .tr-card__copied,
+  .tr-card[data-collapsed] .tr-card__peek {
+    animation: none;
+  }
+  .tr-card__fold {
+    transition: none;
+  }
 }
 .tr-card__head {
   display: flex;

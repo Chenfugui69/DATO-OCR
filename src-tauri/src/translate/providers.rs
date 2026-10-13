@@ -216,7 +216,7 @@ static YOUDAO: Mutex<Option<YoudaoKeys>> = Mutex::new(None);
 const YOUDAO_KEY_TTL: Duration = Duration::from_secs(3600);
 const YOUDAO_KEY_SIGN: &str = "asdjnjfenknafdfsdfsd";
 
-fn md5_hex(text: &str) -> String {
+pub(super) fn md5_hex(text: &str) -> String {
     use md5::{Digest, Md5};
     Md5::digest(text.as_bytes())
         .iter()
@@ -531,21 +531,36 @@ fn language_name(code: &str) -> &str {
     }
 }
 
-pub async fn openai(ctx: &Ctx<'_>, base_url: &str, model: &str, key: &str) -> AppResult<Output> {
-    // 提示词写死，不暴露给用户（规格 04 §6.2）
-    let system = format!(
-        "You are a translation engine. Translate the user's text into {}.\n\
-         Output ONLY the translation, no explanations, no quotes, no markdown.\n\
-         Preserve the original line breaks and paragraph structure.\n\
-         If the text is already in {}, translate it into English instead.",
-        language_name(ctx.to),
-        language_name(ctx.to)
-    );
+/// `prompt`：用户自己添加的 AI 翻译可以写自己的提示词（`{to}` `{from}` 换成语言的英文名）；空 = 用内置的。
+/// `key` 为空就不带鉴权头（本机跑的模型服务不要密钥）。
+pub async fn openai(
+    ctx: &Ctx<'_>,
+    base_url: &str,
+    model: &str,
+    key: &str,
+    prompt: &str,
+) -> AppResult<Output> {
+    let system = if prompt.trim().is_empty() {
+        format!(
+            "You are a translation engine. Translate the user's text into {}.\n\
+             Output ONLY the translation, no explanations, no quotes, no markdown.\n\
+             Preserve the original line breaks and paragraph structure.\n\
+             If the text is already in {}, translate it into English instead.",
+            language_name(ctx.to),
+            language_name(ctx.to)
+        )
+    } else {
+        prompt.replace("{to}", language_name(ctx.to)).replace(
+            "{from}",
+            ctx.from.map_or("the source language", language_name),
+        )
+    };
     let url = format!("{}/chat/completions", base_url.trim_end_matches('/'));
-    let resp: Value = ctx
-        .client
-        .post(url)
-        .bearer_auth(key)
+    let mut request = ctx.client.post(url);
+    if !key.is_empty() {
+        request = request.bearer_auth(key);
+    }
+    let resp: Value = request
         .json(&json!({
             "model": model,
             "temperature": 0.2,
@@ -569,7 +584,7 @@ pub async fn openai(ctx: &Ctx<'_>, base_url: &str, model: &str, key: &str) -> Ap
 }
 
 /// 各家返回的检测语言码 → 内部语言码。
-fn normalize_detected(code: &str) -> String {
+pub(super) fn normalize_detected(code: &str) -> String {
     let lower = code.to_ascii_lowercase();
     match lower.as_str() {
         "zh-hans" | "zh-cn" | "zh-chs" | "zh" => "zh".into(),

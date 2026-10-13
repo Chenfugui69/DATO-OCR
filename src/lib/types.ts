@@ -67,6 +67,8 @@ export interface Settings {
     targetLanguage: string;
     /** 全部翻译源及顺序，排第一的可用源是默认源 */
     providers: { id: ProviderId; enabled: boolean }[];
+    /** 用户自己添加的翻译（内置里没有的） */
+    custom: CustomTranslator[];
     showAllProviders: boolean;
     customBaseUrl: string;
     customModel: string;
@@ -112,6 +114,8 @@ export interface Settings {
     otpMask: boolean;
     /** 验证码在剪贴板历史里留多久（秒），0 = 不删 */
     otpExpireSecs: number;
+    /** 邮箱验证码：用 IMAP 连邮箱读新邮件里的验证码（密码不在这里，另存在加密的密钥表里） */
+    mailCodes: MailCodeSettings;
     /** 智能推荐交给 AI 模型挑（关掉 = 只在本机按词打分） */
     smartAi: boolean;
     /** 智能推荐用的模型（"服务商 id/模型"），空 = 跟 AI 对话的默认模型 */
@@ -276,6 +280,8 @@ export interface CaptureSettings {
   toolbarTools: ToolId[];
   toolbarActions: MidAction[];
   toolbarOrder: TailAction[];
+  /** 截图工具条的样子：glass = 半透明玻璃条 | frosted = 磨砂玻璃 */
+  toolbarStyle: 'glass' | 'frosted';
   finishAction: 'copy' | 'copyAndSave';
   saveToLibrary: boolean;
   saveDirectory: string | null;
@@ -483,7 +489,7 @@ export interface Shot {
   width: number;
   height: number;
   sizeBytes: number;
-  kind: 'normal' | 'longshot';
+  kind: 'normal' | 'longshot' | 'gif';
   sourceApp: string | null;
   ocrText: string | null;
   hasAnnotations: boolean;
@@ -675,15 +681,47 @@ export interface ChatTurn {
   streaming?: boolean;
 }
 
-export type ProviderId = 'bing' | 'transmart' | 'youdao' | 'google' | 'deepl' | 'openai';
+/** 翻译源的标识：内置的是固定的几个名字，用户自己添加的以 custom- 开头 */
+export type ProviderId = string;
+
+/** 用户自己添加的翻译。密钥不在这里（加密存在后端） */
+export interface CustomTranslator {
+  id: string;
+  name: string;
+  /** ai = OpenAI 兼容的模型接口 | deeplx = DeepLX 这类自建接口 | http = 自己描述的任意 HTTP 接口 */
+  kind: 'ai' | 'deeplx' | 'http';
+  url: string;
+  model: string;
+  prompt: string;
+  headers: string;
+  body: string;
+  path: string;
+}
+
+/** 翻译源要用户填的一项（密钥、应用 ID、区域……） */
+export interface ProviderField {
+  key: string;
+  label: string;
+  secret: boolean;
+  required: boolean;
+  hint: string;
+  set: boolean;
+  /** 密钥类的是打码后的样子，其余的是原样 */
+  value: string | null;
+}
 
 export interface ProviderInfo {
   id: ProviderId;
   name: string;
   free: boolean;
-  /** 自填源要填了密钥才算可用 */
+  /** 用户自己添加的；kind 是它的类型 */
+  custom: boolean;
+  kind: CustomTranslator['kind'] | null;
+  /** 自填源要把必填的几项填了才算可用 */
   configured: boolean;
   enabled: boolean;
+  /** 要用户填的几项和现在填没填 */
+  fields: ProviderField[];
 }
 
 export interface ToastPayload {
@@ -725,3 +763,26 @@ export interface SmartSuggestion {
   /** 看的是哪个应用 */
   app: string | null;
 }
+
+/** 邮箱验证码连哪个邮箱 */
+export interface MailCodeSettings {
+  enabled: boolean;
+  /** qq | 163 | gmail | icloud | proton | custom */
+  provider: string;
+  address: string;
+  /** 服务器地址，只有 custom 用 */
+  host: string;
+  /** 端口，custom 和 proton 用；0 = 默认 */
+  port: number;
+  /** tls | starttls，只有 custom 用 */
+  security: string;
+}
+
+/** 邮箱验证码的连接状态 */
+export type MailCodesStatus = (
+  | { state: 'off' | 'incomplete' | 'offline' | 'connecting' | 'connected' }
+  | { state: 'error'; message: string }
+) & {
+  /** 存没存密码（密码本身读不回来） */
+  hasPassword: boolean;
+};

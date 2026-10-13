@@ -518,20 +518,20 @@ pub(crate) fn store_external_text(app: &AppHandle, text: &str, source: &str) -> 
 pub(crate) fn store_otp(
     app: &AppHandle,
     code: &str,
-    sms: &str,
+    origin: &str,
     source: &str,
     app_path: Option<&Path>,
+    device_kind: Option<&str>,
 ) -> AppResult<i64> {
     let st = state(app);
-    let mut item = otp_clip(code, Some(sms));
+    let mut item = otp_clip(code, Some(origin));
     if let Some(id) = st.db.with(|c| repo::find_duplicate(c, &item.hash))? {
         st.db.with(|c| repo::touch(c, id))?;
         let _ = app.emit(events::CLIPBOARD_CHANGED, ClipChanged { id, is_new: false });
         return Ok(id);
     }
     item.source_app = Some(source.to_string());
-    // 短信只有 iPhone 收得到，转发到 Mac 的也是从 iPhone 来的
-    item.device_kind = Some("iphone".into());
+    item.device_kind = device_kind.map(str::to_string);
     item.source_app_path = app_path.map(|p| p.to_string_lossy().into_owned());
     item.source_icon = app_path.and_then(|p| app_icon(app, p));
     let id = st.db.with(|c| repo::insert(c, &item))?;

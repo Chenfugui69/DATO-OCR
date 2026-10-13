@@ -43,6 +43,7 @@ gpu, web, app, ws = map(int, sys.argv[3:7])
 if "error" in end or "n" not in end:
     sys.exit(f"{name}: 基准没跑完：{end}")
 n = end["n"]
-print(f"{name:<22} 帧间隔 平均 {end['avg']}ms  p95 {end['p95']}  最大 {end['max']}  超过20ms {end['slow']} 帧"
+js = f"  事件处理 {end['js']}ms/帧" if "js" in end else ""
+print(f"{name:<22}{js} 帧间隔 平均 {end['avg']}ms  p95 {end['p95']}  最大 {end['max']}  超过20ms {end['slow']} 帧"
       f" | 每帧 CPU(ms)：GPU进程 {gpu/n:.2f}  网页进程 {web/n:.2f}  应用 {app/n:.2f}  WindowServer {ws/n:.2f}  合计 {(gpu+web+app+ws)/n:.2f}")
 PY

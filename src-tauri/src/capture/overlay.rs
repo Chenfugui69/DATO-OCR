@@ -96,6 +96,8 @@ fn ensure_one(app: &AppHandle, info: &MonitorInfo) -> AppResult<WebviewWindow> {
         // 焦点在 show 时再抢。预建阶段抢焦点会把用户正在打字的窗口顶掉
         .focused(false);
     let window = platform::build_floating(overlay, FloatingKind::Overlay)?;
+    // 拖选、拖选区框要跟得上高刷屏上的鼠标
+    platform::unlock_frame_rate(&window);
     place(&window, info)?;
     platform::set_exclude_from_capture(&window, true);
     Ok(window)

@@ -8,6 +8,7 @@
 //! 也到不了页面，原程序的焦点和选区都还在，上层随后模拟 ⌘C 就能取到文字。
 
 use std::ptr::NonNull;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::Sender;
 
 use block2::RcBlock;
@@ -144,9 +145,13 @@ fn cursor_shape() -> String {
     }
 }
 
-/// 问系统：当前有焦点的那个控件里是不是选中了文字。要「辅助功能」权限（取选中的字本来也要）；
+/// 每按下一次左键加一：松开后隔一小会儿才上报"选了字"，这期间又按下了（双击接三击）就不报了，
+/// 免得上一次的按钮在新的一次选字中途冒出来。
+static PRESS: AtomicU64 = AtomicU64::new(0);
+
+/// 问系统：当前有焦点的那个控件里选中的文字（空串 = 没选中）。要「辅助功能」权限（取选中的字本来也要）；
 /// 没权限、对方程序不支持（有的浏览器、自绘界面）时返回 None，由光标的样子说了算。
-fn has_selected_text() -> Option<bool> {
+fn selected_text() -> Option<String> {
     use objc2_foundation::NSString;
     // SAFETY: 都是 CoreFoundation / 辅助功能的只读查询；拿到的对象逐个释放。
     unsafe {
@@ -182,8 +187,9 @@ fn has_selected_text() -> Option<bool> {
         if err != 0 || text.is_null() {
             return None;
         }
+        // CFString 和 NSString 是同一种对象
         let selected = (ffi::CFGetTypeID(text) == ffi::CFStringGetTypeID())
-            .then(|| ffi::CFStringGetLength(text) > 0);
+            .then(|| (*text.cast::<NSString>()).to_string());
         ffi::CFRelease(text);
         selected
     }
@@ -217,6 +223,7 @@ fn handle(event: &NSEvent) -> bool {
             send(&st, SelectionEvent::Dismiss);
         }
         send(&st, SelectionEvent::PointerDown);
+        PRESS.fetch_add(1, Ordering::SeqCst);
         let scale = screens
             .iter()
             .find(|s| s.physical.contains_point(pt.0, pt.1))
@@ -244,26 +251,29 @@ fn handle(event: &NSEvent) -> bool {
         let (alt, ctrl) = (down.alt || alt, down.ctrl || ctrl);
         let (x0, x1) = (down.at.0.min(pt.0), down.at.0.max(pt.0));
         let (y0, y1) = (down.at.1.min(pt.1), down.at.1.max(pt.1));
-        let selected = SelectionEvent::Selected {
+        let selected = move |text| SelectionEvent::Selected {
             anchor: PhysicalRect::new(x0, y0, (x1 - x0) as u32, (y1 - y0) as u32),
             end: pt,
             alt,
             ctrl,
+            text,
         };
         let ibeam = down.ibeam || is_ibeam_cursor();
         if alt || ctrl {
-            send(&st, selected);
+            send(&st, selected(None));
         } else if let Some(tx) = st.tx.clone() {
             // 直接问系统有没有选中文字，比猜光标准。要跨进程问，放到别的线程，稍等一下让对方把选区更新完。
             // 问不到（没有「辅助功能」权限、对方程序不支持）才看光标像不像 I 形
             let cursor = cursor_shape();
+            let press = PRESS.load(Ordering::SeqCst);
             std::thread::spawn(move || {
                 std::thread::sleep(std::time::Duration::from_millis(80));
-                let asked = has_selected_text();
-                let show = asked.unwrap_or(ibeam);
-                tracing::debug!(?asked, ibeam, %cursor, show, "划词手势");
-                if show {
-                    let _ = tx.send(selected);
+                let text = selected_text();
+                let show = text.as_ref().map_or(ibeam, |t| !t.is_empty());
+                let again = PRESS.load(Ordering::SeqCst) != press;
+                tracing::debug!(asked = ?text.as_ref().map(|t| t.chars().count()), ibeam, %cursor, show, again, "划词手势");
+                if show && !again {
+                    let _ = tx.send(selected(text));
                 }
             });
         }

@@ -16,10 +16,10 @@ use objc2::runtime::{AnyClass, AnyObject, Bool, ClassBuilder, Imp, Sel};
 use objc2::{sel, ClassType, MainThreadMarker};
 use objc2_app_kit::{
     NSAnimatablePropertyContainer, NSAnimationContext, NSApplication, NSAutoresizingMaskOptions,
-    NSEvent, NSPanel, NSUserInterfaceItemIdentification, NSView, NSVisualEffectBlendingMode,
-    NSVisualEffectMaterial, NSVisualEffectState, NSVisualEffectView, NSWindow,
-    NSWindowAnimationBehavior, NSWindowCollectionBehavior, NSWindowOrderingMode,
-    NSWindowSharingType, NSWindowStyleMask,
+    NSBezierPath, NSColor, NSEvent, NSImage, NSImageResizingMode, NSPanel,
+    NSUserInterfaceItemIdentification, NSView, NSVisualEffectBlendingMode, NSVisualEffectMaterial,
+    NSVisualEffectState, NSVisualEffectView, NSWindow, NSWindowAnimationBehavior,
+    NSWindowCollectionBehavior, NSWindowOrderingMode, NSWindowSharingType, NSWindowStyleMask,
 };
 use objc2_foundation::{NSObjectProtocol, NSString, NSTimer};
 use objc2_quartz_core::CAMediaTimingFunction;
@@ -470,13 +470,43 @@ pub fn set_backdrop(window: &WebviewWindow, radius: Option<u32>) -> bool {
             content.addSubview_positioned_relativeTo(&view, NSWindowOrderingMode::Below, None);
             view
         });
+        let points = f64::from(radius) / ns.backingScaleFactor().max(1.0);
         if let Some(layer) = view.layer() {
-            layer.setCornerRadius(f64::from(radius) / ns.backingScaleFactor().max(1.0));
+            layer.setCornerRadius(points);
             layer.setMasksToBounds(true);
         }
+        // 光靠图层圆角裁不干净：窗口背后的模糊是窗口服务器画的，它按视图的矩形来，四个角上会留下一点方角的
+        // 影子（浅色背景上看得出来）。系统给的办法是蒙版图：一张能拉伸的圆角矩形，模糊只画在它盖住的地方
+        view.setMaskImage(rounded_mask(points).as_deref());
         true
     })
     .unwrap_or(false)
+}
+
+/// 圆角矩形蒙版：四个角各留一个圆角那么大，中间那一格拉伸，多大的视图都能用。半径为 0 = 不要蒙版。
+fn rounded_mask(radius: f64) -> Option<Retained<NSImage>> {
+    if radius < 0.5 {
+        return None;
+    }
+    let side = radius * 2.0 + 1.0;
+    let draw = RcBlock::new(move |rect: objc2_foundation::NSRect| -> Bool {
+        NSColor::blackColor().setFill();
+        NSBezierPath::bezierPathWithRoundedRect_xRadius_yRadius(rect, radius, radius).fill();
+        Bool::YES
+    });
+    let image = NSImage::imageWithSize_flipped_drawingHandler(
+        objc2_foundation::NSSize::new(side, side),
+        false,
+        &draw,
+    );
+    image.setCapInsets(objc2_foundation::NSEdgeInsets {
+        top: radius,
+        left: radius,
+        bottom: radius,
+        right: radius,
+    });
+    image.setResizingMode(NSImageResizingMode::Stretch);
+    Some(image)
 }
 
 /// 窗口大小变了：背板靠自动布局跟着变，不用做事。
@@ -806,4 +836,63 @@ pub fn window_effects(glass: bool) -> Option<WindowEffectsConfig> {
             .state(EffectState::FollowsWindowActiveState)
             .build()
     })
+}
+
+/// 让这个窗口里的页面按屏幕的刷新率刷新（120Hz、165Hz）。
+///
+/// 系统的网页内核默认把页面的刷新压在 60 帧上下（"Prefer Page Rendering Updates near 60fps"，省电）：
+/// 120Hz 的屏上是 60 帧，165Hz 的屏上是 55 帧。截图时拖选区框，鼠标指针是按屏幕刷新率走的，
+/// 框却只有它一半、三分之一的帧率，看着就是"跟不上手、不顺滑"。
+///
+/// 这个开关没有公开的接口，只有内核自己的功能开关表（`+[WKPreferences _features]`）里有；找不到
+/// （系统版本不带）就什么都不做，页面照旧 60 帧。
+pub fn unlock_frame_rate(window: &WebviewWindow) {
+    const FEATURE: &str = "PreferPageRenderingUpdatesNear60FPSEnabled";
+    let label = window.label().to_string();
+    let result = window.with_webview(move |webview| {
+        use objc2::msg_send;
+        use objc2_foundation::NSArray;
+        let wk = webview.inner().cast::<AnyObject>();
+        if wk.is_null() {
+            return;
+        }
+        // SAFETY: 在主线程上（with_webview 保证），对象都是活的；每个私有方法先问过"有没有"再调。
+        unsafe {
+            let Some(prefs_class) = AnyClass::get(c"WKPreferences") else {
+                return;
+            };
+            let responds: bool = msg_send![prefs_class, respondsToSelector: sel!(_features)];
+            if !responds {
+                return;
+            }
+            let config: *mut AnyObject = msg_send![wk, configuration];
+            if config.is_null() {
+                return;
+            }
+            let prefs: *mut AnyObject = msg_send![config, preferences];
+            if prefs.is_null() {
+                return;
+            }
+            let can_set: bool = msg_send![prefs, respondsToSelector: sel!(_setEnabled:forFeature:)];
+            if !can_set {
+                return;
+            }
+            let features: Option<Retained<NSArray<AnyObject>>> = msg_send![prefs_class, _features];
+            let Some(features) = features else {
+                return;
+            };
+            for feature in features.iter() {
+                let key: Option<Retained<NSString>> = msg_send![&*feature, key];
+                if key.is_some_and(|k| k.to_string() == FEATURE) {
+                    let _: () = msg_send![prefs, _setEnabled: false, forFeature: &*feature];
+                    tracing::debug!(%label, "页面刷新不再限制在 60 帧");
+                    return;
+                }
+            }
+            tracing::debug!(%label, "这个系统的网页内核没有 60 帧的开关，页面刷新率不变");
+        }
+    });
+    if let Err(err) = result {
+        tracing::debug!("拿不到网页视图，页面刷新率不变：{err}");
+    }
 }

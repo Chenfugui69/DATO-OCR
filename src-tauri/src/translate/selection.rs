@@ -10,7 +10,7 @@
 //! 读"当前选中的文字"没有通用 API，只能模拟 Ctrl+C 再读剪贴板。这会污染剪贴板，
 //! 所以：先整份备份 → 模拟复制 → 读文字 → **原样恢复** → 两次变化都不进历史。
 
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use parking_lot::Mutex;
@@ -18,7 +18,9 @@ use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager};
 
 use crate::error::AppResult;
-use crate::platform::{self, FloatingKind, PhysicalRect, SelectionEvent, SelectionWatchGuard};
+use crate::platform::{
+    self, FloatingKind, PhysicalRect, SelectionEvent, SelectionWatchGuard, WindowHandle,
+};
 use crate::state::state;
 use crate::{clipboard, events, wm};
 
@@ -57,8 +59,9 @@ fn png_data_url(image: &image::RgbaImage) -> Option<String> {
     ))
 }
 
-/// 按钮的窗口比圆点大一圈（四周各留这么多），给玻璃的投影和悬停放大留地方。圆点多大在设置里（button_size）
-const BUTTON_INSET: f64 = 7.0;
+/// 按钮的窗口比圆点大一圈（四周各留这么多），给玻璃的投影和悬停放大留地方：投影要完整地落在窗口里，
+/// 不然被窗口的边切掉一截，看着是一块方的灰影。页面里的样式按同一个数留边。圆点多大在设置里（button_size）
+const BUTTON_INSET: f64 = 12.0;
 /// 没去碰它的话，按钮显示这么久后自己收起
 const BUTTON_TTL: Duration = Duration::from_millis(3500);
 
@@ -72,8 +75,12 @@ pub fn current_reserve() -> f64 {
     *RESERVE.lock()
 }
 static WATCH: Mutex<Option<SelectionWatchGuard>> = Mutex::new(None);
-/// 悬浮按钮当前的位置（屏幕物理坐标）；None = 没显示
+/// 悬浮按钮那颗圆点当前的位置（屏幕物理坐标，不含窗口四周的留边）；None = 没显示
 static BUTTON: Mutex<Option<PhysicalRect>> = Mutex::new(None);
+/// 按钮的窗口这会儿是不是真的摆在屏幕上（藏起来是排到主线程上做的，比 BUTTON 清空晚一点）
+static BUTTON_ON_SCREEN: AtomicBool = AtomicBool::new(false);
+/// 按钮窗口的句柄：抓它底下的画面时用（0 = 还没建）
+static BUTTON_HANDLE: AtomicU64 = AtomicU64::new(0);
 /// 每显示一次按钮加一，自动收起的计时器靠它判断按钮是不是已经换了一次
 static BUTTON_GEN: AtomicU64 = AtomicU64::new(0);
 
@@ -87,6 +94,47 @@ pub struct TranslatePopup {
     pub text: String,
     /// 面板上方预留的高度（逻辑像素）
     pub reserve: f64,
+    /// 设置页里调外观时的预览：摆在主窗口旁边，不抢焦点，点外面也不收起
+    pub preview: bool,
+}
+
+/// 面板这会儿是不是设置页的预览
+static PREVIEW: AtomicBool = AtomicBool::new(false);
+/// 预览时面板里翻译的例句
+const PREVIEW_TEXT: &str = "The quick brown fox jumps over the lazy dog. Adjust the settings and this panel follows, at exactly the size you will see when translating.";
+
+/// 设置页调划词面板的外观时，在主窗口旁边把真的面板亮出来（就是平时弹出来的那个窗口，大小、材质、圆角都是实际的）；
+/// 改了设置再调一次就按新的重摆。`show = false` 收起。
+pub fn preview_popup(app: &AppHandle, show: bool) {
+    if show {
+        open_popup(app, PREVIEW_TEXT.into(), None, true);
+    } else if PREVIEW.swap(false, Ordering::SeqCst) {
+        let ui = app.clone();
+        let _ = app.run_on_main_thread(move || {
+            if let Some(window) = ui.get_webview_window(WINDOW) {
+                let _ = window.hide();
+            }
+        });
+    }
+}
+
+/// 预览摆在哪：主窗口右边，放不下就左边，再不行就压在主窗口右侧里面。
+fn preview_anchor(app: &AppHandle, w: f64) -> Option<(i32, i32)> {
+    let main = app.get_webview_window(wm::MAIN)?;
+    let (pos, size) = (main.outer_position().ok()?, main.outer_size().ok()?);
+    let (left, right) = (pos.x, pos.x + size.width as i32);
+    let monitor = wm::monitor_at(left + size.width as i32 / 2, pos.y + 40)?;
+    let s = monitor.scale_factor.max(0.5);
+    let (gap, need) = ((16.0 * s) as i32, (w * s) as i32);
+    let wa = monitor.work_area;
+    let x = if right + gap + need <= wa.right() {
+        right + gap
+    } else if left - gap - need >= wa.x {
+        left - gap - need
+    } else {
+        right - gap - need
+    };
+    Some((x, pos.y + (72.0 * s) as i32))
 }
 
 /// 快捷键入口：翻译当前选中的文字，气泡出现在鼠标旁边。
@@ -216,13 +264,26 @@ fn prewarm_button(app: &AppHandle) {
             // 点它、显示它都不能抢走用户正在选字的那个窗口的焦点
             platform::set_no_activate(&window);
             platform::set_exclude_from_capture(&window, true);
+            if let Ok(handle) = platform::native_handle(&window) {
+                BUTTON_HANDLE.store(handle, Ordering::SeqCst);
+            }
         }
         Err(err) => tracing::warn!("创建划词按钮失败：{err}"),
     }
 }
 
 pub fn show_popup(app: &AppHandle, text: String, at: Option<(i32, i32)>) {
-    *CURRENT.lock() = Some(text.clone());
+    open_popup(app, text, at, false);
+}
+
+fn open_popup(app: &AppHandle, text: String, at: Option<(i32, i32)>, preview: bool) {
+    // 预览已经开着、只是设置又变了：只按新的大小、材质重摆窗口，不再让页面重新翻译一遍
+    // （每动一下滑块面板就整个刷新一次，根本没法调）
+    let was_preview = PREVIEW.swap(preview, Ordering::SeqCst);
+    let refresh_only = preview && was_preview;
+    if !refresh_only {
+        *CURRENT.lock() = Some(text.clone());
+    }
     let (w, h) = popup_size(app);
     let app = app.clone();
     let _ = app.clone().run_on_main_thread(move || {
@@ -230,6 +291,11 @@ pub fn show_popup(app: &AppHandle, text: String, at: Option<(i32, i32)>) {
         let Some(window) = app.get_webview_window(WINDOW) else {
             return;
         };
+        if preview {
+            // 材质、圆角按最新的设置来（平时是改设置时另外应用的，这里顺手对齐一次）
+            apply_popup_material(&app);
+        }
+        let at = if preview { preview_anchor(&app, w) } else { at };
         let (anchor, monitor) = match at {
             Some((x, y)) => (wm::Anchor::Point(x, y), wm::monitor_at(x, y)),
             None => (wm::Anchor::Cursor, wm::monitor_under_cursor()),
@@ -242,11 +308,23 @@ pub fn show_popup(app: &AppHandle, text: String, at: Option<(i32, i32)>) {
             reserve = reserve_above(&app, &window, &monitor, placed, h);
         }
         *RESERVE.lock() = reserve;
+        if refresh_only && window.is_visible().unwrap_or(false) {
+            return;
+        }
         let _ = app.emit_to(
             WINDOW,
             events::TRANSLATE_REQUEST,
-            TranslatePopup { text, reserve },
+            TranslatePopup {
+                text,
+                reserve,
+                preview,
+            },
         );
+        if preview {
+            // 用户正在主窗口里拖滑块，不能把焦点抢走
+            let _ = platform::show_without_activate(&window);
+            return;
+        }
         let _ = window.show();
         let _ = platform::take_focus(&window);
     });
@@ -343,14 +421,21 @@ pub fn reconfigure(app: &AppHandle) {
 }
 
 fn on_event(app: &AppHandle, event: SelectionEvent) {
-    tracing::debug!(?event, "划词事件");
+    // 选中的字不写进日志
+    match &event {
+        SelectionEvent::Selected { anchor, end, .. } => {
+            tracing::debug!(?anchor, ?end, "划词事件：选了字");
+        }
+        other => tracing::debug!(event = ?other, "划词事件"),
+    }
     match event {
         SelectionEvent::Selected {
             anchor,
             end,
             alt,
             ctrl,
-        } => on_selected(app, anchor, end, alt, ctrl),
+            text,
+        } => on_selected(app, anchor, end, alt, ctrl, text.as_deref()),
         SelectionEvent::ButtonClicked => {
             let rect = *BUTTON.lock();
             hide_button(app);
@@ -366,6 +451,9 @@ fn on_event(app: &AppHandle, event: SelectionEvent) {
 /// 鼠标按下了：翻译面板开着、而且不是按在面板上，就告诉面板"点了外面"，由它决定收不收（钉住、对话模式不收）。
 /// 面板平时靠失焦收起，但它有时拿不到键盘焦点（那就永远等不到失焦），这条路不依赖焦点。
 fn outside_click(app: &AppHandle) {
+    if PREVIEW.load(Ordering::SeqCst) {
+        return;
+    }
     let ui = app.clone();
     let _ = app.run_on_main_thread(move || {
         let Some(window) = ui.get_webview_window(WINDOW) else {
@@ -377,7 +465,14 @@ fn outside_click(app: &AppHandle) {
     });
 }
 
-fn on_selected(app: &AppHandle, anchor: PhysicalRect, end: (i32, i32), alt: bool, ctrl: bool) {
+fn on_selected(
+    app: &AppHandle,
+    anchor: PhysicalRect,
+    end: (i32, i32),
+    alt: bool,
+    ctrl: bool,
+    text: Option<&str>,
+) {
     let st = state(app);
     let (sel, offline) = {
         let s = st.settings.read();
@@ -402,45 +497,84 @@ fn on_selected(app: &AppHandle, anchor: PhysicalRect, end: (i32, i32), alt: bool
         hide_button(app);
         translate_selection(app, Some(end));
     } else if sel.show_button {
-        show_button(app, anchor, &sel);
+        // 网址、路径、代码这些用不着翻译的不弹（按住修饰键、快捷键是明说要翻，不管这个）
+        if text.is_some_and(|t| !super::worth::worth_translating(t)) {
+            tracing::debug!("划词：选中的是网址 / 路径 / 代码之类，不弹按钮");
+            hide_button(app);
+            return;
+        }
+        // 按下的那个点：包围盒上和松开点相对的那个角
+        let start = (
+            if end.0 == anchor.x {
+                anchor.right()
+            } else {
+                anchor.x
+            },
+            if end.1 == anchor.y {
+                anchor.bottom()
+            } else {
+                anchor.y
+            },
+        );
+        show_button(app, start, end, &sel);
     }
 }
 
+/// 按钮跟着松开鼠标的那个点走（眼睛和鼠标都在那儿），并且放在选区**外面**：
+///
+/// - 选了好几行：往下选的放在松开点的右下，往上选的放在左上 —— 都是顺着选的方向再往外一点，不压住选中的字；
+/// - 只选了一行（或双击 / 三击）：上下按设置里的位置，往回选（从右往左）时左右反过来。
+///
+/// 以前是按"按下点和松开点的包围盒"的角来放，往回选、跨行选的时候按钮会跑到离鼠标很远的那个角上。
 fn show_button(
     app: &AppHandle,
-    anchor: PhysicalRect,
+    start: (i32, i32),
+    end: (i32, i32),
     sel: &crate::settings::SelectionTranslateSettings,
 ) {
-    let position = sel.button_position.as_str();
-    let Some(monitor) = wm::monitor_at(anchor.right(), anchor.bottom()) else {
+    let Some(monitor) = wm::monitor_at(end.0, end.1) else {
         return;
     };
     let s = monitor.scale_factor.max(0.5);
-    let size = ((f64::from(sel.button_size) + BUTTON_INSET * 2.0) * s).round() as i32;
-    // 鼠标一般在文字行的中间，往下 / 往上让开半行多一点，免得盖住字
-    // 窗口四周有一圈留白（BUTTON_INSET），偏移里扣掉，看得见的圆点还在原来的位置
-    let (dx, dy) = (
-        ((4.0 - BUTTON_INSET) * s) as i32,
-        ((14.0 - BUTTON_INSET) * s) as i32,
-    );
-    let (x, y) = match position {
-        "topRight" => (anchor.right() + dx, anchor.y - dy - size),
-        "bottomLeft" => (anchor.x - dx - size, anchor.bottom() + dy),
-        "topLeft" => (anchor.x - dx - size, anchor.y - dy - size),
-        _ => (anchor.right() + dx, anchor.bottom() + dy),
+    let px = |logical: f64| (logical * s).round() as i32;
+    let (dot, inset) = (px(f64::from(sel.button_size)), px(BUTTON_INSET));
+    let (mut right, mut below) = match sel.button_position.as_str() {
+        "topRight" => (true, false),
+        "bottomLeft" => (false, true),
+        "topLeft" => (false, false),
+        _ => (true, true),
     };
+    // 上下差出大半行就算换行了
+    let rows = end.1 - start.1;
+    if rows.abs() > px(12.0) {
+        below = rows > 0;
+        right = rows > 0;
+    } else if end.0 < start.0 {
+        right = !right;
+    }
+    // 鼠标一般在文字行的中间，往下 / 往上让开半行多一点，免得盖住字
+    let (dx, dy) = (px(4.0), px(14.0));
+    let x = if right { end.0 + dx } else { end.0 - dx - dot };
+    let y = if below { end.1 + dy } else { end.1 - dy - dot };
     let wa = monitor.work_area;
-    let x = x.clamp(wa.x, (wa.right() - size).max(wa.x));
-    let y = y.clamp(wa.y, (wa.bottom() - size).max(wa.y));
-    let rect = PhysicalRect::new(x, y, size as u32, size as u32);
+    let x = x.clamp(wa.x, (wa.right() - dot).max(wa.x));
+    let y = y.clamp(wa.y, (wa.bottom() - dot).max(wa.y));
+    let dot_rect = PhysicalRect::new(x, y, dot as u32, dot as u32);
+    let size = (dot + inset * 2) as u32;
+    let rect = PhysicalRect::new(x - inset, y - inset, size, size);
     let generation = BUTTON_GEN.fetch_add(1, Ordering::SeqCst) + 1;
     // 按钮还没显示，这时候把它要盖住的那块画面抓下来：玻璃按它的明暗用浅色或深色，
     // 页面再把这块画面放进珠子里（放大一点、模糊一点），看着像透过玻璃看到的
-    let patch = platform::screen_patch(rect);
+    // 上一颗按钮还摆着（比如双击之后紧接着三击）：只抓它底下的，别把旧的那颗连同投影抓进新的珠子里
+    let below = Some(BUTTON_HANDLE.load(Ordering::SeqCst))
+        .filter(|&h| h != 0 && BUTTON_ON_SCREEN.load(Ordering::SeqCst))
+        .map(WindowHandle);
+    let patch = platform::screen_patch(rect, below);
     let dark = patch.as_ref().map(|p| brightness(p) < 0.5);
     let backdrop = patch.as_ref().and_then(png_data_url);
-    *BUTTON.lock() = Some(rect);
-    platform::set_selection_button_rect(Some(rect));
+    // 能点的、算"鼠标停在上面"的只有圆点，四周的留边不算
+    *BUTTON.lock() = Some(dot_rect);
+    platform::set_selection_button_rect(Some(dot_rect));
 
     let ui = app.clone();
     let _ = app.run_on_main_thread(move || {
@@ -459,6 +593,7 @@ fn show_button(
             },
         );
         let _ = platform::show_without_activate(&window);
+        BUTTON_ON_SCREEN.store(true, Ordering::SeqCst);
         wm::reveal_floating(&ui, &window);
     });
 
@@ -473,7 +608,7 @@ fn show_button(
                 return;
             }
             let hover =
-                platform::cursor_position().is_some_and(|(cx, cy)| rect.contains_point(cx, cy));
+                platform::cursor_position().is_some_and(|(cx, cy)| dot_rect.contains_point(cx, cy));
             if hover {
                 hovered_at = Some(Instant::now());
                 continue;
@@ -497,7 +632,7 @@ fn show_button(
 pub fn demo_button(app: &AppHandle, at: Option<(i32, i32)>) {
     let (x, y) = at.or_else(platform::cursor_position).unwrap_or((400, 400));
     let sel = state(app).settings.read().translate.selection.clone();
-    show_button(app, PhysicalRect::new(x, y, 1, 1), &sel);
+    show_button(app, (x, y), (x, y), &sel);
 }
 
 fn hide_button(app: &AppHandle) {
@@ -514,6 +649,10 @@ fn hide_button(app: &AppHandle) {
             wm::conceal_floating(&window);
             platform::hide_window(&window);
             let _ = window.hide();
+            // 这期间又弹出了新的一颗就别动（藏和显示都排在主线程上，顺序和这里看到的一致）
+            if BUTTON.lock().is_none() {
+                BUTTON_ON_SCREEN.store(false, Ordering::SeqCst);
+            }
         }
     });
 }

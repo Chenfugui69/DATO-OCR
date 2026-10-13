@@ -309,6 +309,7 @@ export default function EditorView() {
         )}
         <Toolbar
           ref={barRef}
+          className={cfg?.toolbarStyle === 'frosted' ? 'an-toolbar--frosted' : undefined}
           tool={tool}
           onTool={(next) => {
             if (engine.text) engine.commitText();

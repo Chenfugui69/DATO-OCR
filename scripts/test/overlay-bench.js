@@ -4,7 +4,8 @@
 //
 // 可选的 window.__BENCH__：
 //   frames   拖多少帧（默认 300）
-//   mode     'hover' = 不按键只移动（自动检测阶段）；默认是按住拖选
+//   mode     'hover' = 不按键只移动（自动检测阶段）；'move' = 先框出一块选区，再按住它在屏幕里来回拖
+//            （编辑态：工具条、手柄、尺寸提示都在）；默认是按住拖选
 //   css      临时加一段样式，用来逐项排查，比如 '.cap-magnifier{display:none!important}'
 //   noClear  true = 让画布的 clearRect 什么都不做
 (async () => {
@@ -34,13 +35,32 @@
     const N = P.frames || 300;
     const hover = P.mode === 'hover';
     for (let i = 0; i < 10; i++) await frame();
-    if (!hover) fire('pointerdown', 60, 60, 1);
+    const move = P.mode === 'move';
+    // 选区的大小（占屏幕的比例），拖的时候它的左上角走的范围
+    const SW = Math.round(W * 0.34);
+    const SH = Math.round(H * 0.3);
+    if (move) {
+      fire('pointerdown', 100, 100, 1);
+      for (let i = 1; i <= 6; i++) {
+        fire('pointermove', 100 + (SW * i) / 6, 100 + (SH * i) / 6, 1);
+        await frame();
+      }
+      fire('pointerup', 100 + SW, 100 + SH, 0);
+      for (let i = 0; i < 30; i++) await frame();
+      // 按在选区正中间，开始拖
+      fire('pointerdown', 100 + SW / 2, 100 + SH / 2, 1);
+    } else if (!hover) fire('pointerdown', 60, 60, 1);
     await report({ mark: 'start' });
     const dt = [];
+    let js = 0;
     let last = performance.now();
     for (let i = 0; i < N; i++) {
       const t = 0.5 - 0.5 * Math.cos((i / 90) * Math.PI);
-      fire('pointermove', 80 + t * (W - 140), 80 + t * (H - 140), hover ? 0 : 1);
+      const t0 = performance.now();
+      if (move) fire('pointermove', 100 + SW / 2 + t * (W - SW - 200), 100 + SH / 2 + t * (H - SH - 260), 1);
+      else fire('pointermove', 80 + t * (W - 140), 80 + t * (H - 140), hover ? 0 : 1);
+      // 事件处理（含 React 同步重画）花了多久
+      js += performance.now() - t0;
       await frame();
       const now = performance.now();
       dt.push(now - last);
@@ -49,7 +69,7 @@
     // 不松开鼠标：松开会进编辑态，识字模式下还会直接出结果。由脚本用 --action=cancel 收场
     const sorted = [...dt].sort((a, b) => a - b);
     const r1 = (v) => Math.round(v * 10) / 10;
-    await report({ mark: 'end', n: N, avg: r1(dt.reduce((a, b) => a + b, 0) / N), p95: r1(sorted[Math.floor(N * 0.95)]), max: r1(sorted[N - 1]), slow: dt.filter((v) => v > 20).length });
+    await report({ mark: 'end', js: Math.round((js / N) * 100) / 100, n: N, avg: r1(dt.reduce((a, b) => a + b, 0) / N), p95: r1(sorted[Math.floor(N * 0.95)]), max: r1(sorted[N - 1]), slow: dt.filter((v) => v > 20).length });
   } catch (e) {
     report({ error: String((e && e.stack) || e) });
   }

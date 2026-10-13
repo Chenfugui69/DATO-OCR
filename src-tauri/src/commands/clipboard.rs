@@ -47,6 +47,42 @@ pub async fn clipboard_smart_suggest(
     clipboard::smart::suggest(app, ai).await
 }
 
+/// 邮箱验证码的状态：连没连上、存没存密码（密码本身不给页面）。
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MailCodesStatus {
+    #[serde(flatten)]
+    pub status: crate::otp::mail::Status,
+    pub has_password: bool,
+}
+
+#[tauri::command]
+pub async fn mail_codes_status(app: AppHandle) -> AppResult<MailCodesStatus> {
+    blocking(move || {
+        Ok(MailCodesStatus {
+            status: crate::otp::mail::status(),
+            has_password: crate::otp::mail::has_password(&app),
+        })
+    })
+    .await
+}
+
+/// 存邮箱密码（授权码 / 应用专用密码）；None 或空 = 清掉。存完按新的重连。
+#[tauri::command]
+pub async fn mail_codes_set_password(app: AppHandle, password: Option<String>) -> AppResult<()> {
+    blocking(move || crate::otp::mail::set_password(&app, password.as_deref())).await
+}
+
+/// 测试连接：用页面上填的（还没保存也行）连一次。`password` 没给就用存着的。
+#[tauri::command]
+pub async fn mail_codes_test(
+    app: AppHandle,
+    settings: crate::settings::MailCodeSettings,
+    password: Option<String>,
+) -> AppResult<()> {
+    blocking(move || crate::otp::mail::test(&app, &settings, password.as_deref())).await
+}
+
 /// 在大预览窗口里看一条（图片）：铺满当前屏，能缩放拖动。主线程上建 / 摆窗口。
 #[tauri::command]
 pub async fn clipboard_preview_open(app: AppHandle, id: i64) -> AppResult<()> {

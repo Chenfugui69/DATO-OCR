@@ -6,7 +6,7 @@
 // - 单源：只显示一个结果，默认源失败时 Rust 侧自动降级到下一个；可手动指定源
 
 import { useQuery } from '@tanstack/react-query';
-import { ArrowDownUp, ChevronRight, Copy, RotateCw } from 'lucide-react';
+import { ArrowDownUp, Check, ChevronRight, Copy, RotateCw } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 
@@ -114,7 +114,7 @@ export function TranslateBox({
       {multi ? (
         <div className="tr-box__cards">
           {active.map((p, i) => (
-            <ProviderCard key={p.id} text={text} from={from} to={to} provider={p} primary={i === 0} onDetected={i === 0 ? setDetected : undefined} />
+            <ProviderCard key={p.id} index={i} text={text} from={from} to={to} provider={p} primary={i === 0} onDetected={i === 0 ? setDetected : undefined} />
           ))}
         </div>
       ) : (
@@ -125,6 +125,7 @@ export function TranslateBox({
 }
 
 function ProviderCard({
+  index,
   text,
   from,
   to,
@@ -132,6 +133,8 @@ function ProviderCard({
   primary,
   onDetected,
 }: {
+  /** 第几张：入场时一张接一张地出来 */
+  index: number;
   text: string;
   from: string;
   to: string;
@@ -149,8 +152,20 @@ function ProviderCard({
     saveCollapsed(provider.id, !collapsed);
     setCollapsed(!collapsed);
   };
+  // 点了复制：按钮上的图标换成对勾一小会儿（面板常常就在手边，不用等右下角的提示）
+  const [copied, setCopied] = useState(false);
+  useEffect(() => {
+    if (!copied) return;
+    const timer = window.setTimeout(() => setCopied(false), 1400);
+    return () => window.clearTimeout(timer);
+  }, [copied]);
   return (
-    <section className="tr-card" data-primary={primary || undefined} data-collapsed={collapsed || undefined}>
+    <section
+      className="tr-card"
+      data-primary={primary || undefined}
+      data-collapsed={collapsed || undefined}
+      style={{ '--tr-i': Math.min(index, 6) } as React.CSSProperties}
+    >
       <header
         className="tr-card__head"
         role="button"
@@ -169,25 +184,34 @@ function ProviderCard({
         <span className="tr-card__tools" onClick={(e) => e.stopPropagation()}>
           {error && <IconButton icon={RotateCw} size="sm" label={t('common.retry')} onClick={() => void run()} />}
           <IconButton
-            icon={Copy}
+            icon={copied ? Check : Copy}
             size="sm"
+            className={copied ? 'tr-card__copied' : undefined}
             label={t('translate.copy')}
             disabled={!result}
-            onClick={() => result && copyText(result.text, t('translate.copied'))}
+            onClick={() => {
+              if (!result) return;
+              copyText(result.text, t('translate.copied'));
+              setCopied(true);
+            }}
           />
         </span>
       </header>
-      {!collapsed && (
+      {/* 折叠 / 展开是把这一层的高度在 0 和内容高度之间过渡（网格的 0fr ↔ 1fr），不是直接拿掉 */}
+      <div className="tr-card__fold" aria-hidden={collapsed || undefined}>
         <div className="tr-card__body cn-selectable">
           {loading && !result ? (
             <Skeleton />
           ) : error ? (
             <div className="tr-box__error">{error}</div>
           ) : (
-            <div style={{ opacity: loading ? 0.5 : 1 }}>{result?.text}</div>
+            // 译文到了：换一个 key 让它重新入场（从略模糊、偏下一点浮上来）
+            <div key={result?.text} className="tr-reveal" style={{ opacity: loading ? 0.5 : undefined }}>
+              {result?.text}
+            </div>
           )}
         </div>
-      )}
+      </div>
     </section>
   );
 }
@@ -232,7 +256,9 @@ function SingleResult({
             </div>
           </div>
         ) : (
-          <div style={{ opacity: loading ? 0.5 : 1 }}>{result?.text}</div>
+          <div key={result?.text} className="tr-reveal" style={{ opacity: loading ? 0.5 : undefined }}>
+            {result?.text}
+          </div>
         )}
       </div>
       <div className="tr-box__foot">

@@ -234,6 +234,7 @@ fn handle(msg: u32, pt: POINT) -> bool {
                         end: (pt.x, pt.y),
                         alt,
                         ctrl,
+                        text: None,
                     },
                 );
             }

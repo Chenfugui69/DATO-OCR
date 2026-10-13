@@ -24,6 +24,12 @@ const BADGES: Record<string, { bg: string; text: string }> = {
   transmart: { bg: 'linear-gradient(135deg, #3d8bff, #6a4dff)', text: 'T' },
   youdao: { bg: '#e5322d', text: '有' },
   deepl: { bg: '#0f2b46', text: 'D' },
+  baidu: { bg: '#2932e1', text: '百' },
+  caiyun: { bg: 'linear-gradient(135deg, #ffb347, #ff5f6d)', text: '彩' },
+  niutrans: { bg: '#f08c1a', text: '牛' },
+  azure: { bg: '#0078d4', text: 'A' },
+  tencentcloud: { bg: '#00a3ff', text: '云' },
+  volcengine: { bg: 'linear-gradient(135deg, #ff7a45, #f5222d)', text: '火' },
 };
 
 /** 谷歌的四色 G：圆环分四段，右边留口，中间一道横杠 */
@@ -47,7 +53,8 @@ function GoogleMark({ size }: { size: number }) {
   );
 }
 
-export function ProviderLogo({ id, size = 16 }: { id: string; size?: number }) {
+/** `name`：用户自己添加的翻译没有专门的标志，用名字的第一个字 */
+export function ProviderLogo({ id, size = 16, name }: { id: string; size?: number; name?: string }) {
   if (id === 'google') {
     return (
       <span style={tile(size)}>
@@ -63,9 +70,12 @@ export function ProviderLogo({ id, size = 16 }: { id: string; size?: number }) {
     );
   }
   const badge = BADGES[id];
+  const text = badge?.text ?? [...(name?.trim() || id)][0]?.toUpperCase() ?? '?';
+  // 汉字比字母占得满，小一号
+  const wide = text.charCodeAt(0) > 0x2e80;
   return (
-    <span style={tile(size, { background: badge?.bg ?? 'var(--cn-fill-secondary)', fontSize: Math.round(size * (badge?.text === '有' ? 0.6 : 0.72)) })}>
-      {badge?.text ?? id.slice(0, 1).toUpperCase()}
+    <span style={tile(size, { background: badge?.bg ?? 'linear-gradient(135deg, #6b7280, #374151)', fontSize: Math.round(size * (wide ? 0.6 : 0.72)) })}>
+      {text}
     </span>
   );
 }

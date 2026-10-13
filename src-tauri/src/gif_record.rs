@@ -547,6 +547,9 @@ fn save(app: &AppHandle, tmp: &Path, stats: &Stats) -> AppResult<()> {
         size,
         "GIF 已保存"
     );
+    if let Err(err) = crate::library::add_gif(app, &path) {
+        tracing::warn!("GIF 存进截图库失败：{err}");
+    }
     // 诊断开关：自动化测试时不碰剪贴板（测试机的远程控制软件会把剪贴板同步到别的电脑）
     let skip_clipboard = std::env::var("CHENOCR_TEST_NO_CLIPBOARD").is_ok_and(|v| v == "1");
     let copied = !skip_clipboard

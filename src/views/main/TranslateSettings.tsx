@@ -3,83 +3,64 @@
 // 翻译源是一个有序列表：排在最前面的可用源就是默认源，翻译失败时依次往后降级；
 // 翻译面板"同时显示多个源"时也按这个顺序排。每个源都能单独"检测"一下通不通。
 
-import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { ChevronDown, ChevronUp, KeyRound, RotateCcw } from 'lucide-react';
-import { useState } from 'react';
+import { RotateCcw } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
-import { system, translate } from '@/lib/ipc';
+import { translate } from '@/lib/ipc';
 import { accelLabel, isMac } from '@/lib/platform';
-import type { ProviderId, Settings } from '@/lib/types';
-import { Button, IconButton, Segmented, Select, Slider, Switch, TextField } from '@/ui/controls';
-import { notify, promptDialog } from '@/ui/overlays';
-import { ProviderLogo } from '@/views/translate/ProviderLogo';
+import type { Settings } from '@/lib/types';
+import { Button, Segmented, Select, Slider, Switch, TextField } from '@/ui/controls';
+import { notify } from '@/ui/overlays';
 import { LANGS } from '@/views/translate/TranslateBox';
 
 import { Group, Row } from './settingsParts';
+import { TranslateProviderList } from './TranslateProviders';
 
-type Probe = { state: 'testing' } | { state: 'ok'; ms: number } | { state: 'fail'; error: string };
+/**
+ * 悬浮预览：调面板外观时，在主窗口旁边把真的翻译面板亮出来（就是平时弹出来的那个窗口），大小、材质、圆角、
+ * 字号都是实际的 —— 放在主窗口里面画一个的话，看不出平时用的时候到底多大。
+ * 一动下面的选项就自己出现并跟着变；离开这一页、主窗口藏起来时收掉。
+ */
+function PopupPreviewRow({ popup }: { popup: Settings['translate']['popup'] }) {
+  const { t } = useTranslation();
+  const [on, setOn] = useState(false);
+  const look = JSON.stringify([popup.width, popup.height, popup.fontSize, popup.blur, popup.opacity, popup.radius, popup.showSource, popup.aiLayout]);
+  const first = useRef(look);
+  // 动了外观的选项：自动打开预览
+  useEffect(() => {
+    if (look !== first.current) setOn(true);
+  }, [look]);
+  // 开着的时候，设置每变一次（等后端存好）就按新的重摆一次
+  useEffect(() => {
+    if (!on) return;
+    const timer = window.setTimeout(() => void translate.popupPreview(true).catch(notify.error), 200);
+    return () => window.clearTimeout(timer);
+  }, [on, look]);
+  useEffect(() => {
+    if (!on) return;
+    const hide = () => void translate.popupPreview(false).catch(() => undefined);
+    const onVisibility = () => document.hidden && setOn(false);
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => {
+      document.removeEventListener('visibilitychange', onVisibility);
+      hide();
+    };
+  }, [on]);
+  return (
+    <Row title={t('settings.popup.preview')} desc={t('settings.popup.previewDesc')}>
+      <Switch checked={on} onChange={setOn} />
+    </Row>
+  );
+}
+
 
 export function TranslateSettingsGroups({ settings, set }: { settings: Settings; set: (mutate: (d: Settings) => void) => void }) {
   const { t } = useTranslation();
-  const qc = useQueryClient();
-  const secrets = useQuery({ queryKey: ['secrets'], queryFn: system.secrets });
-  const [probes, setProbes] = useState<Partial<Record<ProviderId, Probe>>>({});
   const tr = settings.translate;
   const sel = tr.selection;
   const net = settings.network;
   const pop = tr.popup;
-
-  const hasKey = (id: ProviderId) => (id === 'deepl' ? !!secrets.data?.deepl : id === 'openai' ? !!secrets.data?.openai : true);
-  const defaultId = tr.providers.find((p) => p.enabled && hasKey(p.id))?.id;
-
-  const refreshProviders = () => void qc.invalidateQueries({ queryKey: ['translate-providers'] });
-  const change = (mutate: (d: Settings) => void) => {
-    set(mutate);
-    // 翻译面板按这个列表决定显示哪些源
-    window.setTimeout(refreshProviders, 300);
-  };
-
-  const move = (index: number, delta: number) =>
-    change((d) => {
-      const list = d.translate.providers;
-      const a = list[index];
-      const b = list[index + delta];
-      if (!a || !b) return;
-      list[index] = b;
-      list[index + delta] = a;
-    });
-
-  const editSecret = async (key: 'deepl' | 'openai') => {
-    const value = await promptDialog({ title: t('settings.translate.enterKey'), placeholder: key === 'deepl' ? 'xxxxxxxx-xxxx-...:fx' : 'sk-...' });
-    if (value === null) return;
-    await system.setSecret(key, value.trim() || null).catch(notify.error);
-    void qc.invalidateQueries({ queryKey: ['secrets'] });
-    refreshProviders();
-  };
-
-  const probe = async (id: ProviderId) => {
-    setProbes((p) => ({ ...p, [id]: { state: 'testing' } }));
-    const started = performance.now();
-    try {
-      await translate.text({ text: 'Hello, world.', from: 'en', to: 'zh', provider: id, fresh: true });
-      setProbes((p) => ({ ...p, [id]: { state: 'ok', ms: Math.round(performance.now() - started) } }));
-    } catch (err) {
-      setProbes((p) => ({ ...p, [id]: { state: 'fail', error: err instanceof Error ? err.message : String(err) } }));
-    }
-  };
-
-  const probeText = (id: ProviderId) => {
-    const p = probes[id];
-    if (!p || p.state === 'testing') return null;
-    return p.state === 'ok' ? (
-      <span className="set-row__ok">{t('settings.translate.probeOk', { ms: p.ms })}</span>
-    ) : (
-      <span className="set-row__error" title={p.error}>
-        {t('settings.translate.probeFail')}
-      </span>
-    );
-  };
 
   return (
     <>
@@ -94,62 +75,7 @@ export function TranslateSettingsGroups({ settings, set }: { settings: Settings;
         <Row title={t('settings.translate.showAll')} desc={t('settings.translate.showAllDesc')}>
           <Switch checked={tr.showAllProviders} onChange={(v) => set((d) => void (d.translate.showAllProviders = v))} />
         </Row>
-        {tr.providers.map((p, i) => {
-          const keyed = p.id === 'deepl' || p.id === 'openai';
-          const missingKey = keyed && !hasKey(p.id);
-          return (
-            <div key={p.id}>
-              <Row
-                title={
-                  <span className="set-provider">
-                    <ProviderLogo id={p.id} size={16} />
-                    {t(`settings.translate.${p.id}`)}
-                    {p.id === defaultId && <span className="set-provider__badge">{t('settings.translate.default')}</span>}
-                  </span>
-                }
-                desc={missingKey ? t('settings.translate.needKey') : t(`settings.translate.${p.id}Desc`)}
-              >
-                {probeText(p.id)}
-                <Button size="sm" variant="ghost" loading={probes[p.id]?.state === 'testing'} disabled={missingKey} onClick={() => void probe(p.id)}>
-                  {t('settings.translate.probe')}
-                </Button>
-                {keyed && (
-                  <Button size="sm" variant="ghost" icon={KeyRound} onClick={() => void editSecret(p.id as 'deepl' | 'openai')}>
-                    {hasKey(p.id) ? t('settings.translate.changeKey') : t('settings.translate.setKey')}
-                  </Button>
-                )}
-                <IconButton icon={ChevronUp} size="sm" label={t('settings.translate.moveUp')} disabled={i === 0} onClick={() => move(i, -1)} />
-                <IconButton
-                  icon={ChevronDown}
-                  size="sm"
-                  label={t('settings.translate.moveDown')}
-                  disabled={i === tr.providers.length - 1}
-                  onClick={() => move(i, 1)}
-                />
-                <Switch checked={p.enabled} onChange={(v) =>
-                    change((d) => {
-                      const entry = d.translate.providers.find((x) => x.id === p.id);
-                      if (entry) entry.enabled = v;
-                    })
-                  } />
-              </Row>
-              {p.id === 'openai' && p.enabled && (
-                <>
-                  <Row title={t('settings.translate.baseUrl')} desc={t('settings.translate.baseUrlDesc')}>
-                    <TextField
-                      defaultValue={tr.customBaseUrl}
-                      style={{ width: 280 }}
-                      onBlur={(e) => set((d) => void (d.translate.customBaseUrl = e.target.value.trim()))}
-                    />
-                  </Row>
-                  <Row title={t('settings.translate.model')}>
-                    <TextField defaultValue={tr.customModel} style={{ width: 200 }} onBlur={(e) => set((d) => void (d.translate.customModel = e.target.value.trim()))} />
-                  </Row>
-                </>
-              )}
-            </div>
-          );
-        })}
+        <TranslateProviderList settings={settings} set={set} />
       </Group>
 
       <Group id="selection" title={t('settings.section.selection')} note={t('settings.selection.note', { hotkey: accelLabel(settings.hotkeys.translate) })}>
@@ -192,6 +118,7 @@ export function TranslateSettingsGroups({ settings, set }: { settings: Settings;
       </Group>
 
       <Group id="popup" title={t('settings.popup.title')} note={t('settings.popup.note')}>
+        <PopupPreviewRow popup={pop} />
         <Row title={t('settings.popup.width')}>
           <span className="set-row__value cn-numeric">{pop.width}px</span>
           <Slider value={pop.width} min={320} max={900} step={10} onChange={(v) => set((d) => void (d.translate.popup.width = v))} />

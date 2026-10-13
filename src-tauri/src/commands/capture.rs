@@ -69,6 +69,28 @@ pub async fn capture_cancel(app: AppHandle, session_id: u64) -> AppResult<()> {
     Ok(())
 }
 
+/// 截图工具条的磨砂玻璃（设置里选了这个样式时）：在遮罩窗口里工具条的位置垫一块系统的毛玻璃。
+/// 遮罩窗口是透明的，底下冻结的画面在另一个原生窗口里，网页的模糊滤镜够不着，只能用系统的。
+/// `rect`：工具条在窗口里的位置（物理像素 x, y, 宽, 高），None = 撤掉；`radius`：圆角（物理像素）。
+#[tauri::command]
+pub async fn capture_toolbar_glass(
+    window: tauri::WebviewWindow,
+    rect: Option<(f32, f32, f32, f32)>,
+    radius: u32,
+) -> AppResult<()> {
+    let target = window.clone();
+    window.run_on_main_thread(move || match rect {
+        Some(rect) => {
+            platform::set_backdrop(&target, Some(radius));
+            platform::set_backdrop_rect(&target, Some(rect), 0);
+        }
+        None => {
+            platform::set_backdrop(&target, None);
+        }
+    })?;
+    Ok(())
+}
+
 /// 取色器复制颜色值、识字结果复制等：写一段纯文本到剪贴板（会进历史）。
 #[tauri::command]
 pub async fn clipboard_write_text(text: String) -> AppResult<()> {

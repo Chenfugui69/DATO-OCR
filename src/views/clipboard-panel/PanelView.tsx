@@ -85,7 +85,7 @@ export default function PanelView() {
   /**
    * 面板边缘的光（颜色跟水珠）跟着推荐走，推荐模式下一直亮着：
    * think = 正在看你在做什么，最亮、光沿着边框快速流动；refine = 本机结果出来了、AI 还在细化，亮度降一档；
-   * rest = 推荐结果在显示，柔和地呼吸、慢慢流动，直到清掉推荐；清掉之后 fade 慢慢退掉
+   * rest = 推荐结果在显示，只比 think 暗一点，照样呼吸、流动，直到清掉推荐；清掉之后 fade 慢慢退掉
    */
   const [glowFading, setGlowFading] = useState(false);
   const glowTimer = useRef<number | undefined>(undefined);
@@ -555,13 +555,14 @@ export default function PanelView() {
       data-smart={orbColor}
     >
       <div className="panel cn-glass-chrome">
-        {/* 智能推荐模式：面板边缘的光（光晕 + 沿上下边缘游走的光 + 卡片后面飘动的底光） */}
+        {/* 智能推荐模式：面板边缘的光（光晕 + 沿上下边缘游走的光 + 扫过面板的流光 + 卡片后面飘动的底光） */}
         {glow && (
           <>
             <div className={`panel__aurora panel__glow--${glow}`} aria-hidden />
             <div className={`panel__glow panel__glow--${glow}`} aria-hidden>
               <span className="panel__glow-halo" />
               <span className="panel__glow-sweep" />
+              <span className="panel__glow-sheen" />
             </div>
           </>
         )}

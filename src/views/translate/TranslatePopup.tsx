@@ -55,6 +55,12 @@ interface Sheet {
   /** 展开后外框的完整尺寸：对话区始终按这个大小摆，靠位移滑进滑出 */
   fw: number;
   fh: number;
+  /**
+   * 外框贴着底边长高 / 缩回（抽屉在窗口里原地往上长的时候）：只过渡高度，不再"一边往上挪一边长高"。
+   * 位移是合成器做的、高度是主线程排版做的，两个不在一个节拍上，同时用的话底边会在动画中途抖上去几像素，
+   * 露出一条没盖住的毛玻璃。
+   */
+  bottom?: boolean;
 }
 
 /** 面板四边、四角的拖动改大小区 */
@@ -133,8 +139,11 @@ async function moveWindow(
  * （连拍里看得到，背后是浅色窗口时很显眼）。晚一点只是面板最前沿那一小条暂时没有模糊，看不出来。
  * 收起时相反，背板先缩没关系，不用等
  */
-async function lagBackdrop() {
-  for (let i = 0; i < 3; i += 1) await frame();
+async function lagBackdrop(shell?: HTMLElement | null) {
+  // 先等页面这边的过渡真的开始（刚挂上对话区、主线程正忙的时候，可能要过好几帧），再多让两帧
+  const running = shell?.getAnimations?.() ?? [];
+  await Promise.race([Promise.all(running.map((a) => a.ready.catch(() => undefined))), wait(160)]);
+  for (let i = 0; i < 2; i += 1) await frame();
 }
 
 /** 改窗口前等几帧（见 moveWindow） */
@@ -210,6 +219,7 @@ export default function TranslatePopup() {
   /** 展开时为了放得下，窗口往左 / 往上挪了多少；收起时挪回去 */
   const shift = useRef({ x: 0, y: 0 });
   const [sheet, setSheet] = useState<Sheet | null>(null);
+  const shellRef = useRef<HTMLDivElement>(null);
   /** 窗口顶上不属于面板的那一截（逻辑像素）：弹出时为抽屉往上长预留的，裁掉了不显示（Rust 的 reserve_above） */
   const [topSpace, setTopSpace] = useState(0);
   const topRef = useRef(0);
@@ -228,7 +238,10 @@ export default function TranslatePopup() {
     setQuestion('');
     setPendingAsk(null);
   }, []);
+  // 设置页里的预览：点外面、失焦都不收起（用户正在主窗口里调设置），由设置页来收
+  const previewRef = useRef(false);
   useEvent('translate-request', (p) => {
+    previewRef.current = !!p.preview;
     grownInPlace.current = 0;
     setTopSpace(p.reserve ?? 0);
     setSheet(null);
@@ -250,7 +263,7 @@ export default function TranslatePopup() {
   // 鼠标在面板外面按下了（Rust 的全局鼠标监听报的）。平时靠失焦收起，但面板有时拿不到键盘焦点、
   // 就等不到失焦；这条不依赖焦点。和失焦一样：翻译模式才收，对话模式、钉住、正在拖动 / 改大小时不收
   useEvent('translate-outside', () => {
-    if (modeRef.current !== 'translate' || pinnedRef.current || userResizing.current || userMoving.current) return;
+    if (previewRef.current || modeRef.current !== 'translate' || pinnedRef.current || userResizing.current || userMoving.current) return;
     hide();
   });
 
@@ -322,7 +335,7 @@ export default function TranslatePopup() {
       // 翻译模式点外面就收起；AI 模式、钉住时不收。先等一下再确认真的没焦点了，免得按住边框改大小时被收起
       blurTimer = window.setTimeout(() => {
         void (async () => {
-          if (modeRef.current !== 'translate' || pinnedRef.current || userResizing.current || userMoving.current) return;
+          if (previewRef.current || modeRef.current !== 'translate' || pinnedRef.current || userResizing.current || userMoving.current) return;
           if (await win.isFocused()) return;
           hide();
         })();
@@ -418,7 +431,7 @@ export default function TranslatePopup() {
           if (ask) setPendingAsk({ id: Date.now(), text: ask });
           setQuestion('');
           setTopSpace(top);
-          setSheet({ w: base.w - pad * 2, h: base.h - pad * 2, ...full, x: 0, y: grow, open: false, animate: false });
+          setSheet({ w: base.w - pad * 2, h: base.h - pad * 2, ...full, x: 0, y: 0, open: false, animate: false, bottom: true });
           setMode('ai');
         });
         userResizing.current = false;
@@ -426,9 +439,9 @@ export default function TranslatePopup() {
         await frame();
         await frame();
         // 2. 外框往上长到新高度，对话区从输入框那里升上来，毛玻璃背板用同一条曲线跟着长
-        setSheet({ w: full.fw, h: full.fh, ...full, x: 0, y: 0, open: true, animate: true });
+        flushSync(() => setSheet({ w: full.fw, h: full.fh, ...full, x: 0, y: 0, open: true, animate: true, bottom: true }));
         if (blur) {
-          await lagBackdrop();
+          await lagBackdrop(shellRef.current);
           void system.backdrop({ x: 0, y: top, width: full.fw, height: full.fh }, ANIM_MS);
         }
         await wait(ANIM_MS + 40);
@@ -462,9 +475,9 @@ export default function TranslatePopup() {
       await frame();
       await frame();
       // 2. 外框长到新尺寸、回到原点，对话区滑进来
-      setSheet({ w: full.fw, h: full.fh, ...full, x: 0, y: 0, open: true, animate: true });
+      flushSync(() => setSheet({ w: full.fw, h: full.fh, ...full, x: 0, y: 0, open: true, animate: true }));
       if (blur) {
-        await lagBackdrop();
+        await lagBackdrop(shellRef.current);
         void system.backdrop({ x: 0, y: top, width: w, height: h }, ANIM_MS);
       }
       await wait(ANIM_MS + 40);
@@ -488,9 +501,9 @@ export default function TranslatePopup() {
         // 在窗口里长出来的：缩回原来的大小和位置，顶上预留还原，窗口不动
         const full = { fw: cur.w - pad * 2, fh: cur.h - pad * 2 };
         const top = topRef.current + grown;
-        flushSync(() => setSheet({ w: full.fw, h: full.fh, ...full, x: 0, y: 0, open: true, animate: false }));
+        flushSync(() => setSheet({ w: full.fw, h: full.fh, ...full, x: 0, y: 0, open: true, animate: false, bottom: true }));
         await frame();
-        setSheet({ w: target.w - pad * 2, h: target.h - pad * 2, ...full, x: 0, y: grown, open: false, animate: true });
+        setSheet({ w: target.w - pad * 2, h: target.h - pad * 2, ...full, x: 0, y: 0, open: false, animate: true, bottom: true });
         if (blur) void system.backdrop({ x: 0, y: top, width: target.w, height: target.h }, ANIM_MS);
         await wait(ANIM_MS + 20);
         userResizing.current = false;
@@ -592,7 +605,9 @@ export default function TranslatePopup() {
         width: sheet.w,
         height: sheet.h,
         transform: `translate(${sheet.x}px, ${sheet.y}px)`,
-        transition: sheet.animate ? transition(['width', 'height', 'transform']) : 'none',
+        // 贴底：外框靠在面板区域的底边上，只有高度在变，底边一个像素都不动
+        alignSelf: sheet.bottom ? 'flex-end' : undefined,
+        transition: sheet.animate ? transition(sheet.bottom ? ['height'] : ['width', 'height', 'transform']) : 'none',
       }
     : undefined;
   // 过渡期间翻译区保持展开前的高度（带着输入框），抽屉滑上来盖住它的下沿。
@@ -645,7 +660,7 @@ export default function TranslatePopup() {
 
   return (
     <div className="pop-root" style={style}>
-      <div className={shellClass} style={shellStyle}>
+      <div ref={shellRef} className={shellClass} style={shellStyle}>
         <div
           ref={transRef}
           className={`pop-pane pop-pane--translate${(mode === 'translate' || (sheet && layout === 'drawer')) && text ? ' has-ask' : ''}`}
@@ -836,6 +851,13 @@ html:not([data-platform='mac'])[data-theme='light'] .pop-shell.is-blur {
 .pop-ask-wrap { position: absolute; left: 0; right: 0; bottom: 0; z-index: 3; padding: 0 12px 10px; pointer-events: none; }
 .has-ask .pop__body { -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 86px), transparent calc(100% - 46px));
                       mask-image: linear-gradient(to bottom, #000 calc(100% - 86px), transparent calc(100% - 46px)); }
+/* 对话抽屉开着：译文一路排到抽屉的上沿，在最后一小段渐渐淡出，像是滑到抽屉底下去了。
+   以前这里是卡片被一刀切断、下面再留一条空的底色，看着像抽屉上方压着一条遮罩 */
+.pop-shell.is-drawer .pop-pane--translate:not(.has-ask) .pop__body {
+  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 46px), transparent 100%);
+          mask-image: linear-gradient(to bottom, #000 calc(100% - 46px), transparent 100%); }
+.pop-shell.is-drawer .pop-pane--translate:not(.has-ask) .tr-box { padding-bottom: 0; }
+.pop-shell.is-drawer .pop-pane--translate:not(.has-ask) .tr-box__cards { padding-bottom: 22px; }
 .has-ask .tr-box { padding-bottom: 74px; }
 .has-ask .tr-box:has(.tr-box__cards) { padding-bottom: 0; }
 .has-ask .tr-box__cards { padding-bottom: 74px; }
@@ -847,6 +869,49 @@ html:not([data-platform='mac'])[data-theme='light'] .pop-shell.is-blur {
    浅色用更白的底，深色用更亮的底，再描一圈细边、压一点点阴影 */
 .pop-pane--translate .tr-card { background: rgba(255,255,255,0.66); box-shadow: 0 0 0 0.5px rgba(0,0,0,0.07), 0 1px 2px rgba(0,0,0,0.06); }
 [data-theme='dark'] .pop-pane--translate .tr-card { background: rgba(255,255,255,0.085); box-shadow: inset 0 0 0 0.5px rgba(255,255,255,0.09), 0 1px 2px rgba(0,0,0,0.22); }
+/* 没开毛玻璃时面板背后的画面是清清楚楚透上来的（不透明度调低的话）：卡片要是也半透明，背后的字会和译文叠在一起。
+   所以这时卡片用实底，只有面板本身的底色跟着不透明度走 */
+.pop-shell:not(.is-blur) .pop-pane--translate .tr-card { background: #fff; }
+[data-theme='dark'] .pop-shell:not(.is-blur) .pop-pane--translate .tr-card { background: #3a3a3d; }
+/* 卡片：鼠标移上去浮起来一点 */
+.pop-pane--translate .tr-card:hover { box-shadow: 0 0 0 0.5px rgba(0,0,0,0.09), 0 3px 10px rgba(0,0,0,0.1); }
+[data-theme='dark'] .pop-pane--translate .tr-card:hover { box-shadow: inset 0 0 0 0.5px rgba(255,255,255,0.14), 0 3px 10px rgba(0,0,0,0.3); }
+/* 底部"问 AI"：跟着面板一起浮上来；聚焦时抬起一点 */
+/* ── 面板里的排版 ── */
+/* 原文：一小块引用（左边一道强调色），不再是顶上通栏的一条 */
+/* 上下的留白用透明边框而不是内边距：超出两行的字会被裁在内边距的外沿，用内边距的话第三行的上半截会露在留白里 */
+.pop__source { position: relative; margin: 10px 12px 0; padding: 0 10px 0 15px; border: solid transparent; border-width: 7px 0; max-height: none; border-radius: 10px; box-shadow: none;
+               background: var(--cn-fill-quaternary); font: var(--cn-text-footnote); line-height: 1.45; -webkit-line-clamp: 2;
+               transition: background-color 140ms var(--cn-ease-out); }
+.pop__source::before { content: ''; position: absolute; left: 6px; top: 1px; bottom: 1px; width: 2.5px; border-radius: 2px; background: var(--cn-accent); opacity: 0.75; }
+.pop__source:hover { background: var(--cn-fill-tertiary); }
+.pop__source--edit { width: calc(100% - 24px); padding: 7px 10px; border-width: 0; box-shadow: inset 0 0 0 1.5px var(--cn-accent); background: var(--cn-bg-elevated); }
+/* 语言：两颗胶囊，中间的对调按钮点一下转半圈 */
+.pop-pane--translate .tr-box__langs { gap: 2px; }
+.pop-pane--translate .tr-box__langs .cn-select-trigger { height: 28px; padding: 0 7px 0 12px; border-radius: 999px; background: var(--cn-fill-quaternary);
+               box-shadow: none; font: var(--cn-text-footnote); font-weight: 500; transition: background-color 140ms var(--cn-ease-out); }
+.pop-pane--translate .tr-box__langs .cn-select-trigger:hover,
+.pop-pane--translate .tr-box__langs .cn-select-trigger[data-state='open'] { background: var(--cn-fill-tertiary); box-shadow: none; }
+.pop-pane--translate .tr-box__langs > button svg { transition: transform 260ms var(--cn-ease-out); }
+.pop-pane--translate .tr-box__langs > button:active svg { transform: rotate(180deg); }
+/* 卡片：留白松一点，来源的名字退到次要；默认源标成一颗淡色的小标签，它的译文稍微重一点 */
+.pop-pane--translate .tr-box__cards { gap: 8px; }
+.pop-pane--translate .tr-card { padding: 8px 8px 11px 12px; border-radius: 13px; }
+.pop-pane--translate .tr-card[data-collapsed] { padding-bottom: 8px; }
+.pop-pane--translate .tr-card__name { font-size: 11.5px; color: var(--cn-label-tertiary); }
+.pop-pane--translate .tr-card__body { margin-top: 3px; line-height: 1.55; }
+.pop-pane--translate .tr-card[data-primary] .tr-card__body { font-weight: 500; }
+.pop-pane--translate .tr-card__badge { background: color-mix(in srgb, var(--cn-accent) 15%, transparent); color: var(--cn-accent); }
+/* 复制、重试平时淡着，移到卡片上才清楚（刚复制成功的那颗对勾一直亮着） */
+.pop-pane--translate .tr-card__tools { opacity: 0.38; transition: opacity 140ms var(--cn-ease-out); }
+.pop-pane--translate .tr-card:hover .tr-card__tools,
+.pop-pane--translate .tr-card__tools:focus-within,
+.pop-pane--translate .tr-card__tools:has(.tr-card__copied) { opacity: 1; }
+.pop-ask { animation: tr-card-in 320ms var(--cn-ease-out) 120ms both; transition: box-shadow 160ms var(--cn-ease-out), transform 160ms var(--cn-ease-out); }
+.pop-ask:focus-within { transform: translateY(-1px); }
+/* 开了毛玻璃的面板也要有出场：系统的背板没法跟着缩放，只让里面的内容淡入 */
+.pop-shell.is-blur > .pop-pane--translate { animation: pop-fade-in 180ms var(--cn-ease-out); }
+@keyframes pop-fade-in { from { opacity: 0; } }
 .pop-ask { flex: none; display: flex; align-items: center; gap: 8px; height: 32px; padding: 0 4px 0 11px; pointer-events: auto;
            border-radius: 16px; background: rgba(255,255,255,0.94); color: var(--cn-accent);
            -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px);

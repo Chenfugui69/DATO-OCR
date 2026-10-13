@@ -172,6 +172,66 @@ fn is_temp_image(path: &std::path::Path) -> bool {
     temp_roots.iter().any(|root| path.starts_with(root))
 }
 
+/// 通用剪贴板把 iPhone / iPad 上复制的带格式文字落成一个富文本文件（`….rtfd`）放在它的临时目录里，
+/// 剪贴板上给的是这个文件的地址。那其实是"复制了一段字"：按文件记的话卡片上是个空白文件图标，
+/// 从面板粘贴出去的也是文件，而且这个临时文件过一会儿就被系统删了。
+fn is_shared_text_file(path: &std::path::Path) -> bool {
+    let shared = path
+        .to_string_lossy()
+        .contains("com.apple.coreservices.useractivityd/shared-pasteboard");
+    shared
+        && path
+            .extension()
+            .and_then(|e| e.to_str())
+            .is_some_and(|e| matches!(e.to_ascii_lowercase().as_str(), "rtfd" | "rtf" | "txt"))
+}
+
+/// 读出那个富文本文件里的字，顺带把 RTF 原文也留下（粘贴到支持格式的地方还带格式）。
+fn load_shared_text(path: &std::path::Path, snap: &mut ClipboardSnapshot) {
+    const MAX_BYTES: u64 = 8 * 1024 * 1024;
+    let is_txt = path
+        .extension()
+        .is_some_and(|e| e.eq_ignore_ascii_case("txt"));
+    // .rtfd 是个文件夹，正文在里面的 TXT.rtf
+    let body = if path.is_dir() {
+        path.join("TXT.rtf")
+    } else {
+        path.to_path_buf()
+    };
+    if std::fs::metadata(&body).map_or(true, |m| m.len() > MAX_BYTES) {
+        return;
+    }
+    if is_txt {
+        snap.text = std::fs::read_to_string(&body).ok();
+        return;
+    }
+    use objc2_app_kit::NSAttributedStringDocumentFormats as _;
+    let url = NSURL::fileURLWithPath(&ns(&path.to_string_lossy()));
+    let options = objc2_foundation::NSDictionary::new();
+    // SAFETY: 读本地的 RTF / RTFD 文件，不涉及界面，可以不在主线程上（HTML 才必须在主线程）。
+    let parsed = unsafe {
+        objc2_foundation::NSAttributedString::initWithURL_options_documentAttributes_error(
+            objc2_foundation::NSAttributedString::alloc(),
+            &url,
+            &options,
+            None,
+        )
+    };
+    match parsed {
+        Ok(rich) => {
+            // 附件（图片）在字里占一个替换符，去掉
+            let text = rich.string().to_string().replace('\u{fffc}', "");
+            if !text.trim().is_empty() {
+                snap.text = Some(text);
+                snap.rtf = std::fs::read(&body)
+                    .ok()
+                    .map(|b| String::from_utf8_lossy(&b).into_owned());
+            }
+        }
+        Err(err) => tracing::debug!("通用剪贴板的富文本读不出来：{}", err.localizedDescription()),
+    }
+}
+
 /// 读临时图片文件放进 `snap.image`。PNG 留原字节（透明度），正着的 JPEG 也留原字节（省空间）；
 /// HEIC 之类交给系统解码。
 fn load_temp_image(path: &std::path::Path, snap: &mut ClipboardSnapshot) -> bool {
@@ -266,6 +326,18 @@ fn read_snapshot() -> ClipboardSnapshot {
         snap.rtf = pb
             .dataForType(&ns(TYPE_RTF))
             .map(|d| String::from_utf8_lossy(&d.to_vec()).into_owned());
+    }
+    // 手机上复制的带格式文字：给的是个富文本临时文件，按文字记
+    if let [one] = snap.files.as_slice() {
+        let one = one.clone();
+        if is_shared_text_file(&one) {
+            if snap.text.as_deref().is_none_or(|t| t.trim().is_empty()) {
+                load_shared_text(&one, &mut snap);
+            }
+            if snap.text.as_deref().is_some_and(|t| !t.trim().is_empty()) {
+                snap.files.clear();
+            }
+        }
     }
     // 复制文件时访达会顺带放一张文件图标，那不是用户要的图片
     if snap.files.is_empty() {
@@ -425,6 +497,41 @@ pub fn restore(backup: Backup) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn shared_rich_text_is_text() {
+        let base = "/Users/x/Library/Group Containers/group.com.apple.coreservices.useractivityd/shared-pasteboard/items/A";
+        assert!(is_shared_text_file(std::path::Path::new(&format!(
+            "{base}/f16b.rtfd"
+        ))));
+        assert!(is_shared_text_file(std::path::Path::new(&format!(
+            "{base}/note.TXT"
+        ))));
+        assert!(!is_shared_text_file(std::path::Path::new(&format!(
+            "{base}/report.pdf"
+        ))));
+        assert!(!is_shared_text_file(std::path::Path::new(
+            "/Users/x/Documents/letter.rtfd"
+        )));
+    }
+
+    /// 真的读一个 .rtfd（系统的 textutil 生成），看字和 RTF 都拿到了
+    #[test]
+    fn reads_rtfd_text() {
+        let dir = std::env::temp_dir().join(format!("chenocr-rtfd-{}", std::process::id()));
+        let rtfd = dir.join("sample.rtfd");
+        std::fs::create_dir_all(&rtfd).unwrap();
+        std::fs::write(
+            rtfd.join("TXT.rtf"),
+            r"{\rtf1\ansi\ansicpg1252{\fonttbl\f0\fswiss Helvetica;}\f0\fs24 Liquid Glass \b Shader\b0  \u20320?\u22909?}",
+        )
+        .unwrap();
+        let mut snap = ClipboardSnapshot::default();
+        load_shared_text(&rtfd, &mut snap);
+        let _ = std::fs::remove_dir_all(&dir);
+        assert_eq!(snap.text.as_deref(), Some("Liquid Glass Shader 你好"));
+        assert!(snap.rtf.is_some_and(|r| r.starts_with("{\\rtf1")));
+    }
 
     #[test]
     fn temp_image_files_are_images() {

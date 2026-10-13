@@ -12,7 +12,7 @@ use image::RgbaImage;
 use super::geometry::{self, Screen};
 use super::{ffi, permissions, util};
 use crate::error::{AppError, AppResult};
-use crate::platform::{MonitorId, MonitorInfo, PhysicalRect};
+use crate::platform::{MonitorId, MonitorInfo, PhysicalRect, WindowHandle};
 
 pub fn list_monitors() -> AppResult<Vec<MonitorInfo>> {
     Ok(enumerate()?.into_iter().map(|(_, info)| info).collect())
@@ -94,7 +94,7 @@ impl ScreenRecorder {
     /// 等 `timeout`（上层给的是离下一拍还有多久）再抓一帧（只有要录的那一块，不透明 RGBA）。
     pub fn next(&self, timeout: std::time::Duration) -> Option<RgbaImage> {
         std::thread::sleep(timeout);
-        let image = capture_rect(self.points, self.size).ok()?;
+        let image = capture_rect(self.points, self.size, None).ok()?;
         crate::imaging::crop_opaque(&image, self.crop).ok()
     }
 }
@@ -163,28 +163,39 @@ fn capture_one(screen: &Screen) -> AppResult<RgbaImage> {
     capture_rect(
         screen.points,
         (screen.physical.width, screen.physical.height),
+        None,
     )
 }
 
 /// 屏幕上这一块现在的画面（按实际像素）。没有屏幕录制权限时不抓（不能为了一个按钮弹授权框）。
-pub fn patch(rect: PhysicalRect) -> Option<RgbaImage> {
+/// `below`：只要这个窗口底下的画面（它自己和盖在它上面的不算）；这个窗口得正显示着。
+pub fn patch(rect: PhysicalRect, below: Option<WindowHandle>) -> Option<RgbaImage> {
     if !permissions::screen_capture_granted() || rect.width == 0 || rect.height == 0 {
         return None;
     }
-    let image = capture_rect(geometry::rect_to_points(rect), (rect.width, rect.height)).ok()?;
+    let below = below.map(|w| util::handle_window(w.0));
+    let image = capture_rect(
+        geometry::rect_to_points(rect),
+        (rect.width, rect.height),
+        below,
+    )
+    .ok()?;
     crate::imaging::crop_opaque(&image, PhysicalRect::new(0, 0, rect.width, rect.height)).ok()
 }
 
-/// 抓屏幕上的一块。`points`：全局点坐标；`size`：这一块的像素尺寸。
-fn capture_rect(points: ffi::CGRect, size: (u32, u32)) -> AppResult<RgbaImage> {
+/// 抓屏幕上的一块。`points`：全局点坐标；`size`：这一块的像素尺寸；`below`：只抓这个窗口底下的。
+fn capture_rect(
+    points: ffi::CGRect,
+    size: (u32, u32),
+    below: Option<ffi::CGWindowID>,
+) -> AppResult<RgbaImage> {
+    let (option, relative) = match below {
+        Some(window) => (ffi::kCGWindowListOptionOnScreenBelowWindow, window),
+        None => (ffi::kCGWindowListOptionOnScreenOnly, ffi::kCGNullWindowID),
+    };
     // SAFETY: 范围是全局点坐标；返回的图由 CgImage 负责释放。
     let image = unsafe {
-        ffi::CGWindowListCreateImage(
-            points,
-            ffi::kCGWindowListOptionOnScreenOnly,
-            ffi::kCGNullWindowID,
-            ffi::kCGWindowImageBestResolution,
-        )
+        ffi::CGWindowListCreateImage(points, option, relative, ffi::kCGWindowImageBestResolution)
     };
     if image.is_null() {
         return Err(AppError::Capture("系统没有返回画面".into()));

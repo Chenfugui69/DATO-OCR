@@ -165,15 +165,17 @@ pub enum HookEvent {
 }
 
 /// 划词监听上报的事件（见 `platform::start_selection_watch`）。
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum SelectionEvent {
     /// 刚选了文字：拖选或双击 / 三击。`anchor` 是按下点和松开点的包围盒，
-    /// `end` 是松开点；`alt` / `ctrl` 表示选的时候按着这个键
+    /// `end` 是松开点；`alt` / `ctrl` 表示选的时候按着这个键；
+    /// `text` 是选中的字（系统肯告诉我们时才有，用来判断该不该弹按钮；None = 不知道）
     Selected {
         anchor: PhysicalRect,
         end: (i32, i32),
         alt: bool,
         ctrl: bool,
+        text: Option<String>,
     },
     /// 点了悬浮翻译按钮（这次点击已被吞掉，原程序的选区还在）
     ButtonClicked,

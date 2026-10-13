@@ -480,6 +480,9 @@ pub fn hide_window(window: &WebviewWindow) {
 }
 
 /// 加上 `WS_EX_NOACTIVATE`：点击、显示都不会把它变成前台窗口。
+/// WebView2 的页面本来就按屏幕刷新率刷新。
+pub fn unlock_frame_rate(_window: &WebviewWindow) {}
+
 pub fn set_no_activate(window: &WebviewWindow) {
     let Ok(h) = window.hwnd() else { return };
     // SAFETY: h 是存活的 Tauri 窗口；只追加一个扩展样式位。

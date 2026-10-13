@@ -40,6 +40,7 @@ import { HotkeyInput } from '@/ui/HotkeyInput';
 import { confirmDialog, notify } from '@/ui/overlays';
 
 import { AiSettingsGroups } from './AiSettings';
+import { MailCodesRows } from './MailCodesSettings';
 import { McpSettingsGroup } from './McpSettings';
 import { ORB_COLORS, WaterOrb } from '@/views/clipboard-panel/WaterOrb';
 import '@/views/clipboard-panel/orb.css';
@@ -291,6 +292,16 @@ export function SettingsPage({ section }: { section: string | null }) {
               </div>
               <ToolbarOrder value={c} onChange={(v) => set((d) => void Object.assign(d.capture, v))} />
             </div>
+            <Row title={t('settings.capture.toolbarStyle')} desc={t('settings.capture.toolbarStyleDesc')}>
+              <Segmented
+                value={c.toolbarStyle === 'frosted' ? 'frosted' : 'glass'}
+                options={[
+                  { value: 'glass', label: t('settings.capture.toolbarStyleOpt.glass') },
+                  { value: 'frosted', label: t('settings.capture.toolbarStyleOpt.frosted') },
+                ]}
+                onChange={(v) => set((d) => void (d.capture.toolbarStyle = v))}
+              />
+            </Row>
             <FrameStyleRows name={t('settings.frame.captureName')} value={c.frame} onChange={(v) => set((d) => void (d.capture.frame = v))} />
             <Row title={t('settings.capture.magnifier')}>
               <Switch checked={c.showMagnifier} onChange={(v) => set((d) => void (d.capture.showMagnifier = v))} />
@@ -476,6 +487,7 @@ export function SettingsPage({ section }: { section: string | null }) {
                 </Button>
               </Row>
             )}
+            <MailCodesRows settings={settings} set={set} />
             <Row title={t('settings.clipboard.otpMask')} desc={t('settings.clipboard.otpMaskDesc')}>
               <Switch checked={cb.otpMask} onChange={(v) => set((d) => void (d.clipboard.otpMask = v))} />
             </Row>

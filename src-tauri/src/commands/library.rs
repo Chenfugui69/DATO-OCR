@@ -43,6 +43,15 @@ pub async fn library_set_note(app: AppHandle, id: i64, note: Option<String>) -> 
 #[tauri::command]
 pub async fn library_copy(app: AppHandle, id: i64) -> AppResult<()> {
     blocking(move || {
+        let st = state(&app);
+        let shot = st.db.with(|c| repo::get(c, id))?;
+        // GIF 按文件复制（按图片的话只剩第一帧）
+        if shot.kind == library::KIND_GIF {
+            let file = st.paths.abs(&shot.file_path);
+            platform::clipboard_write(&ClipboardPayload::Files(vec![file]))?;
+            wm::toast(&app, "success", "已复制到剪贴板");
+            return Ok(());
+        }
         let image = library::load_image(&app, id)?;
         platform::clipboard_write(&ClipboardPayload::Image { image, png: None })?;
         wm::toast(&app, "success", "已复制到剪贴板");

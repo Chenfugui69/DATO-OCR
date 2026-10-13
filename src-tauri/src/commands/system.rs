@@ -81,6 +81,11 @@ pub async fn settings_set(app: AppHandle, mut settings: Settings) -> AppResult<S
     if before.translate.selection != next.translate.selection {
         translate::selection::reconfigure(&app);
     }
+    if before.clipboard.mail_codes != next.clipboard.mail_codes
+        || before.general.offline_mode != next.general.offline_mode
+    {
+        crate::otp::mail::reconfigure(&app);
+    }
     if before.mcp != next.mcp {
         let ui = app.clone();
         std::thread::spawn(move || crate::mcp::reconfigure(&ui));

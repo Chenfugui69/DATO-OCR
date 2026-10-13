@@ -575,6 +575,8 @@ pub fn open_window(app: &AppHandle, mut context: AiContext) {
                 .shadow(true)
                 .min_inner_size(380.0, 420.0)
                 .inner_size(f64::from(panel.width), f64::from(panel.height))
+                // 图片拖进输入框由页面自己接（拿得到图片内容）；系统那套拖放只给文件路径，页面读不了
+                .disable_drag_drop_handler()
                 .build()
             {
                 Ok(w) => {

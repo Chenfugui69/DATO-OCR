@@ -66,6 +66,94 @@
   border-radius: 4px;
 }
 
+/* 鼠标移到小预览上：上方浮出大图 */
+.ai-chip--image {
+  position: relative;
+}
+/* 一个给定了最大范围的框（宽高由脚本按窗口大小算），图片在里面等比放到最大，靠着缩略图那一侧 */
+.ai-zoom {
+  position: fixed;
+  z-index: 2000;
+  display: flex;
+  align-items: flex-end;
+  justify-content: flex-start;
+  pointer-events: none;
+  animation: ai-zoom-in 160ms var(--cn-ease-out);
+}
+.ai-zoom[style*='top'] {
+  align-items: flex-start;
+}
+.ai-zoom img {
+  display: block;
+  max-width: 100%;
+  max-height: 100%;
+  /* 小图也放大到看得清（至少占框的一半高） */
+  min-height: min(50%, 320px);
+  object-fit: contain;
+  padding: 4px;
+  border-radius: 14px;
+  background: var(--cn-bg-elevated);
+  box-shadow:
+    0 14px 40px rgba(0, 0, 0, 0.3),
+    0 0 0 0.5px rgba(0, 0, 0, 0.16);
+}
+@keyframes ai-zoom-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px) scale(0.92);
+  }
+}
+/* 还没发出去的附图排在输入框上面一行 */
+.ai__attach {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  width: 100%;
+}
+.ai__attach .ai-chip--image img {
+  height: 44px;
+  max-width: 96px;
+}
+.ai__input:not(.ai__composer) {
+  flex-wrap: wrap;
+}
+.ai__plus {
+  flex: none;
+  border-radius: 50% !important;
+  color: var(--cn-label-secondary);
+}
+.ai__composer-foot .ai__plus {
+  width: 28px;
+  height: 28px;
+  background: var(--cn-fill-quaternary);
+}
+/* 图片拖到输入框上方：描一圈强调色 */
+.ai__input.is-dropping {
+  box-shadow: 0 0 0 2px var(--cn-accent) !important;
+  background: color-mix(in srgb, var(--cn-accent) 7%, var(--cn-bg-elevated));
+}
+/* 提问里带的图 */
+.ai-msg__images {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+}
+.ai-msg__images .ai-chip--image img {
+  height: 56px;
+  max-width: 120px;
+}
+/* 还在想：脑子图标跟着呼吸 */
+.ai-think.is-active .ai-think__head > svg:first-child {
+  animation: ai-think-pulse 1.4s ease-in-out infinite;
+}
+@keyframes ai-think-pulse {
+  50% {
+    opacity: 0.35;
+    transform: scale(0.86);
+  }
+}
+
 .ai__list {
   flex: 1;
   min-height: 0;
@@ -231,6 +319,57 @@
   40% {
     opacity: 1;
     transform: translateY(-3px);
+  }
+}
+
+/* 正在回复的正文（StreamText）：按词淡入、末尾的光标、平滑长高 */
+.ai-stream[data-streaming] {
+  overflow: hidden;
+  transition: height 200ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.ai-chunk--in {
+  animation: ai-chunk-in 420ms cubic-bezier(0.2, 0.7, 0.2, 1) both;
+}
+@keyframes ai-chunk-in {
+  from {
+    opacity: 0;
+    filter: blur(4px);
+  }
+  to {
+    opacity: 1;
+    filter: blur(0);
+  }
+}
+.ai-caret {
+  display: inline-block;
+  width: 2px;
+  height: 1.05em;
+  margin-left: 2px;
+  border-radius: 1px;
+  background: var(--cn-accent);
+  vertical-align: -0.16em;
+  animation: ai-caret 1s steps(1, end) infinite;
+}
+@keyframes ai-caret {
+  0%,
+  55% {
+    opacity: 1;
+  }
+  56%,
+  100% {
+    opacity: 0;
+  }
+}
+/* "正在思考"的三个点：呼吸着跳 */
+.ai-typing span {
+  animation: ai-dot 1.25s infinite cubic-bezier(0.4, 0, 0.2, 1);
+}
+@media (prefers-reduced-motion: reduce) {
+  .ai-chunk--in {
+    animation: none;
+  }
+  .ai-stream[data-streaming] {
+    transition: none;
   }
 }
 
@@ -536,14 +675,19 @@
   box-shadow: inset 0 0 0 0.5px var(--cn-separator);
 }
 /* 快捷提问：两列小卡片 */
+/* 快捷提问有几个是用户在设置里定的，个数不一定凑得满一行。两列排，每个一样宽；
+   最后一行不满时居中（5 个时最后一个在正中间），不拉宽、也不靠左留一个空格子 */
 .ai-hero__prompts {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
   gap: 8px;
   width: 100%;
   margin-top: 4px;
 }
 .ai-hero__prompt {
+  flex: 0 1 calc(50% - 4px);
+  min-width: 0;
   display: flex;
   align-items: center;
   gap: 8px;

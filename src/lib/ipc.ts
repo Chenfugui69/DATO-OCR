@@ -2,7 +2,7 @@
 
 import { Channel, invoke } from '@tauri-apps/api/core';
 
-import type { AiContext, AppInfo, CaptureIntent, ChatEvent, ChatRequest, ClipDetail, ClipGroup, ClipPage, ClipQuery, ClipStats, DavDevice, EditorAction, EditorDoc, EngineStatus, FinishAction, HotkeyStatus, McpStatus, OcrJob, SmartSuggestion, OcrPage, Permissions, PhysicalRect, PinInfo, ProviderInfo, RegionTranslation, SecretsStatus, SessionInfo, Settings, ShotPage, SyncStatus, UpdateStatus, ShotQuery, TranslateRequest, TranslateResult, VisualCapabilities } from './types';
+import type { AiContext, AppInfo, CaptureIntent, ChatEvent, ChatRequest, ClipDetail, ClipGroup, ClipPage, ClipQuery, ClipStats, DavDevice, EditorAction, EditorDoc, EngineStatus, FinishAction, HotkeyStatus, MailCodeSettings, MailCodesStatus, McpStatus, OcrJob, SmartSuggestion, OcrPage, Permissions, PhysicalRect, PinInfo, ProviderInfo, RegionTranslation, SecretsStatus, SessionInfo, Settings, ShotPage, SyncStatus, UpdateStatus, ShotQuery, TranslateRequest, TranslateResult, VisualCapabilities } from './types';
 
 /** Rust 侧 AppError 的结构化形态。 */
 export class AppError extends Error {
@@ -65,6 +65,8 @@ export const capture = {
     annotationPng: Uint8Array,
   ) => callRaw<void>('capture_finish', meta, annotationPng),
   cancel: (sessionId: number) => call<void>('capture_cancel', { sessionId }),
+  /** 截图工具条底下垫 / 撤掉系统的毛玻璃。rect：工具条在窗口里的位置（物理像素 x, y, 宽, 高），null = 撤掉 */
+  toolbarGlass: (rect: [number, number, number, number] | null, radius: number) => call<void>('capture_toolbar_glass', { rect, radius }),
   /** 截图原位翻译：识别选区文字、整批翻译，返回每段的位置和译文 */
   translateRegion: (request: { sessionId: number; monitorId: number; rect: PhysicalRect }) =>
     call<RegionTranslation>('capture_translate', { request }),
@@ -115,6 +117,12 @@ export const clipboard = {
   /** 智能推荐：根据打开面板前在用的窗口挑出接下来最可能要粘贴的几条 */
   /** `ai = false`：本机打分（快）；`ai = true`：用刚才那份上下文让 AI 模型挑（慢一些） */
   smartSuggest: (ai: boolean) => call<SmartSuggestion>('clipboard_smart_suggest', { ai }),
+  /** 邮箱验证码：连没连上、存没存密码 */
+  mailCodesStatus: () => call<MailCodesStatus>('mail_codes_status'),
+  /** 存邮箱密码（授权码）；null = 清掉 */
+  mailCodesSetPassword: (password: string | null) => call<void>('mail_codes_set_password', { password }),
+  /** 用页面上填的账号连一次；password 为 null 用已存的 */
+  mailCodesTest: (settings: MailCodeSettings, password: string | null) => call<void>('mail_codes_test', { settings, password }),
   /** 在大预览窗口里看一条图片（铺满当前屏，能缩放拖动） */
   previewOpen: (id: number) => call<void>('clipboard_preview_open', { id }),
   previewCurrent: () => call<number | null>('clipboard_preview_current'),
@@ -198,15 +206,23 @@ export const ocr = {
 export const translate = {
   text: (request: TranslateRequest) => call<TranslateResult>('translate_text', { request }),
   providers: () => call<ProviderInfo[]>('translate_providers'),
+  /** 存 / 清掉某个翻译源要填的一项（密钥、应用 ID、区域……）；value 为 null = 清掉 */
+  setField: (provider: string, field: string, value: string | null) => call<void>('translate_set_field', { provider, field, value }),
   detect: (text: string) => call<string>('translate_detect', { text }),
   popupText: () => call<string | null>('translate_popup_text'),
   /** 划词面板上方预留了多高（逻辑像素） */
   popupReserve: () => call<number>('translate_popup_reserve'),
+  /** 设置页调面板外观时的预览：在主窗口旁边亮出真的面板 / 收起 */
+  popupPreview: (show: boolean) => call<void>('translate_popup_preview', { show }),
 };
 
 // ───────────────────────── 系统 ─────────────────────────
 
 export const ai = {
+  /** 用户自己加进对话的图片（PNG / JPEG 的 data URL）放进内存图库，返回图库 id */
+  attachImage: (data: string) => call<string>('ai_attach_image', { data }),
+  /** 不要了的图从内存图库里放掉 */
+  releaseImages: (ids: string[]) => call<void>('ai_release_images', { ids }),
   models: (providerId: string) => call<string[]>('ai_models', { providerId }),
   /** 开始一次回答；onEvent 收到一段段的回答，直到 done / error */
   chat: (request: ChatRequest, onEvent: (e: ChatEvent) => void) => {

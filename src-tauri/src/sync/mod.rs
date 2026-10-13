@@ -511,7 +511,11 @@ pub fn receive(app: &AppHandle, record: SyncRecord, via: Via, live: bool) {
             }
         }
     }
-    if live && record.tag.as_deref() == Some(crate::otp::TAG) {
+    // 这台设备自己也刚读到同一个验证码（两边都连着同一个邮箱）就不再提示一遍
+    if live
+        && record.tag.as_deref() == Some(crate::otp::TAG)
+        && crate::otp::first_sight(record.text.as_deref().unwrap_or_default())
+    {
         let code = record.text.as_deref().unwrap_or_default();
         let from = &record.origin_name;
         let message = if written {

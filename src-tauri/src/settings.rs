@@ -215,6 +215,8 @@ pub struct CaptureSettings {
     pub toolbar_actions: Vec<String>,
     /// 最右边那一组
     pub toolbar_order: Vec<String>,
+    /// 截图工具条的样子：glass = 半透明的玻璃条（默认）| frosted = 磨砂玻璃（像剪贴板面板，模糊底下的画面）
+    pub toolbar_style: String,
     /// copy | copyAndSave
     pub finish_action: String,
     pub save_to_library: bool,
@@ -254,6 +256,7 @@ impl Default for CaptureSettings {
             toolbar_tools: owned(&TOOLBAR_TOOLS),
             toolbar_actions: owned(&TOOLBAR_ACTIONS),
             toolbar_order: owned(&TOOLBAR_ORDER),
+            toolbar_style: "glass".into(),
             finish_action: "copy".into(),
             save_to_library: true,
             save_directory: None,
@@ -545,8 +548,43 @@ impl AiSettings {
 pub const THINKING_LEVELS: [&str; 5] = ["auto", "low", "medium", "high", "max"];
 
 /// 全部翻译源 id。内置免费源在前，自填密钥的在后。
-pub const TRANSLATE_PROVIDERS: [&str; 6] =
-    ["bing", "transmart", "youdao", "google", "deepl", "openai"];
+pub const TRANSLATE_PROVIDERS: [&str; 12] = [
+    "bing",
+    "transmart",
+    "youdao",
+    "google",
+    "deepl",
+    "openai",
+    "baidu",
+    "caiyun",
+    "niutrans",
+    "azure",
+    "tencentcloud",
+    "volcengine",
+];
+
+/// 用户自己添加的翻译（内置里没有的）。密钥不在这里，加密存在密钥表里。
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase", default)]
+pub struct CustomTranslator {
+    /// `custom-` 开头的唯一标识，在 `providers` 的顺序表里用的也是它
+    pub id: String,
+    pub name: String,
+    /// ai = OpenAI 兼容的模型接口 | deeplx = DeepLX 这类自建接口 | http = 自己描述的任意 HTTP 接口
+    pub kind: String,
+    /// ai：接口地址（到 /v1 为止）；deeplx、http：完整的请求地址
+    pub url: String,
+    /// ai：模型名
+    pub model: String,
+    /// ai：自己的翻译提示词（`{to}` `{from}` 换成语言名），空 = 用内置的
+    pub prompt: String,
+    /// http：请求头，一行一个 `名字: 值`
+    pub headers: String,
+    /// http：请求体模板（`{text}` `{from}` `{to}` `{key}`），空 = 发 GET
+    pub body: String,
+    /// http：译文在返回的 JSON 里的路径（`data.translations.0.text`），空 = 整个返回内容就是译文
+    pub path: String,
+}
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -566,6 +604,8 @@ pub struct TranslateSettings {
     pub show_all_providers: bool,
     pub custom_base_url: String,
     pub custom_model: String,
+    /// 用户自己添加的翻译
+    pub custom: Vec<CustomTranslator>,
     pub selection: SelectionTranslateSettings,
     /// 划词翻译面板的外观
     pub popup: PopupStyle,
@@ -628,8 +668,43 @@ impl Default for TranslateSettings {
             show_all_providers: true,
             custom_base_url: "https://api.openai.com/v1".into(),
             custom_model: "gpt-4o-mini".into(),
+            custom: Vec::new(),
             selection: Default::default(),
             popup: Default::default(),
+            extra: Map::new(),
+        }
+    }
+}
+
+/// 邮箱验证码：用 IMAP 连邮箱，新邮件里认出验证码就自动复制（Windows、macOS 都一样）。
+/// 密码（各家叫"授权码""应用专用密码"）不在这里，加密存在密钥表里，也不参与多端同步：每台设备各连各的。
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase", default)]
+pub struct MailCodeSettings {
+    pub enabled: bool,
+    /// qq | 163 | gmail | icloud | proton | custom。预设的几家服务器地址是定死的（`otp::mail::endpoint`）
+    pub provider: String,
+    /// 邮箱地址，也是登录名
+    pub address: String,
+    /// 服务器地址，只有 custom 用
+    pub host: String,
+    /// 端口：custom 和 proton（Proton Mail Bridge 的本机端口可以改）用，0 = 默认
+    pub port: u16,
+    /// tls | starttls，只有 custom 用
+    pub security: String,
+    #[serde(flatten)]
+    pub extra: Map<String, Value>,
+}
+
+impl Default for MailCodeSettings {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            provider: "qq".into(),
+            address: String::new(),
+            host: String::new(),
+            port: 0,
+            security: "tls".into(),
             extra: Map::new(),
         }
     }
@@ -699,6 +774,8 @@ pub struct ClipboardSettings {
     pub otp_mask: bool,
     /// 验证码在剪贴板历史里留多久（秒），0 = 不删。置顶、收藏的不删
     pub otp_expire_secs: u32,
+    /// 连邮箱读新邮件里的验证码（见 `otp::mail`）
+    pub mail_codes: MailCodeSettings,
     /// 智能推荐交给 AI 模型挑（会把当前窗口认出的文字和最近剪贴板的摘要发给设置里的 AI 服务商）。
     /// 关掉 = 只在本机按词打分
     pub smart_ai: bool,
@@ -804,6 +881,7 @@ impl Default for ClipboardSettings {
             sms_codes: false,
             otp_mask: true,
             otp_expire_secs: 60,
+            mail_codes: MailCodeSettings::default(),
             smart_ai: false,
             smart_model: String::new(),
             orb_color: "ocean".into(),
@@ -881,6 +959,9 @@ impl Settings {
         fix_order(&mut c.toolbar_tools, &TOOLBAR_TOOLS);
         fix_order(&mut c.toolbar_actions, &TOOLBAR_ACTIONS);
         fix_order(&mut c.toolbar_order, &TOOLBAR_ORDER);
+        if !matches!(c.toolbar_style.as_str(), "glass" | "frosted") {
+            c.toolbar_style = "glass".into();
+        }
         c.snap_threshold = c.snap_threshold.min(32);
         c.jpg_quality = c.jpg_quality.clamp(40, 100);
         if !matches!(c.color_format.as_str(), "hex" | "rgb" | "hsl") {
@@ -901,6 +982,18 @@ impl Settings {
             sel.button_style = "liquid".into();
         }
         sel.button_size = sel.button_size.clamp(20, 48);
+        let mail = &mut self.clipboard.mail_codes;
+        if !matches!(
+            mail.provider.as_str(),
+            "qq" | "163" | "gmail" | "icloud" | "proton" | "custom"
+        ) {
+            mail.provider = "qq".into();
+        }
+        if !matches!(mail.security.as_str(), "tls" | "starttls") {
+            mail.security = "tls".into();
+        }
+        mail.address = mail.address.trim().to_string();
+        mail.host = mail.host.trim().to_string();
         if !matches!(sel.modifier.as_str(), "none" | "alt" | "ctrl") {
             sel.modifier = "none".into();
         }
@@ -1006,12 +1099,37 @@ fn migrate_translate_providers(tr: &mut TranslateSettings) {
         }
         tr.providers = list;
     }
+    // 自己添加的：标识、类型不对的丢掉，名字空的补一个
+    let mut custom_ids: Vec<String> = Vec::new();
+    tr.custom.retain_mut(|c| {
+        c.id = c.id.trim().to_string();
+        let ok = c.id.starts_with("custom-")
+            && !custom_ids.contains(&c.id)
+            && matches!(c.kind.as_str(), "ai" | "deeplx" | "http");
+        if ok {
+            if c.name.trim().is_empty() {
+                c.name = c.kind.to_uppercase();
+            }
+            custom_ids.push(c.id.clone());
+        }
+        ok
+    });
     let mut seen: Vec<String> = Vec::new();
     tr.providers.retain(|p| {
-        let keep = TRANSLATE_PROVIDERS.contains(&p.id.as_str()) && !seen.contains(&p.id);
+        let known = TRANSLATE_PROVIDERS.contains(&p.id.as_str()) || custom_ids.contains(&p.id);
+        let keep = known && !seen.contains(&p.id);
         seen.push(p.id.clone());
         keep
     });
+    // 刚添加的自定义翻译：排到最后，直接打开
+    for id in &custom_ids {
+        if !tr.providers.iter().any(|p| &p.id == id) {
+            tr.providers.push(ProviderEntry {
+                id: id.clone(),
+                enabled: true,
+            });
+        }
+    }
     for id in TRANSLATE_PROVIDERS {
         if tr.providers.iter().any(|p| p.id == id) {
             continue;
@@ -1116,11 +1234,38 @@ mod tests {
                 ("google", true),
                 ("transmart", false),
                 ("youdao", true),
-                ("openai", false)
+                ("openai", false),
+                // 后来加的要自己填密钥的源：补在最后，默认关着
+                ("baidu", false),
+                ("caiyun", false),
+                ("niutrans", false),
+                ("azure", false),
+                ("tencentcloud", false),
+                ("volcengine", false)
             ]
         );
         assert!(!s.translate.extra.contains_key("freeProviders"));
         assert!(!s.translate.extra.contains_key("customKind"));
+    }
+
+    /// 自己添加的翻译：进顺序表（排最后、打开）；标识、类型不对的丢掉；删掉之后顺序表里的也跟着没
+    #[test]
+    fn custom_translators_join_the_order() {
+        let text = r#"{"translate":{"custom":[
+            {"id":"custom-a1","name":"我的模型","kind":"ai","url":"http://localhost:11434/v1","model":"qwen"},
+            {"id":"bad","name":"x","kind":"ai"},
+            {"id":"custom-b2","name":"","kind":"deeplx","url":"https://x/translate"},
+            {"id":"custom-c3","name":"y","kind":"ftp"}
+        ],"providers":[{"id":"custom-gone","enabled":true},{"id":"google","enabled":true}]}}"#;
+        let s: Settings = serde_json::from_str(text).unwrap();
+        let s = s.sanitized();
+        let custom: Vec<&str> = s.translate.custom.iter().map(|c| c.id.as_str()).collect();
+        assert_eq!(custom, vec!["custom-a1", "custom-b2"]);
+        assert_eq!(s.translate.custom[1].name, "DEEPLX");
+        let all = ids(&s);
+        assert_eq!(all[0], ("google", true));
+        assert!(!all.iter().any(|(id, _)| *id == "custom-gone"));
+        assert!(all.contains(&("custom-a1", true)) && all.contains(&("custom-b2", true)));
     }
 
     #[test]
