@@ -170,19 +170,119 @@ fn attach_backdrop(h: HWND, radius: f32) -> windows::core::Result<()> {
     Ok(())
 }
 
+// ───────────────────────── 窗口区域 ─────────────────────────
+//
+// 背板按圆角裁了，但只在屏幕上的合成里管用：抓屏（WGC，截图功能就是用它）抓到的画面里背板是整个
+// 矩形，圆角外面露出四个浅色的小方角（用户截图里看到的）。所以挂了背板的窗口，窗口区域本身也裁成
+// 圆角：圆角外面根本不属于这个窗口，屏幕上、抓屏里都一样。
+//
+// 窗口区域可能同时被两边要求：页面 / 后端指定只保留一块（`set_rect_region`，抽屉的预留），背板要圆角。
+// 两样都记下来，每次按两者合起来重算一次。命令可能在非 UI 线程调，所以用锁不用 thread_local。
+
+/// 窗口里的一块：x, y, 宽, 高（物理像素，相对窗口左上角）
+type LocalRect = (i32, i32, i32, i32);
+/// 每个窗口当前要求保留的那一块；没有 = 整个窗口
+static REGION_RECT: parking_lot::Mutex<Option<HashMap<isize, LocalRect>>> =
+    parking_lot::Mutex::new(None);
+/// 挂了背板的窗口：圆角半径（物理像素）、背板是不是只铺在窗口里指定的一块（`set_backdrop_rect`）
+static REGION_RADIUS: parking_lot::Mutex<Option<HashMap<isize, (u32, bool)>>> =
+    parking_lot::Mutex::new(None);
+
+/// 窗口区域的圆角比面板小这么多（物理像素）：弧线落在面板圆角外面一点，页面画的抗锯齿边缘整个留着，
+/// 只切掉角上那块方的。区域本身没有抗锯齿，一样大的话会把边缘那圈半透明像素切成台阶
+const REGION_RADIUS_SLACK: u32 = 2;
+
+/// 按记下的"保留哪一块"和"圆角多大"重设窗口区域。
+///
+/// 背板只铺在窗口里一小块、窗口又没指定保留哪一块（截图遮罩上工具条的毛玻璃）：圆角是那一小块的，
+/// 不是窗口的，窗口区域不裁圆角。
+fn apply_region(h: HWND) {
+    let key = h.0 as isize;
+    let rect = REGION_RECT.lock().as_ref().and_then(|m| m.get(&key).copied());
+    let radius = REGION_RADIUS
+        .lock()
+        .as_ref()
+        .and_then(|m| m.get(&key).copied())
+        .filter(|&(_, manual)| !manual || rect.is_some())
+        .map(|(r, _)| r.saturating_sub(REGION_RADIUS_SLACK))
+        .filter(|&r| r > 0);
+    // SAFETY: h 是存活的本进程窗口。SetWindowRgn 成功后区域归系统所有，失败才由我们释放。
+    unsafe {
+        let rgn = match (rect, radius) {
+            (None, None) => {
+                let _ = SetWindowRgn(h, None, true);
+                return;
+            }
+            (Some((x, y, w, hh)), None) => CreateRectRgn(x, y, x + w, y + hh),
+            (rect, Some(r)) => {
+                let (x, y, w, hh) = rect.unwrap_or_else(|| {
+                    let size = client_size(h);
+                    (0, 0, size.X as i32, size.Y as i32)
+                });
+                let d = (r * 2) as i32;
+                CreateRoundRectRgn(x, y, x + w + 1, y + hh + 1, d, d)
+            }
+        };
+        if SetWindowRgn(h, Some(rgn), true) == 0 {
+            let _ = DeleteObject(rgn.into());
+        }
+    }
+}
+
+/// 每次都重设区域，不管半径变没变：`wm::set_glass` 挂背板之前会先把窗口区域清掉
+fn set_region_radius(h: HWND, radius: Option<u32>) {
+    // 锁只在这个块里拿着：apply_region 还要再拿一次
+    {
+        let mut map = REGION_RADIUS.lock();
+        let map = map.get_or_insert_with(HashMap::new);
+        let key = h.0 as isize;
+        match radius {
+            Some(r) => {
+                let manual = map.get(&key).is_some_and(|&(_, m)| m);
+                map.insert(key, (r, manual));
+            }
+            None => {
+                map.remove(&key);
+            }
+        }
+    }
+    apply_region(h);
+}
+
+/// 背板改成只铺一块 / 恢复铺满：窗口区域要不要裁圆角跟着变。
+fn set_region_manual(h: HWND, manual: bool) {
+    let changed = {
+        let mut map = REGION_RADIUS.lock();
+        match map.as_mut().and_then(|m| m.get_mut(&(h.0 as isize))) {
+            Some(entry) if entry.1 != manual => {
+                entry.1 = manual;
+                true
+            }
+            _ => false,
+        }
+    };
+    if changed {
+        apply_region(h);
+    }
+}
+
 /// 毛玻璃背板：`Some(半径)`（物理像素）挂上或者更新半径和大小，`None` 去掉。只能在 UI 线程调用。
 /// 挂不上返回 false（Win10 没有 `DWMWA_USE_HOSTBACKDROPBRUSH`，调用方退回系统亚克力）。
 pub fn set_backdrop(window: &WebviewWindow, radius: Option<u32>) -> bool {
     let Ok(h) = window.hwnd() else { return false };
     match radius {
         Some(r) => match attach_backdrop(h, r as f32) {
-            Ok(()) => true,
+            Ok(()) => {
+                set_region_radius(h, Some(r));
+                true
+            }
             Err(err) => {
                 tracing::warn!(label = window.label(), "毛玻璃背板设置失败：{err}");
                 false
             }
         },
         None => {
+            set_region_radius(h, None);
             let removed = BACKDROPS.with(|b| b.borrow_mut().remove(&(h.0 as isize)));
             if removed.is_some() {
                 let off = BOOL(0);
@@ -205,6 +305,14 @@ pub fn set_backdrop(window: &WebviewWindow, radius: Option<u32>) -> bool {
 /// 页面正在指定背板范围（动画期间）时不动它。
 pub fn resize_backdrop(window: &WebviewWindow) -> bool {
     let Ok(h) = window.hwnd() else { return false };
+    // 圆角的窗口区域按新大小重裁（只保留一块的话那块是页面指定的，不跟着窗口变，重算也一样）
+    if REGION_RADIUS
+        .lock()
+        .as_ref()
+        .is_some_and(|m| m.contains_key(&(h.0 as isize)))
+    {
+        apply_region(h);
+    }
     let state = BACKDROPS.with(|b| {
         b.borrow()
             .get(&(h.0 as isize))
@@ -234,6 +342,7 @@ pub fn set_backdrop_rect(window: &WebviewWindow, rect: Option<(f32, f32, f32, f3
         Some(bd.geometry.clone())
     });
     let Some(geometry) = geometry else { return };
+    set_region_manual(h, rect.is_some());
     let (offset, size) = match rect {
         Some((x, y, w, hh)) => (
             Vector2 { X: x, Y: y },
@@ -453,22 +562,18 @@ pub fn set_round_region(window: &WebviewWindow, radius: u32) {
 }
 
 /// 把窗口限制在一个矩形里（物理像素，相对窗口左上角）：外面的部分不显示、点击直接穿过去。`None` = 整个窗口。
+/// 挂了毛玻璃背板的窗口，这一块按背板的圆角裁（见上面"窗口区域"）。
 pub fn set_rect_region(window: &WebviewWindow, rect: Option<(i32, i32, i32, i32)>) {
     let Ok(h) = window.hwnd() else { return };
-    // SAFETY: h 是存活的 Tauri 窗口。SetWindowRgn 成功后区域归系统所有，失败才由我们释放。
-    unsafe {
+    {
+        let mut map = REGION_RECT.lock();
+        let map = map.get_or_insert_with(HashMap::new);
         match rect {
-            None => {
-                let _ = SetWindowRgn(h, None, true);
-            }
-            Some((x, y, w, hh)) => {
-                let rgn = CreateRectRgn(x, y, x + w, y + hh);
-                if SetWindowRgn(h, Some(rgn), true) == 0 {
-                    let _ = DeleteObject(rgn.into());
-                }
-            }
-        }
+            Some(r) => map.insert(h.0 as isize, r),
+            None => map.remove(&(h.0 as isize)),
+        };
     }
+    apply_region(h);
 }
 
 pub fn hide_window(window: &WebviewWindow) {

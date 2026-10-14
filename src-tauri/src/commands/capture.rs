@@ -1,7 +1,7 @@
 //! 截图 / 长截图 / 贴图 / 编辑器命令。
 
 use tauri::ipc::Request;
-use tauri::{AppHandle, Manager};
+use tauri::AppHandle;
 
 use super::{blocking, raw_request};
 use crate::capture::{self, CaptureIntent, FinishMeta, SessionInfo};
@@ -14,16 +14,8 @@ use crate::{library, longshot, ocr, wm};
 
 #[tauri::command]
 pub async fn capture_start(app: AppHandle, intent: CaptureIntent) -> AppResult<()> {
-    // 从主窗口按钮触发时先把主窗口藏起来，别拍进去；截图结束时 `capture::end_session` 再放回来。
-    // 已经在截图中的话这次会被忽略，不能藏（没有会话结束来放回来）
-    if let Some(main) = app.get_webview_window(wm::MAIN) {
-        let st = state(&app);
-        if !st.capture.is_busy() && main.is_visible().unwrap_or(false) {
-            let _ = main.hide();
-            st.capture.mark_main_hidden();
-            std::thread::sleep(std::time::Duration::from_millis(220));
-        }
-    }
+    // 从主窗口按钮触发：主窗口别拍进去，截图结束时 `capture::end_session` 再放回来
+    capture::stash_main(&app);
     capture::trigger(&app, intent);
     Ok(())
 }

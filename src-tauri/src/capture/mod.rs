@@ -86,8 +86,9 @@ pub struct CaptureState {
     /// 截图/长截图进行中。热键再按一次直接忽略（规格 02 §3.9.1）
     busy: AtomicBool,
     next_id: AtomicU64,
-    /// 从主窗口按钮开始的截图：主窗口被藏起来了，截图结束（含录完 GIF / 长截图、取消、失败）要叫回来
-    main_hidden: AtomicBool,
+    /// 从主窗口按钮开始的截图：主窗口被收起来了（见 `stash_main`），截图结束（含录完 GIF / 长截图、
+    /// 取消、失败）要放回来
+    main_stashed: AtomicBool,
 }
 
 impl CaptureState {
@@ -104,22 +105,47 @@ impl CaptureState {
         self.busy.store(false, Ordering::SeqCst);
     }
 
-    pub(crate) fn mark_main_hidden(&self) {
-        self.main_hidden.store(true, Ordering::SeqCst);
-    }
-
-    fn take_main_hidden(&self) -> bool {
-        self.main_hidden.swap(false, Ordering::SeqCst)
+    fn take_main_stashed(&self) -> bool {
+        self.main_stashed.swap(false, Ordering::SeqCst)
     }
 }
 
-/// 截图前藏起来的主窗口放回来。`focus`：让它拿焦点（取消、复制、保存这类回到原处的结束方式）；
-/// 否则焦点还给这时的前台窗口（刚弹出来的贴图之类）。
+/// 从主窗口的按钮开始截图：主窗口不能被拍进冻结的画面里。截图结束时 `restore_main` 放回来。
 ///
-/// 不拿焦点时也要先把主窗口激活一次：Windows 上不激活就显示出来的主窗口，WebView2 不重画，
-/// 侧边栏、按钮一片发白，要用户点一下主窗口才恢复。
+/// Windows 上不藏它，只是排除出抓屏：窗口原地不动，截完撤掉排除就行。藏起来再显示的话，碰上
+/// 识字 / AI 窗口第一次建出来，主窗口的 Mica 会被画成浅色（侧边栏一片发白，属性却都对），
+/// 要等别的事情触发重绘才恢复。macOS 上还是藏起来（新系统的抓屏不一定认"排除"）。
+pub fn stash_main(app: &AppHandle) {
+    let st = state(app);
+    let Some(main) = tauri::Manager::get_webview_window(app, wm::MAIN) else {
+        return;
+    };
+    if st.capture.is_busy() || !main.is_visible().unwrap_or(false) {
+        return;
+    }
+    if cfg!(windows) {
+        platform::set_exclude_from_capture(&main, true);
+        // 排除在 DWM 下一帧合成时才生效
+        std::thread::sleep(Duration::from_millis(50));
+    } else {
+        let _ = main.hide();
+        // 等系统的收起动画走完
+        std::thread::sleep(Duration::from_millis(220));
+    }
+    st.capture.main_stashed.store(true, Ordering::SeqCst);
+}
+
+/// 把 `stash_main` 收起的主窗口放回来。只能在 UI 线程调用。
+/// macOS 上是重新显示：`focus` 时让它拿焦点（取消、复制、保存这类回到原处的结束方式），
+/// 否则焦点还给这时的前台窗口（刚弹出来的贴图之类）。
 fn restore_main(app: &AppHandle, focus: bool) {
-    if !state(app).capture.take_main_hidden() {
+    if !state(app).capture.take_main_stashed() {
+        return;
+    }
+    if cfg!(windows) {
+        if let Some(main) = tauri::Manager::get_webview_window(app, wm::MAIN) {
+            platform::set_exclude_from_capture(&main, false);
+        }
         return;
     }
     let mut front = (!focus).then(platform::foreground_window).flatten();
