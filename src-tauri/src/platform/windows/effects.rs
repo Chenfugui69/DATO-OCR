@@ -537,6 +537,39 @@ pub fn set_rounded(window: &WebviewWindow, rounded: bool) {
     if let Err(err) = result {
         tracing::debug!(label = window.label(), "设置窗口圆角失败：{err}");
     }
+    if !rounded {
+        suppress_nc_frame(h);
+    }
+}
+
+/// 窗口激活 / 失去激活时（`WM_NCACTIVATE`），系统默认处理会在窗口外沿画一圈老式的 1px 窗框，
+/// 直接画进窗口内容里：无边框窗口的客户区就是整个窗口，这圈线就压在面板边上，被窗口区域裁剪后
+/// 剩下左、右、下三条白线和圆角（顶上那条落在裁掉的预留区里）。只有窗口改大小重画时才会消失，
+/// 所以"有时有一圈白边、拖一下大小就没了"。毛玻璃面板没有窗框，这条消息直接吞掉：
+/// 返回 TRUE 让激活照常进行，不交给默认处理去画框。
+fn suppress_nc_frame(h: HWND) {
+    use windows::Win32::Foundation::{LPARAM, LRESULT, WPARAM};
+    use windows::Win32::UI::Shell::{DefSubclassProc, SetWindowSubclass};
+    use windows::Win32::UI::WindowsAndMessaging::WM_NCACTIVATE;
+
+    unsafe extern "system" fn proc(
+        h: HWND,
+        msg: u32,
+        wparam: WPARAM,
+        lparam: LPARAM,
+        _id: usize,
+        _data: usize,
+    ) -> LRESULT {
+        if msg == WM_NCACTIVATE {
+            return LRESULT(1);
+        }
+        // SAFETY: 原样交给下一层窗口过程。
+        unsafe { DefSubclassProc(h, msg, wparam, lparam) }
+    }
+    // SAFETY: 在窗口所在的 UI 线程调用；同一个 id 重复挂只是更新，不会挂两层。
+    if !unsafe { SetWindowSubclass(h, Some(proc), 0x4E43, 0) }.as_bool() {
+        tracing::debug!("挂窗口子类失败，面板激活时可能画出系统窗框");
+    }
 }
 
 /// 把窗口裁成圆角矩形（`radius` 物理像素，0 = 不裁）。毛玻璃面板用：系统圆角只有 8px 一档，
