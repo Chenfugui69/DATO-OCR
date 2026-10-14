@@ -76,6 +76,7 @@ pub const TABLE: &[(&str, &str)] = &[
     ("没有可用的遮罩窗口", "No overlay window available"),
     ("遮罩窗口 {} 不存在", "Overlay window {} does not exist"),
     ("选区里没有识别到文字", "No text was recognized in the selection"),
+    ("选区里的文字已经是目标语言", "The text in the selection is already in the target language"),
     ("图片是空的", "The image is empty"),
     ("图片超过剪贴板历史的大小上限", "The image exceeds the clipboard history size limit"),
     ("文字是空的", "The text is empty"),

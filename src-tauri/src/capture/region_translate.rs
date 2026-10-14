@@ -232,6 +232,12 @@ fn layout_blocks(blocks: &[OcrBlock], image: Option<&RgbaImage>) -> Vec<TextBloc
     out
 }
 
+/// 检测出的语言和目标语言算不算同一种（简繁都算中文）。
+fn same_language(detected: &str, target: &str) -> bool {
+    let base = |l: &str| l.split(['-', '_']).next().unwrap_or(l).to_ascii_lowercase();
+    base(detected) == base(target)
+}
+
 /// 把整批译文拆回各块。拆不对返回 None。
 fn split_back(text: &str, n: usize) -> Option<Vec<String>> {
     let by_blank: Vec<String> = text
@@ -273,16 +279,37 @@ pub async fn translate_region(app: &AppHandle, req: RegionRequest) -> AppResult<
     })
     .await
     .map_err(|e| AppError::msg(e.to_string()))??;
-    let blocks = layout_blocks(&result.blocks, Some(&image));
+    let mut blocks = layout_blocks(&result.blocks, Some(&image));
     if blocks.is_empty() {
         return Err(AppError::msg("选区里没有识别到文字"));
+    }
+    // 翻成哪种语言：设置里指定了就按设置；"自动"时翻成界面语言。不能按整块选区检测
+    // （"中 ↔ 英"）：界面、网页里常常中英混排，中文一多整批就被当成中文、翻成英文，
+    // 英文那几块原样不动，看着像没翻
+    let target = {
+        let configured = state(app).settings.read().translate.target_language.clone();
+        if configured != "auto" {
+            configured
+        } else if crate::i18n::english() {
+            "en".to_string()
+        } else {
+            "zh".to_string()
+        }
+    };
+    // 本来就是目标语言的块不翻也不重画：重画只会把识别丢了空格、认错字的原文盖在原图上
+    blocks.retain(|b| !same_language(translate::detect::detect(&b.text()), &target));
+    if blocks.is_empty() {
+        return Err(AppError::msg("选区里的文字已经是目标语言"));
     }
     let sources: Vec<String> = blocks.iter().map(TextBlock::text).collect();
 
     let whole = translate::translate(
         app,
         TranslateRequest {
-            text: sources.join("\n\n"),
+            text: sources.join("
+
+"),
+            to: Some(target.clone()),
             ..Default::default()
         },
     )
@@ -302,7 +329,7 @@ pub async fn translate_region(app: &AppHandle, req: RegionRequest) -> AppResult<
                     app,
                     TranslateRequest {
                         text: src.clone(),
-                        to: Some(whole.to.clone()),
+                        to: Some(target.clone()),
                         ..Default::default()
                     },
                 )
@@ -347,6 +374,13 @@ mod tests {
             quad: [[x, y], [x + w, y], [x + w, y + h], [x, y + h]],
             score: 0.9,
         }
+    }
+
+    #[test]
+    fn same_language_ignores_region_suffix() {
+        assert!(same_language("zh", "zh"));
+        assert!(same_language("zh", "zh-TW"));
+        assert!(!same_language("en", "zh"));
     }
 
     #[test]
