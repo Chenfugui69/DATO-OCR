@@ -100,6 +100,8 @@ pub struct TranslatePopup {
 
 /// 面板这会儿是不是设置页的预览
 static PREVIEW: AtomicBool = AtomicBool::new(false);
+/// 预览上次套用的材质（毛玻璃开关、圆角），没变就不重设
+static PREVIEW_MATERIAL: Mutex<Option<(bool, u32)>> = Mutex::new(None);
 /// 预览时面板里翻译的例句
 const PREVIEW_TEXT: &str = "The quick brown fox jumps over the lazy dog. Adjust the settings and this panel follows, at exactly the size you will see when translating.";
 
@@ -112,8 +114,10 @@ pub fn preview_popup(app: &AppHandle, show: bool) {
         let ui = app.clone();
         let _ = app.run_on_main_thread(move || {
             if let Some(window) = ui.get_webview_window(WINDOW) {
-                let _ = window.hide();
+                // 预览是原生"显示但不激活"亮出来的，藏也要走原生的：Tauri 的 hide() 以为它本来就藏着，什么都不做
+                platform::hide_window(&window);
             }
+            let _ = ui.emit_to(wm::MAIN, events::TRANSLATE_PREVIEW_CLOSED, ());
         });
     }
 }
@@ -292,8 +296,15 @@ fn open_popup(app: &AppHandle, text: String, at: Option<(i32, i32)>, preview: bo
             return;
         };
         if preview {
-            // 材质、圆角按最新的设置来（平时是改设置时另外应用的，这里顺手对齐一次）
-            apply_popup_material(&app);
+            // 材质、圆角按最新的设置来（平时是改设置时另外应用的，这里顺手对齐一次）。
+            // 只在毛玻璃、圆角真的变了时重设：重设要先拆掉背板和圆角再挂上，拖宽高滑块时每一下都重来，面板一直闪
+            let popup = state(&app).settings.read().translate.popup.clone();
+            let material = (popup.blur, popup.radius);
+            let mut last = PREVIEW_MATERIAL.lock();
+            if !refresh_only || *last != Some(material) {
+                *last = Some(material);
+                apply_popup_material(&app);
+            }
         }
         let at = if preview { preview_anchor(&app, w) } else { at };
         let (anchor, monitor) = match at {
@@ -303,9 +314,31 @@ fn open_popup(app: &AppHandle, text: String, at: Option<(i32, i32)>, preview: bo
         let mut reserve = 0.0;
         if let Some(monitor) = monitor {
             let placed = wm::rect_on_monitor(&monitor, w, h, anchor);
-            let _ =
-                platform::place_window(&window, placed.x, placed.y, placed.width, placed.height);
-            reserve = reserve_above(&app, &window, &monitor, placed, h);
+            if preview && cfg!(windows) {
+                // Windows 的预览不给"问 AI"抽屉往上预留：预留要先摆好、再把窗口往上扩、再裁掉扩出来的那截，
+                // 拖滑块时每一下都走一遍，中间那几帧面板忽高忽低；`place_window` 自己也要挪、改大小、再挪三步。
+                // 这里一步摆到位。真要展开抽屉，页面会自己挪窗口
+                platform::set_rect_region(&window, None);
+                platform::set_backdrop_rect(&window, None, 0);
+                let _ = platform::set_bounds(
+                    &window,
+                    placed.x,
+                    placed.y,
+                    placed.width,
+                    placed.height,
+                );
+                // 背板 / 圆角立刻按新大小裁，别等 Resized 事件
+                wm::refit_glass(&window);
+            } else {
+                let _ = platform::place_window(
+                    &window,
+                    placed.x,
+                    placed.y,
+                    placed.width,
+                    placed.height,
+                );
+                reserve = reserve_above(&app, &window, &monitor, placed, h);
+            }
         }
         *RESERVE.lock() = reserve;
         if refresh_only && window.is_visible().unwrap_or(false) {

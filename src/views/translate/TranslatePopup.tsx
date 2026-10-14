@@ -259,7 +259,11 @@ export default function TranslatePopup() {
       .catch(() => undefined);
   }, [adopt]);
 
-  const hide = useCallback(() => void getCurrentWindow().hide(), []);
+  // 设置页的预览是原生"显示但不激活"亮出来的，Tauri 的 hide() 藏不掉它；交给后端收（顺便让设置页把开关拨回去）
+  const hide = useCallback(() => {
+    if (previewRef.current) void translate.popupPreview(false).catch(() => undefined);
+    else void getCurrentWindow().hide();
+  }, []);
   // 鼠标在面板外面按下了（Rust 的全局鼠标监听报的）。平时靠失焦收起，但面板有时拿不到键盘焦点、
   // 就等不到失焦；这条不依赖焦点。和失焦一样：翻译模式才收，对话模式、钉住、正在拖动 / 改大小时不收
   useEvent('translate-outside', () => {

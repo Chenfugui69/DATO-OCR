@@ -46,6 +46,7 @@ export interface EventMap {
   navigate: string;
   'translate-request': { text: string; reserve?: number; preview?: boolean };
   'translate-outside': null;
+  'translate-preview-closed': null;
   'selection-button-show': { generation: number; dark: boolean | null; backdrop: string | null };
   'ai-context': AiContext;
   'editor-open': EditorDoc;

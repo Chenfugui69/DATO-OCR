@@ -7,16 +7,106 @@
 use image::RgbaImage;
 use windows::Win32::Foundation::POINT;
 use windows::Win32::Graphics::Gdi::{
-    GetMonitorInfoW, MonitorFromPoint, MONITORINFO, MONITOR_DEFAULTTONULL,
+    BitBlt, CreateCompatibleBitmap, CreateCompatibleDC, DeleteDC, DeleteObject, GetDC, GetDIBits,
+    GetMonitorInfoW, MonitorFromPoint, ReleaseDC, SelectObject, BITMAPINFO, BITMAPINFOHEADER,
+    BI_RGB, CAPTUREBLT, DIB_RGB_COLORS, MONITORINFO, MONITOR_DEFAULTTONULL, SRCCOPY,
+};
+use windows::Win32::UI::WindowsAndMessaging::{
+    GetWindowDisplayAffinity, SetWindowDisplayAffinity, WDA_EXCLUDEFROMCAPTURE,
+    WINDOW_DISPLAY_AFFINITY,
 };
 use xcap::Monitor;
 
+use super::util::hwnd;
 use crate::error::{AppError, AppResult};
 use crate::platform::{MonitorId, MonitorInfo, PhysicalRect, WindowHandle};
 
-/// 屏幕上这一块现在的画面。Windows 上还没做（抓整块屏再裁太重），页面按应用的深浅色自己画。
-pub fn patch(_rect: PhysicalRect, _below: Option<WindowHandle>) -> Option<RgbaImage> {
-    None
+/// 屏幕上这一块现在的画面（划词按钮的玻璃珠透过去看到的那块）。
+///
+/// 只有几十个像素见方，用 GDI 直接从屏幕 DC 拷这一块，不到 1ms；WGC 只能整屏抓，4K 一次 60ms 太重。
+/// `below`：上一颗按钮还摆在这儿的话，先把它排除出抓屏（WDA_EXCLUDEFROMCAPTURE 对 GDI 拷屏也生效），
+/// 拷完恢复原来的设置，免得旧珠子连同投影被拍进新珠子里。
+pub fn patch(rect: PhysicalRect, below: Option<WindowHandle>) -> Option<RgbaImage> {
+    if rect.width == 0 || rect.height == 0 {
+        return None;
+    }
+    let restore = below.and_then(|w| {
+        let h = hwnd(w.0);
+        let mut old = 0u32;
+        // SAFETY: h 是本进程的按钮窗口；只读、改它的显示亲和性。
+        unsafe {
+            GetWindowDisplayAffinity(h, &mut old).ok()?;
+            if old == WDA_EXCLUDEFROMCAPTURE.0 {
+                return None;
+            }
+            SetWindowDisplayAffinity(h, WDA_EXCLUDEFROMCAPTURE).ok()?;
+        }
+        // 亲和性在 DWM 合成下一帧才生效
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        Some((h, WINDOW_DISPLAY_AFFINITY(old)))
+    });
+    let image = grab(rect);
+    if let Some((h, old)) = restore {
+        // SAFETY: 同上。
+        let _ = unsafe { SetWindowDisplayAffinity(h, old) };
+    }
+    match image {
+        Ok(image) => Some(image),
+        Err(err) => {
+            tracing::debug!(?rect, "抓按钮底下的画面失败：{err}");
+            None
+        }
+    }
+}
+
+/// 从屏幕 DC 拷出一块（虚拟桌面坐标，物理像素），转成不透明 RGBA。
+fn grab(rect: PhysicalRect) -> windows::core::Result<RgbaImage> {
+    let (w, h) = (rect.width as i32, rect.height as i32);
+    // SAFETY: 所有 GDI 对象都在本函数内创建并按相反顺序释放；缓冲按 32 位自上而下的 DIB 开好。
+    unsafe {
+        let screen = GetDC(None);
+        let mem = CreateCompatibleDC(Some(screen));
+        let bitmap = CreateCompatibleBitmap(screen, w, h);
+        let old = SelectObject(mem, bitmap.into());
+        // CAPTUREBLT：分层窗口（半透明的浮窗、菜单）也拷进来
+        let copied = BitBlt(mem, 0, 0, w, h, Some(screen), rect.x, rect.y, SRCCOPY | CAPTUREBLT);
+        let mut info = BITMAPINFO {
+            bmiHeader: BITMAPINFOHEADER {
+                biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32,
+                biWidth: w,
+                biHeight: -h,
+                biPlanes: 1,
+                biBitCount: 32,
+                biCompression: BI_RGB.0,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let mut buf = vec![0u8; (w * h * 4) as usize];
+        SelectObject(mem, old);
+        let lines = GetDIBits(
+            mem,
+            bitmap,
+            0,
+            h as u32,
+            Some(buf.as_mut_ptr().cast()),
+            &mut info,
+            DIB_RGB_COLORS,
+        );
+        let _ = DeleteObject(bitmap.into());
+        let _ = DeleteDC(mem);
+        ReleaseDC(None, screen);
+        copied?;
+        if lines != h {
+            return Err(windows::core::Error::from_thread());
+        }
+        // BGRA → RGBA，alpha 没有语义，补成不透明
+        for px in buf.chunks_exact_mut(4) {
+            px.swap(0, 2);
+            px[3] = 255;
+        }
+        RgbaImage::from_raw(rect.width, rect.height, buf).ok_or_else(windows::core::Error::empty)
+    }
 }
 
 pub fn list_monitors() -> AppResult<Vec<MonitorInfo>> {

@@ -207,23 +207,28 @@ pub fn set_glass(window: &WebviewWindow, blur: bool, radius: f64) {
     }
 }
 
+/// 窗口大小变了：背板裁剪（Win10 是窗口的圆角裁剪）按新大小重来。只能在 UI 线程调用。
+/// 我们自己改了窗口大小时直接调这个，别等 `Resized` 事件 —— 那要晚一两帧，这期间圆角外面露出方角。
+pub fn refit_glass(window: &WebviewWindow) {
+    // Win10 退回窗口裁剪的情况：窗口一变大小就得按新大小重新裁
+    if platform::resize_backdrop(window) {
+        return;
+    }
+    let r = GLASS
+        .lock()
+        .as_ref()
+        .and_then(|m| m.get(window.label()).copied());
+    if let Some(r) = r {
+        let s = window.scale_factor().unwrap_or(1.0);
+        platform::set_round_region(window, (r * s).round() as u32);
+    }
+}
+
 /// 面板窗口创建时调一次：窗口大小变了背板裁剪跟着变，缩放变了圆角半径按新缩放重算。
 pub fn track_glass(window: &WebviewWindow) {
     let w = window.clone();
     window.on_window_event(move |event| match event {
-        tauri::WindowEvent::Resized(_) => {
-            // Win10 退回窗口裁剪的情况：窗口一变大小就得按新大小重新裁
-            if !platform::resize_backdrop(&w) {
-                let r = GLASS
-                    .lock()
-                    .as_ref()
-                    .and_then(|m| m.get(w.label()).copied());
-                if let Some(r) = r {
-                    let s = w.scale_factor().unwrap_or(1.0);
-                    platform::set_round_region(&w, (r * s).round() as u32);
-                }
-            }
-        }
+        tauri::WindowEvent::Resized(_) => refit_glass(&w),
         tauri::WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
             // 先把半径取出来再设：设的时候系统可能同步发回窗口消息
             let r = GLASS

@@ -7,6 +7,7 @@ import { RotateCcw } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
+import { useEvent } from '@/lib/events';
 import { translate } from '@/lib/ipc';
 import { accelLabel, isMac } from '@/lib/platform';
 import type { Settings } from '@/lib/types';
@@ -37,6 +38,8 @@ function PopupPreviewRow({ popup }: { popup: Settings['translate']['popup'] }) {
     const timer = window.setTimeout(() => void translate.popupPreview(true).catch(notify.error), 200);
     return () => window.clearTimeout(timer);
   }, [on, look]);
+  // 面板上点了关闭：开关跟着拨回去
+  useEvent('translate-preview-closed', () => setOn(false));
   useEffect(() => {
     if (!on) return;
     const hide = () => void translate.popupPreview(false).catch(() => undefined);

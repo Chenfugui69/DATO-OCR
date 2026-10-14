@@ -21,7 +21,7 @@ use std::time::{Duration, Instant};
 use image::RgbaImage;
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Emitter, Manager};
+use tauri::{AppHandle, Emitter};
 use tauri_plugin_dialog::DialogExt;
 
 use crate::error::{AppError, AppResult};
@@ -114,15 +114,24 @@ impl CaptureState {
 }
 
 /// 截图前藏起来的主窗口放回来。`focus`：让它拿焦点（取消、复制、保存这类回到原处的结束方式）；
-/// 否则只显示，别抢刚弹出来的贴图 / 识字 / 翻译窗口的焦点。
+/// 否则焦点还给这时的前台窗口（刚弹出来的贴图之类）。
+///
+/// 不拿焦点时也要先把主窗口激活一次：Windows 上不激活就显示出来的主窗口，WebView2 不重画，
+/// 侧边栏、按钮一片发白，要用户点一下主窗口才恢复。
 fn restore_main(app: &AppHandle, focus: bool) {
     if !state(app).capture.take_main_hidden() {
         return;
     }
-    if focus {
-        wm::show_main(app, None);
-    } else if let Some(main) = app.get_webview_window(wm::MAIN) {
-        let _ = main.show();
+    let mut front = (!focus).then(platform::foreground_window).flatten();
+    // 前台还是刚藏起来的遮罩（识字、翻译这些，新窗口稍后才弹出来）：不还，焦点给一个看不见的窗口键盘就没地方去了
+    overlay::for_each(app, |w| {
+        if front.is_some_and(|f| platform::native_handle(w).is_ok_and(|h| h == f.0)) {
+            front = None;
+        }
+    });
+    wm::show_main(app, None);
+    if let Some(front) = front {
+        let _ = platform::focus_window(front);
     }
 }
 
