@@ -3,6 +3,7 @@
 // 翻译源是一个有序列表：排在最前面的可用源就是默认源，翻译失败时依次往后降级；
 // 翻译面板"同时显示多个源"时也按这个顺序排。每个源都能单独"检测"一下通不通。
 
+import { useQuery } from '@tanstack/react-query';
 import { RotateCcw } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -64,6 +65,7 @@ export function TranslateSettingsGroups({ settings, set }: { settings: Settings;
   const sel = tr.selection;
   const net = settings.network;
   const pop = tr.popup;
+  const providers = useQuery({ queryKey: ['translate-providers'], queryFn: translate.providers });
 
   return (
     <>
@@ -77,6 +79,18 @@ export function TranslateSettingsGroups({ settings, set }: { settings: Settings;
         </Row>
         <Row title={t('settings.translate.showAll')} desc={t('settings.translate.showAllDesc')}>
           <Switch checked={tr.showAllProviders} onChange={(v) => set((d) => void (d.translate.showAllProviders = v))} />
+        </Row>
+        <Row title={t('settings.translate.regionProvider')} desc={t('settings.translate.regionProviderDesc')}>
+          <Select
+            value={tr.regionProvider || 'auto'}
+            options={[
+              { value: 'auto', label: t('settings.translate.regionAuto') },
+              ...(providers.data ?? [])
+                .filter((p) => (p.enabled && p.configured) || p.id === tr.regionProvider)
+                .map((p) => ({ value: p.id, label: p.name })),
+            ]}
+            onChange={(v) => set((d) => void (d.translate.regionProvider = v))}
+          />
         </Row>
         <TranslateProviderList settings={settings} set={set} />
       </Group>

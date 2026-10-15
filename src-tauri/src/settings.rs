@@ -602,6 +602,8 @@ pub struct TranslateSettings {
     pub providers: Vec<ProviderEntry>,
     /// 翻译面板同时显示所有已启用源的结果；关掉只显示默认源
     pub show_all_providers: bool,
+    /// 截图原位翻译用哪个翻译源：auto = 按上面的顺序；指定的源失败时照样按顺序降级
+    pub region_provider: String,
     pub custom_base_url: String,
     pub custom_model: String,
     /// 用户自己添加的翻译
@@ -666,6 +668,7 @@ impl Default for TranslateSettings {
                 })
                 .collect(),
             show_all_providers: true,
+            region_provider: "auto".into(),
             custom_base_url: "https://api.openai.com/v1".into(),
             custom_model: "gpt-4o-mini".into(),
             custom: Vec::new(),

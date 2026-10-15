@@ -634,6 +634,9 @@ const enUS: Dict = {
     },
     translate: {
       target: 'Translate to',
+      regionProvider: 'Provider for screenshot translation',
+      regionProviderDesc: 'Used by Translate in the screenshot toolbar. If it fails, the next one in order is tried',
+      regionAuto: 'Follow the order below',
       showAll: 'Show several providers at once',
       showAllDesc: 'List the results of every enabled provider in the translation panel. Turn off to show only the default one',
       orderNote: 'Use the arrows to reorder. The first available provider is the default; if it fails, the next one is tried. Text is sent to the provider being used.',

@@ -70,6 +70,8 @@ export interface Settings {
     /** 用户自己添加的翻译（内置里没有的） */
     custom: CustomTranslator[];
     showAllProviders: boolean;
+    /** 截图原位翻译用的翻译源：auto = 按顺序 */
+    regionProvider: string;
     customBaseUrl: string;
     customModel: string;
     popup: PopupStyle;

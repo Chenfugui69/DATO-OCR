@@ -664,6 +664,9 @@ const zhCN = {
     },
     translate: {
       target: '默认译成',
+      regionProvider: '截图翻译用的翻译源',
+      regionProviderDesc: '截图工具栏里「翻译」用哪个；它失败时照样按顺序换下一个',
+      regionAuto: '按下面的顺序',
       showAll: '同时显示多个翻译源',
       showAllDesc: '翻译面板里把所有已开启的翻译源结果一起列出来；关掉只显示默认源',
       orderNote: '按住左边的把手上下拖动调整顺序，排在最前面的可用翻译源就是默认源，它失败时自动换下一个。翻译时文字会发送给对应的翻译服务。',

@@ -363,15 +363,18 @@ pub async fn translate_region(app: &AppHandle, req: RegionRequest) -> AppResult<
     // 翻成哪种语言：设置里指定了就按设置；"自动"时翻成界面语言。不能按整块选区检测
     // （"中 ↔ 英"）：界面、网页里常常中英混排，中文一多整批就被当成中文、翻成英文，
     // 英文那几块原样不动，看着像没翻
-    let target = {
-        let configured = state(app).settings.read().translate.target_language.clone();
-        if configured != "auto" {
+    let (target, provider) = {
+        let tr = state(app).settings.read().translate.clone();
+        let provider = Some(tr.region_provider).filter(|p| !p.is_empty() && p != "auto");
+        let configured = tr.target_language;
+        let target = if configured != "auto" {
             configured
         } else if crate::i18n::english() {
             "en".to_string()
         } else {
             "zh".to_string()
-        }
+        };
+        (target, provider)
     };
     // 本来就是目标语言的块不翻也不重画：重画只会把识别丢了空格、认错字的原文盖在原图上
     blocks.retain(|b| !same_language(translate::detect::detect(&b.text()), &target));
@@ -380,19 +383,24 @@ pub async fn translate_region(app: &AppHandle, req: RegionRequest) -> AppResult<
     }
     let sources: Vec<String> = blocks.iter().map(TextBlock::text).collect();
 
-    let whole = translate::translate(
-        app,
-        TranslateRequest {
-            text: sources.join(
-                "
-
-",
-            ),
-            to: Some(target.clone()),
-            ..Default::default()
+    let request = |text: String, provider: Option<String>| TranslateRequest {
+        text,
+        to: Some(target.clone()),
+        provider,
+        ..Default::default()
+    };
+    // 设置里指定了截图翻译用的源：先用它，失败了再按顺序降级（总得翻出来）
+    let joined = sources.join("\n\n");
+    let whole = match &provider {
+        Some(p) => match translate::translate(app, request(joined.clone(), Some(p.clone()))).await {
+            Ok(r) => r,
+            Err(err) => {
+                tracing::warn!(provider = %p, "截图翻译指定的翻译源失败，按顺序换别的：{err}");
+                translate::translate(app, request(joined, None)).await?
+            }
         },
-    )
-    .await?;
+        None => translate::translate(app, request(joined, None)).await?,
+    };
     let texts = match split_back(&whole.text, sources.len()) {
         Some(t) => t,
         None if sources.len() == 1 => vec![whole.text.trim().to_string()],
@@ -404,15 +412,8 @@ pub async fn translate_region(app: &AppHandle, req: RegionRequest) -> AppResult<
                     out.push(src.clone());
                     continue;
                 }
-                let r = translate::translate(
-                    app,
-                    TranslateRequest {
-                        text: src.clone(),
-                        to: Some(target.clone()),
-                        ..Default::default()
-                    },
-                )
-                .await;
+                // 逐块补翻用整批翻成功的那个源
+                let r = translate::translate(app, request(src.clone(), Some(whole.provider.clone()))).await;
                 out.push(r.map(|r| r.text).unwrap_or_else(|_| src.clone()));
             }
             out
