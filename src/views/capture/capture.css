@@ -405,8 +405,7 @@ html[data-view='capture'] #root {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 7px 14px;
-  margin: -17px 0 0 -70px;
+  padding: 7px 16px;
   border-radius: var(--cn-radius-full);
   font: var(--cn-text-callout);
   color: var(--cn-label);
@@ -507,95 +506,95 @@ html[data-view='capture'] #root {
   gap: 4px;
 }
 
-/* 截图原位翻译进行中（CaptureView 的 cap-ai）：
-   - 选区边上一圈流动的彩色光（蓝 → 紫 → 粉 → 橙，绕着转），外面一层柔光
-   - 选区里蒙一层轻微的毛玻璃，一道斜的高光慢慢划过
-   - 翻完：毛玻璃退掉、光圈淡出，译文从雾里"显"出来 */
-@property --cap-ai-angle {
-  syntax: '<angle>';
+/* 截图原位翻译（CaptureView 的 cap-ai）：单色、安静，一步一步来
+   1. 开始：选区里慢慢蒙上一层轻雾
+   2. 翻译中：淡淡的一圈细框上，一点光沿着边匀速绕行
+   3. 翻完：整圈框亮一下，雾从上往下拂开、光淡出，译文显出来 */
+@property --cap-reveal {
+  syntax: '<percentage>';
   inherits: false;
-  initial-value: 0deg;
+  initial-value: -30%;
 }
 .cap-ai {
   position: absolute;
   left: 0;
   top: 0;
   pointer-events: none;
-  --cap-ai-colors: #5ac8fa, #007aff, #af52de, #ff2d55, #ff9f0a, #5ac8fa;
+  --cap-ai-ease: cubic-bezier(0.22, 1, 0.36, 1);
 }
 .cap-ai__veil {
   position: absolute;
   inset: 0;
-  overflow: hidden;
-  background: rgba(255, 255, 255, 0.05);
-  -webkit-backdrop-filter: blur(2px) saturate(1.15);
-  backdrop-filter: blur(2px) saturate(1.15);
-  animation: cap-ai-veil-in 280ms var(--cn-ease-out);
+  background: rgba(20, 20, 24, 0.18);
+  -webkit-backdrop-filter: blur(1.6px) saturate(0.9);
+  backdrop-filter: blur(1.6px) saturate(0.9);
+  animation: cap-ai-veil-in 420ms var(--cap-ai-ease) both;
 }
-.cap-ai__veil::after {
-  content: '';
+.cap-ai__line {
   position: absolute;
   inset: 0;
-  background: linear-gradient(105deg, transparent 38%, rgba(255, 255, 255, 0.22) 50%, transparent 62%);
-  background-size: 260% 100%;
-  animation: cap-ai-sheen 2.2s ease-in-out infinite;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
 }
-.cap-ai__edge,
-.cap-ai__glow {
-  position: absolute;
-  inset: -2px;
-  padding: 2px;
-  border-radius: 3px;
-  background: conic-gradient(from var(--cap-ai-angle), var(--cap-ai-colors));
-  /* 只留边框那一圈：内容区和整块做"异或" */
-  -webkit-mask:
-    linear-gradient(#000 0 0) content-box,
-    linear-gradient(#000 0 0);
-  -webkit-mask-composite: xor;
-  mask:
-    linear-gradient(#000 0 0) content-box exclude,
-    linear-gradient(#000 0 0);
-  animation: cap-ai-spin 3.2s linear infinite;
+.cap-ai__track,
+.cap-ai__comet {
+  fill: none;
+  vector-effect: non-scaling-stroke;
 }
-.cap-ai__glow {
-  inset: -7px;
-  padding: 7px;
-  border-radius: 8px;
-  filter: blur(9px);
-  opacity: 0.75;
+.cap-ai__track {
+  stroke: rgba(255, 255, 255, 0.22);
+  stroke-width: 1;
+}
+.cap-ai__comet {
+  stroke: #fff;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-dasharray: 9 91;
+  filter: drop-shadow(0 0 3px rgba(255, 255, 255, 0.9)) drop-shadow(0 0 8px color-mix(in srgb, var(--cn-accent) 70%, transparent));
+  animation: cap-ai-orbit 2.4s linear infinite;
+}
+/* 收尾：整圈亮起再淡出，雾从上往下拂开 */
+.cap-ai--done .cap-ai__comet {
+  animation: cap-ai-close 640ms var(--cap-ai-ease) forwards;
+}
+.cap-ai--done .cap-ai__track {
+  animation: cap-ai-fade 640ms var(--cap-ai-ease) forwards;
 }
 .cap-ai--done .cap-ai__veil {
-  animation: cap-ai-veil-out 520ms var(--cn-ease-out) forwards;
-}
-.cap-ai--done .cap-ai__edge,
-.cap-ai--done .cap-ai__glow {
-  animation:
-    cap-ai-spin 3.2s linear infinite,
-    cap-ai-fade 520ms var(--cn-ease-out) forwards;
-}
-@keyframes cap-ai-spin {
-  to {
-    --cap-ai-angle: 360deg;
-  }
-}
-@keyframes cap-ai-sheen {
-  from {
-    background-position: 130% 0;
-  }
-  to {
-    background-position: -30% 0;
-  }
+  -webkit-mask-image: linear-gradient(to bottom, transparent var(--cap-reveal), #000 calc(var(--cap-reveal) + 30%));
+  mask-image: linear-gradient(to bottom, transparent var(--cap-reveal), #000 calc(var(--cap-reveal) + 30%));
+  animation: cap-ai-reveal 640ms var(--cap-ai-ease) forwards;
 }
 @keyframes cap-ai-veil-in {
   from {
     opacity: 0;
   }
 }
-@keyframes cap-ai-veil-out {
+@keyframes cap-ai-orbit {
+  from {
+    stroke-dashoffset: 100;
+  }
   to {
+    stroke-dashoffset: 0;
+  }
+}
+@keyframes cap-ai-close {
+  0% {
+    stroke-dasharray: 9 91;
+  }
+  45% {
+    stroke-dasharray: 100 0;
+    opacity: 1;
+  }
+  100% {
+    stroke-dasharray: 100 0;
     opacity: 0;
-    -webkit-backdrop-filter: blur(0) saturate(1);
-    backdrop-filter: blur(0) saturate(1);
+  }
+}
+@keyframes cap-ai-reveal {
+  to {
+    --cap-reveal: 100%;
   }
 }
 @keyframes cap-ai-fade {
@@ -603,14 +602,22 @@ html[data-view='capture'] #root {
     opacity: 0;
   }
 }
-/* "翻译中…"胶囊里的字也带一道流光 */
+/* "正在识别并翻译…"：不放转圈，字上一道柔光慢慢走 */
 .cap-busy__label {
-  background: linear-gradient(90deg, var(--cn-label) 35%, var(--cn-accent) 50%, var(--cn-label) 65%);
+  background: linear-gradient(90deg, color-mix(in srgb, var(--cn-label) 55%, transparent) 30%, var(--cn-label) 50%, color-mix(in srgb, var(--cn-label) 55%, transparent) 70%);
   background-size: 300% 100%;
   -webkit-background-clip: text;
   background-clip: text;
   color: transparent;
-  animation: cap-ai-sheen 1.8s linear infinite;
+  animation: cap-ai-shimmer 2.4s linear infinite;
+}
+@keyframes cap-ai-shimmer {
+  from {
+    background-position: 100% 0;
+  }
+  to {
+    background-position: -50% 0;
+  }
 }
 
 /* 原位翻译后叠在选区上的透明文字（TranslationText）：能用鼠标选、Ctrl+C 复制，看到的还是画布上的字 */

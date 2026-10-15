@@ -20,7 +20,6 @@ import { CONTENT_INTERVAL, useElementSize, useThrottled } from '@/lib/hooks';
 import { capture, gif, reportError } from '@/lib/ipc';
 import { shotUrl, windowLabel } from '@/lib/platform';
 import { MID_ACTIONS, TAIL_ACTIONS, type CaptureIntent, type FinishAction, type FrameStyle, type MidAction, type TailAction } from '@/lib/types';
-import { Spinner } from '@/ui/controls';
 import { notify } from '@/ui/overlays';
 import { AnnotationEngine, toolOf } from '@/views/annotate/engine';
 import { BRUSH_RANGE, PEN_RANGE, type Tool } from '@/views/annotate/model';
@@ -1083,7 +1082,7 @@ function Toolbars({
     if (!wasTranslating.current) return;
     wasTranslating.current = false;
     setScanFading(true);
-    const timer = window.setTimeout(() => setScanFading(false), 520);
+    const timer = window.setTimeout(() => setScanFading(false), 680);
     return () => window.clearTimeout(timer);
   }, [translating]);
   const options = useOverlay((x) => x.options);
@@ -1203,19 +1202,20 @@ function Toolbars({
       )}
       <TranslationBar css={css} />
       {(translating || scanFading) && (
-        // 翻译中：选区边上一圈流动的彩光，里面蒙一层带高光的毛玻璃；翻完雾散开、光圈淡出
+        // 翻译中：选区蒙一层轻雾，一点光沿着细框绕行；翻完整圈亮一下，雾从上往下拂开
         <div
           className={`cap-ai${scanFading ? ' cap-ai--done' : ''}`}
           style={{ transform: `translate(${css.x}px, ${css.y}px)`, width: css.width, height: css.height }}
         >
           <div className="cap-ai__veil" />
-          <div className="cap-ai__glow" />
-          <div className="cap-ai__edge" />
+          <svg className="cap-ai__line" aria-hidden>
+            <rect className="cap-ai__track" x="0.5" y="0.5" width={Math.max(0, css.width - 1)} height={Math.max(0, css.height - 1)} rx="2" pathLength={100} />
+            <rect className="cap-ai__comet" x="0.5" y="0.5" width={Math.max(0, css.width - 1)} height={Math.max(0, css.height - 1)} rx="2" pathLength={100} />
+          </svg>
         </div>
       )}
       {translating && (
-        <div className="cap-busy cn-glass" style={{ transform: `translate(${css.x + css.width / 2}px, ${css.y + css.height / 2}px)` }}>
-          <Spinner size={16} />
+        <div className="cap-busy cn-glass" style={{ transform: `translate(${css.x + css.width / 2}px, ${css.y + css.height / 2}px) translate(-50%, -50%)` }}>
           <span className="cap-busy__label">{t('capture.translating')}</span>
         </div>
       )}
