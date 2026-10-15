@@ -2,7 +2,7 @@
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
   "description": "全部窗口共用的最小权限集。业务能力都走自定义 command，这里只开窗口本身的操作。",
-  "windows": ["main", "capture-*", "pin-*", "clipboard", "toast", "ocr", "editor", "translate", "selbtn", "ai"],
+  "windows": ["main", "capture-*", "pin-*", "clipboard", "toast", "ocr", "editor", "translate", "selbtn", "ai", "preview"],
   "permissions": [
     "core:default",
     "core:event:default",
