@@ -156,6 +156,7 @@ export class AnnotationEngine {
   }
 
   reset() {
+    this.lockedGroups.clear();
     this.annotations = [];
     this.draft = null;
     this.text = null;
@@ -320,6 +321,20 @@ export class AnnotationEngine {
     return this.annotations.some((a) => a.kind === 'label' && a.group === group);
   }
 
+  /** 锁住的组点不中、拖不动（译文默认锁着，鼠标在上面是选字；打开"移动"才解开） */
+  private lockedGroups = new Set<string>();
+
+  setGroupLocked(group: string, locked: boolean) {
+    if (locked) this.lockedGroups.add(group);
+    else this.lockedGroups.delete(group);
+    const sel = this.selectedAnnotation;
+    if (locked && sel?.kind === 'label' && sel.group === group) {
+      this.selected = null;
+      this.transform = null;
+      this.changed();
+    }
+  }
+
   // ───────────────────────── 选中 / 挪动 / 改大小 ─────────────────────────
 
   find(id: string): Annotation | undefined {
@@ -371,7 +386,7 @@ export class AnnotationEngine {
       case 'mosaicRect':
         return inRect(a.rect, p, tol);
       case 'label':
-        return !a.hidden && inRect(a.rect, p, tol);
+        return !a.hidden && !(a.group && this.lockedGroups.has(a.group)) && inRect(a.rect, p, tol);
       case 'mosaic':
         return false;
     }

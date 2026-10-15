@@ -336,6 +336,8 @@ async function translateInPlace() {
     if (get().session?.sessionId !== session.sessionId) return;
     engine.removeGroup(TRANSLATION_GROUP);
     engine.addAll(buildLabels(r.blocks, pixels, scale(), selection));
+    // 默认锁着：鼠标在译文上是选字，打开"移动"才能拖
+    engine.setGroupLocked(TRANSLATION_GROUP, true);
     set({ showOriginal: false, moveLabels: false, translatedBlocks: r.blocks, translatedText: r.blocks.map((b) => b.text).join('\n') });
   } catch (err) {
     notify.error(err);
@@ -993,7 +995,10 @@ function TranslationBar({ css }: { css: { x: number; y: number; width: number } 
         title={t('capture.moveLabels')}
         aria-pressed={moveLabels}
         disabled={showOriginal}
-        onClick={() => set({ moveLabels: !moveLabels })}
+        onClick={() => {
+          engine.setGroupLocked(TRANSLATION_GROUP, moveLabels);
+          set({ moveLabels: !moveLabels });
+        }}
       >
         <Move size={14} strokeWidth={1.75} />
       </button>
