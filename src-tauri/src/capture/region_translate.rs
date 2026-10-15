@@ -140,11 +140,84 @@ fn median(mut v: Vec<f64>) -> f64 {
     v[v.len() / 2]
 }
 
+/// 东亚全角字：排版时大约占两个西文字的宽度
+fn is_wide(c: char) -> bool {
+    matches!(c as u32, 0x1100..=0x115F | 0x2E80..=0xA4CF | 0xAC00..=0xD7A3 | 0xF900..=0xFAFF | 0xFE30..=0xFE4F | 0xFF00..=0xFF60 | 0xFFE0..=0xFFE6)
+}
+
+/// 行首行尾像是图标被认成的字：汉字（停止按钮的方块常被认成"口""回"）和非句读的符号（`>` `×` `□`）
+fn icon_like(c: char, at_end: bool) -> bool {
+    if is_wide(c) {
+        return true;
+    }
+    if c.is_alphanumeric() || c.is_whitespace() {
+        return false;
+    }
+    // 句末标点、成对符号的后半个是正文的一部分；行首的引号、括号也是
+    let keep_end = ".,!?:;)]}'\"%…";
+    let keep_start = "([{'\"#@$";
+    !(if at_end { keep_end } else { keep_start }).contains(c)
+}
+
+/// 西文行首行尾混进来的图标（按钮、箭头被识别成"口"">"之类）去掉，框也按去掉的字宽缩回去，
+/// 免得被当成正文拿去翻译、译文底色把按钮盖住。只管主要是西文的行：中文行里的"口"分不清真假。
+fn strip_icon_glyphs(text: &str, rect: &mut Rect) -> String {
+    let alnum: Vec<char> = text.chars().filter(|c| c.is_alphanumeric()).collect();
+    let latin = alnum.iter().filter(|c| c.is_ascii_alphanumeric()).count();
+    if alnum.is_empty() || (latin as f64) < alnum.len() as f64 * 0.7 {
+        return text.to_string();
+    }
+    let chars: Vec<char> = text.chars().collect();
+    // 一个图标最多被认成一两个汉字；再多就是正文里真的夹了中文（"Hello 世界"），不动
+    let strip = |c: char, at_end: bool, wide: &mut u32| {
+        if c.is_whitespace() || !icon_like(c, at_end) {
+            return c.is_whitespace();
+        }
+        if is_wide(c) {
+            *wide += 1;
+        }
+        *wide <= 2
+    };
+    let (mut start, mut wide) = (0, 0);
+    while start < chars.len() && strip(chars[start], false, &mut wide) {
+        start += 1;
+    }
+    if wide > 2 {
+        start = 0;
+    }
+    let (mut end, mut wide) = (chars.len(), 0);
+    while end > start && strip(chars[end - 1], true, &mut wide) {
+        end -= 1;
+    }
+    if wide > 2 {
+        end = chars.len();
+    }
+    if start == 0 && end == chars.len() {
+        return text.to_string();
+    }
+    let width = |cs: &[char]| {
+        cs.iter()
+            .map(|&c| if is_wide(c) { 2.0 } else { 1.0 })
+            .sum::<f64>()
+    };
+    let total = width(&chars).max(1.0);
+    let lead = width(&chars[..start]) / total;
+    let kept = width(&chars[start..end]) / total;
+    rect.x += rect.w * lead;
+    rect.w *= kept;
+    chars[start..end].iter().collect()
+}
+
 /// 识别出的零散文字框 → 版面上的文字块。`image` 用来比较字色（单元测试里不给）。
 fn layout_blocks(blocks: &[OcrBlock], image: Option<&RgbaImage>) -> Vec<TextBlock> {
-    let rects: Vec<Rect> = blocks.iter().map(|b| aabb(&b.quad)).collect();
+    let mut rects: Vec<Rect> = blocks.iter().map(|b| aabb(&b.quad)).collect();
+    let texts: Vec<String> = blocks
+        .iter()
+        .zip(rects.iter_mut())
+        .map(|(b, r)| strip_icon_glyphs(&b.text, r))
+        .collect();
     let mut order: Vec<usize> = (0..blocks.len())
-        .filter(|&i| !blocks[i].text.trim().is_empty())
+        .filter(|&i| !texts[i].trim().is_empty())
         .collect();
     order.sort_by(|&a, &b| rects[a].y.total_cmp(&rects[b].y));
 
@@ -173,7 +246,7 @@ fn layout_blocks(blocks: &[OcrBlock], image: Option<&RgbaImage>) -> Vec<TextBloc
         let mut cur: Option<(Rect, String)> = None;
         for &i in &members {
             let r = rects[i];
-            let t = blocks[i].text.trim();
+            let t = texts[i].trim();
             if let Some((cr, ct)) = cur.as_mut() {
                 let gap = r.x - cr.right();
                 let far = gap >= (char_width(ct, cr) * 2.5).max(cr.h * 1.2);
@@ -306,9 +379,11 @@ pub async fn translate_region(app: &AppHandle, req: RegionRequest) -> AppResult<
     let whole = translate::translate(
         app,
         TranslateRequest {
-            text: sources.join("
+            text: sources.join(
+                "
 
-"),
+",
+            ),
             to: Some(target.clone()),
             ..Default::default()
         },
@@ -374,6 +449,47 @@ mod tests {
             quad: [[x, y], [x + w, y], [x + w, y + h], [x, y + h]],
             score: 0.9,
         }
+    }
+
+    #[test]
+    fn icons_at_the_ends_of_latin_lines_are_dropped() {
+        let mut r = Rect {
+            x: 0.0,
+            y: 0.0,
+            w: 300.0,
+            h: 20.0,
+        };
+        assert_eq!(
+            strip_icon_glyphs("Wait for user capture session >口", &mut r),
+            "Wait for user capture session"
+        );
+        assert!(r.w < 300.0 && r.x == 0.0);
+        let mut r = Rect {
+            x: 0.0,
+            y: 0.0,
+            w: 300.0,
+            h: 20.0,
+        };
+        assert_eq!(
+            strip_icon_glyphs("口 Start dev app with WebView2口", &mut r),
+            "Start dev app with WebView2"
+        );
+        assert!(r.x > 0.0);
+        // 正常的句末标点、中文行都不动
+        let mut r = Rect {
+            x: 0.0,
+            y: 0.0,
+            w: 300.0,
+            h: 20.0,
+        };
+        assert_eq!(
+            strip_icon_glyphs("It works (mostly).", &mut r),
+            "It works (mostly)."
+        );
+        assert_eq!(strip_icon_glyphs("后台任务 口", &mut r), "后台任务 口");
+        assert_eq!(strip_icon_glyphs("Say hello to everyone in 你好世界", &mut r), "Say hello to everyone in 你好世界");
+        assert_eq!(strip_icon_glyphs("你好世界 means hello world in Chinese", &mut r), "你好世界 means hello world in Chinese");
+        assert_eq!(r.w, 300.0);
     }
 
     #[test]
