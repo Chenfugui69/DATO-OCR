@@ -27,7 +27,7 @@ import { bmpSource, type PixelSource } from '@/views/annotate/pixels';
 import { canPick, handleCursor, SelectionOverlay, toolCursor } from '@/views/annotate/SelectionOverlay';
 import { TextEditor, useEngineVersion } from '@/views/annotate/TextEditor';
 import { SubToolbar, TOOL_KEYS, Toolbar, useToolAnchor, type ActionId } from '@/views/annotate/Toolbar';
-import { buildLabels, TRANSLATION_GROUP } from '@/views/annotate/translateLayer';
+import { buildLabels, lineColors, TRANSLATION_GROUP } from '@/views/annotate/translateLayer';
 
 import {
   HANDLES,
@@ -56,7 +56,7 @@ import {
 import { GifUI } from './GifUI';
 import { LongshotUI } from './LongshotUI';
 import { Magnifier } from './Magnifier';
-import { get, initialOverlay, set, useOverlay } from './store';
+import { get, initialOverlay, set, useOverlay, type LoadingLine } from './store';
 import { TranslationText } from './TranslationText';
 
 const MONITOR_ID = Number(windowLabel().replace('capture-', ''));
@@ -325,24 +325,40 @@ function onAction(id: ActionId) {
   else void finish(id === 'cancel' ? 'cancel' : id === 'save' ? 'save' : id);
 }
 
-/** 截图原位翻译：识别选区里的字、翻译，在原位置铺底色写上译文（变成可撤销、可导出的标注）。 */
+/** 译文从上往下依次显现：选区顶上的一行马上开始，最底下的一行晚这么多毫秒 */
+const REVEAL_SPREAD = 360;
+const revealDelay = (y: number, sel: Rect) => Math.round(Math.min(1, Math.max(0, (y - sel.y) / Math.max(1, sel.height))) * REVEAL_SPREAD);
+
+/** 截图原位翻译：识别选区里的字、翻译，在原位置铺底色写上译文（变成可撤销、可导出的标注）。
+ *  等待时：先整块选区上一道光扫过；识别完，要翻的每一行换成和原图同色的占位条，光从条上扫过；
+ *  翻完：占位条从上往下化开，译文一行行由虚到实浮上来（TranslateLoading + engine.revealGroup）。 */
 async function translateInPlace() {
   const { session, selection, translating } = get();
   if (!session || !selection || translating) return;
   if (engine.text) engine.commitText();
-  set({ translating: true });
+  set({ translating: true, trLoading: { rect: selection, lines: [], done: false } });
   try {
-    const r = await capture.translateRegion({ sessionId: session.sessionId, monitorId: MONITOR_ID, rect: selection });
+    const r = await capture.translateRegion({ sessionId: session.sessionId, monitorId: MONITOR_ID, rect: selection }, (rows) => {
+      if (get().session?.sessionId !== session.sessionId || !get().translating) return;
+      const lines = rows.map(([x, y, width, height]): LoadingLine => {
+        const c = pixels ? lineColors(pixels, { x, y, width, height }) : null;
+        return { x, y, width, height, bg: c?.bg ?? null, fg: c?.fg ?? null, light: c?.light ?? true };
+      });
+      set({ trLoading: { rect: selection, lines, done: false } });
+    });
     if (get().session?.sessionId !== session.sessionId) return;
     engine.removeGroup(TRANSLATION_GROUP);
     engine.addAll(buildLabels(r.blocks, pixels, scale(), selection));
     // 默认锁着：鼠标在译文上是选字，打开"移动"才能拖
     engine.setGroupLocked(TRANSLATION_GROUP, true);
+    engine.revealGroup(TRANSLATION_GROUP, (rc) => revealDelay(rc.y, selection));
     set({ showOriginal: false, moveLabels: false, translatedBlocks: r.blocks, translatedText: r.blocks.map((b) => b.text).join('\n') });
   } catch (err) {
     notify.error(err);
   } finally {
-    set({ translating: false });
+    // 同一次更新里转入收尾：分两步的话加载层会先消失一帧再出现，所有动画从头再放一遍
+    const cur = get().trLoading;
+    set({ translating: false, trLoading: cur ? { ...cur, done: true } : null });
   }
 }
 
@@ -1040,6 +1056,65 @@ function TranslationTextLayer({ s }: { s: number }) {
   return <TranslationText engine={engine} blocks={blocks} showOriginal={showOriginal} s={s} />;
 }
 
+/** 翻译中的加载动画，翻完后再留一会儿做收尾（占位条化开，和画布上译文的显现对齐） */
+const LOADING_OUTRO_MS = REVEAL_SPREAD + 640;
+
+function TranslateLoading({ s }: { s: number }) {
+  const { t } = useTranslation();
+  const loading = useOverlay((x) => x.trLoading);
+  useEffect(() => {
+    if (!loading?.done) return;
+    const timer = window.setTimeout(() => get().trLoading === loading && set({ trLoading: null }), LOADING_OUTRO_MS);
+    return () => window.clearTimeout(timer);
+  }, [loading]);
+  if (!loading) return null;
+  const outro = loading.done;
+  const sel = loading.rect;
+  const sx = sel.x / s;
+  const sw = sel.width / s;
+  // 扫过去的那道光的宽度：选区宽的一半，太窄的选区也至少这么宽
+  const band = Math.max(140, sw * 0.5);
+  return (
+    <div
+      className={clsx('cap-ld', outro && 'cap-ld--out', loading.lines.length > 0 && 'cap-ld--lines')}
+      style={{ '--sx': `${sx}px`, '--sw': `${sw}px`, '--band': `${band}px` } as React.CSSProperties}
+      role="status"
+      aria-label={t('capture.translating')}
+    >
+      <div className="cap-ld__veil" style={{ left: sx, top: sel.y / s, width: sw, height: sel.height / s, '--bx': `${sx}px` } as React.CSSProperties} />
+      {loading.lines.map((l, i) => {
+        const x = l.x / s;
+        const h = l.height / s;
+        // 底色块比字框大一圈才盖得住字的边缘；占位条比字矮一点、两头圆
+        const grow = Math.max(2, h * 0.14);
+        const bar = Math.max(5, Math.min(h * 0.62, 22));
+        return (
+          <div
+            key={i}
+            className="cap-ld__line"
+            style={
+              {
+                left: x - grow,
+                top: l.y / s - grow,
+                width: l.width / s + grow * 2,
+                height: h + grow * 2,
+                background: l.bg ?? undefined,
+                '--bx': `${x}px`,
+                '--d': `${revealDelay(l.y, sel)}ms`,
+                '--bar': `${bar}px`,
+                '--tone': l.bg && l.fg ? `color-mix(in srgb, ${l.fg} 14%, ${l.bg})` : 'rgba(128, 128, 128, 0.28)',
+                '--sheen': l.light || !l.bg || !l.fg ? 'rgba(255, 255, 255, 0.78)' : `color-mix(in srgb, ${l.fg} 30%, ${l.bg})`,
+              } as React.CSSProperties
+            }
+          >
+            <span className="cap-ld__bar" />
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 /** 当前在译文 / 原文上选中的字（没选、选的不是这层里的字返回空） */
 function selectedTranslationText(): string {
   const sel = window.getSelection();
@@ -1075,21 +1150,6 @@ function Toolbars({
   const version = useEngineVersion(engine);
   const tool = useOverlay((x) => x.tool);
   const translating = useOverlay((x) => x.translating);
-  // 翻译完那一下：扫描层不是直接消失，而是在译文上淡出去
-  const [scanFading, setScanFading] = useState(false);
-  const wasTranslating = useRef(false);
-  useEffect(() => {
-    if (translating) {
-      wasTranslating.current = true;
-      setScanFading(false);
-      return;
-    }
-    if (!wasTranslating.current) return;
-    wasTranslating.current = false;
-    setScanFading(true);
-    const timer = window.setTimeout(() => setScanFading(false), 680);
-    return () => window.clearTimeout(timer);
-  }, [translating]);
   const options = useOverlay((x) => x.options);
   const pixelsReady = useOverlay((x) => x.pixelsReady);
   const bitmapReady = useOverlay((x) => x.bitmapReady);
@@ -1206,24 +1266,7 @@ function Toolbars({
         />
       )}
       <TranslationBar css={css} />
-      {(translating || scanFading) && (
-        // 翻译中：选区蒙一层轻雾，一点光沿着细框绕行；翻完整圈亮一下，雾从上往下拂开
-        <div
-          className={`cap-ai${scanFading ? ' cap-ai--done' : ''}`}
-          style={{ transform: `translate(${css.x}px, ${css.y}px)`, width: css.width, height: css.height }}
-        >
-          <div className="cap-ai__veil" />
-          <svg className="cap-ai__line" aria-hidden>
-            <rect className="cap-ai__track" x="0.5" y="0.5" width={Math.max(0, css.width - 1)} height={Math.max(0, css.height - 1)} rx="2" pathLength={100} />
-            <rect className="cap-ai__comet" x="0.5" y="0.5" width={Math.max(0, css.width - 1)} height={Math.max(0, css.height - 1)} rx="2" pathLength={100} />
-          </svg>
-        </div>
-      )}
-      {translating && (
-        <div className="cap-busy cn-glass" style={{ transform: `translate(${css.x + css.width / 2}px, ${css.y + css.height / 2}px) translate(-50%, -50%)` }}>
-          <span className="cap-busy__label">{t('capture.translating')}</span>
-        </div>
-      )}
+      <TranslateLoading s={s} />
       {intent !== 'normal' && !engine.hasGroup(TRANSLATION_GROUP) && (
         // 选区左上角是尺寸提示，这条提示靠右上角放；选区太窄就排在尺寸提示右边，不压在它上面
         <div

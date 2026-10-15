@@ -54,8 +54,9 @@ pub async fn capture_finish(app: AppHandle, request: Request<'_>) -> AppResult<(
 pub async fn capture_translate(
     app: AppHandle,
     request: capture::region_translate::RegionRequest,
+    on_lines: tauri::ipc::Channel<Vec<[f64; 4]>>,
 ) -> AppResult<capture::region_translate::RegionTranslation> {
-    capture::region_translate::translate_region(&app, request).await
+    capture::region_translate::translate_region(&app, request, Some(on_lines)).await
 }
 
 #[tauri::command]

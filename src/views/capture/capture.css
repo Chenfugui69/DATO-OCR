@@ -397,21 +397,7 @@ html[data-view='capture'] #root {
   box-shadow: inset 0 0.5px 0 var(--cn-separator);
 }
 
-/* 原位翻译：进行中的提示、完成后的译文 / 原文切换条 */
-.cap-busy {
-  position: absolute;
-  left: 0;
-  top: 0;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 7px 16px;
-  border-radius: var(--cn-radius-full);
-  font: var(--cn-text-callout);
-  color: var(--cn-label);
-  white-space: nowrap;
-  pointer-events: none;
-}
+/* 原位翻译完成后的译文 / 原文切换条：译文显现到一半时轻轻浮出来 */
 .cap-trbar {
   position: absolute;
   left: 0;
@@ -423,6 +409,15 @@ html[data-view='capture'] #root {
   padding: 3px;
   border-radius: var(--cn-radius-lg);
   user-select: none;
+  /* 位置写在 transform 上，入场只动 translate / scale 这两个独立属性，不会互相覆盖 */
+  animation: cap-trbar-in 420ms cubic-bezier(0.22, 1, 0.36, 1) 260ms both;
+}
+@keyframes cap-trbar-in {
+  from {
+    opacity: 0;
+    translate: 0 6px;
+    scale: 0.96;
+  }
 }
 .cap-trbar button {
   display: inline-flex;
@@ -506,117 +501,106 @@ html[data-view='capture'] #root {
   gap: 4px;
 }
 
-/* 截图原位翻译（CaptureView 的 cap-ai）：单色、安静，一步一步来
-   1. 开始：选区里慢慢蒙上一层轻雾
-   2. 翻译中：淡淡的一圈细框上，一点光沿着边匀速绕行
-   3. 翻完：整圈框亮一下，雾从上往下拂开、光淡出，译文显出来 */
-@property --cap-reveal {
-  syntax: '<percentage>';
-  inherits: false;
-  initial-value: -30%;
+/* 截图原位翻译的加载和显现（CaptureView 的 TranslateLoading），一道光贯穿始终：
+   1. 识别中：选区蒙一层很淡的雾，一道柔光从左往右慢慢扫过
+   2. 翻译中：要翻的每一行换成和原图同底色的占位条（从上往下依次展开），同一道光扫过所有条
+   3. 翻完：占位条从上往下依次化开，底下画布上的译文同时由虚到实浮上来（engine.revealGroup）
+   光的位置是容器上的一个数（--cap-sheen 0→1），雾和每根条按自己的横坐标换算，整块看是同一道光 */
+@property --cap-sheen {
+  syntax: '<number>';
+  inherits: true;
+  initial-value: 0;
 }
-.cap-ai {
+.cap-ld {
   position: absolute;
   left: 0;
   top: 0;
   pointer-events: none;
-  --cap-ai-ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --cap-ease: cubic-bezier(0.22, 1, 0.36, 1);
+  animation: cap-ld-sheen 1.7s cubic-bezier(0.45, 0, 0.3, 1) infinite;
 }
-.cap-ai__veil {
+.cap-ld__veil,
+.cap-ld__line,
+.cap-ld__bar {
+  /* 光带在自己身上的横向位置：光扫到的视口横坐标减去自己的左边 */
+  --cap-at: calc(var(--sx) - var(--band) + var(--cap-sheen) * (var(--sw) + var(--band)) - var(--bx));
+}
+.cap-ld__veil {
   position: absolute;
-  inset: 0;
-  background: rgba(20, 20, 24, 0.18);
-  -webkit-backdrop-filter: blur(1.6px) saturate(0.9);
-  backdrop-filter: blur(1.6px) saturate(0.9);
-  animation: cap-ai-veil-in 420ms var(--cap-ai-ease) both;
+  border-radius: 2px;
+  background:
+    linear-gradient(100deg, transparent, rgba(255, 255, 255, 0.13) 50%, transparent) no-repeat var(--cap-at) 0 / var(--band) 100%,
+    rgba(18, 18, 22, 0.1);
+  -webkit-backdrop-filter: blur(0.8px);
+  backdrop-filter: blur(0.8px);
+  animation: cap-ld-in 360ms var(--cap-ease) both;
 }
-.cap-ai__line {
+/* 识别完、条已经铺上：雾收淡，光只留在条上 */
+.cap-ld--lines .cap-ld__veil {
+  background: rgba(18, 18, 22, 0.06);
+  transition: background 400ms var(--cap-ease);
+}
+.cap-ld__line {
   position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  overflow: visible;
+  border-radius: 3px;
+  animation: cap-ld-in 280ms var(--cap-ease) var(--d) both;
 }
-.cap-ai__track,
-.cap-ai__comet {
-  fill: none;
-  vector-effect: non-scaling-stroke;
+.cap-ld__bar {
+  position: absolute;
+  left: 2px;
+  right: 2px;
+  top: 50%;
+  height: var(--bar);
+  margin-top: calc(var(--bar) / -2);
+  border-radius: calc(var(--bar) / 2);
+  background:
+    linear-gradient(90deg, transparent, var(--sheen) 50%, transparent) no-repeat var(--cap-at) 0 / var(--band) 100%,
+    var(--tone);
+  transform-origin: left center;
+  animation: cap-ld-unroll 560ms var(--cap-ease) calc(var(--d) + 40ms) both;
 }
-.cap-ai__track {
-  stroke: rgba(255, 255, 255, 0.22);
-  stroke-width: 1;
+/* 收尾：条和底色一起化开（画布上已经铺好同色底和译文），雾稍后散掉 */
+.cap-ld--out .cap-ld__line {
+  animation: cap-ld-out 360ms cubic-bezier(0.4, 0, 0.2, 1) var(--d) both;
 }
-.cap-ai__comet {
-  stroke: #fff;
-  stroke-width: 1.6;
-  stroke-linecap: round;
-  stroke-dasharray: 9 91;
-  filter: drop-shadow(0 0 3px rgba(255, 255, 255, 0.9)) drop-shadow(0 0 8px color-mix(in srgb, var(--cn-accent) 70%, transparent));
-  animation: cap-ai-orbit 2.4s linear infinite;
+.cap-ld--out .cap-ld__veil {
+  animation: cap-ld-out 520ms var(--cap-ease) 120ms both;
 }
-/* 收尾：整圈亮起再淡出，雾从上往下拂开 */
-.cap-ai--done .cap-ai__comet {
-  animation: cap-ai-close 640ms var(--cap-ai-ease) forwards;
+@keyframes cap-ld-sheen {
+  0% {
+    --cap-sheen: 0;
+  }
+  78%,
+  100% {
+    --cap-sheen: 1;
+  }
 }
-.cap-ai--done .cap-ai__track {
-  animation: cap-ai-fade 640ms var(--cap-ai-ease) forwards;
-}
-.cap-ai--done .cap-ai__veil {
-  -webkit-mask-image: linear-gradient(to bottom, transparent var(--cap-reveal), #000 calc(var(--cap-reveal) + 30%));
-  mask-image: linear-gradient(to bottom, transparent var(--cap-reveal), #000 calc(var(--cap-reveal) + 30%));
-  animation: cap-ai-reveal 640ms var(--cap-ai-ease) forwards;
-}
-@keyframes cap-ai-veil-in {
+@keyframes cap-ld-in {
   from {
     opacity: 0;
   }
 }
-@keyframes cap-ai-orbit {
+@keyframes cap-ld-unroll {
   from {
-    stroke-dashoffset: 100;
+    opacity: 0;
+    transform: scaleX(0.04);
   }
-  to {
-    stroke-dashoffset: 0;
-  }
-}
-@keyframes cap-ai-close {
-  0% {
-    stroke-dasharray: 9 91;
-  }
-  45% {
-    stroke-dasharray: 100 0;
+  40% {
     opacity: 1;
   }
-  100% {
-    stroke-dasharray: 100 0;
-    opacity: 0;
-  }
 }
-@keyframes cap-ai-reveal {
-  to {
-    --cap-reveal: 100%;
-  }
-}
-@keyframes cap-ai-fade {
-  to {
-    opacity: 0;
-  }
-}
-/* "正在识别并翻译…"：不放转圈，字上一道柔光慢慢走 */
-.cap-busy__label {
-  background: linear-gradient(90deg, color-mix(in srgb, var(--cn-label) 55%, transparent) 30%, var(--cn-label) 50%, color-mix(in srgb, var(--cn-label) 55%, transparent) 70%);
-  background-size: 300% 100%;
-  -webkit-background-clip: text;
-  background-clip: text;
-  color: transparent;
-  animation: cap-ai-shimmer 2.4s linear infinite;
-}
-@keyframes cap-ai-shimmer {
+@keyframes cap-ld-out {
   from {
-    background-position: 100% 0;
+    opacity: 1;
   }
   to {
-    background-position: -50% 0;
+    opacity: 0;
+    filter: blur(2px);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .cap-ld {
+    animation: none;
   }
 }
 

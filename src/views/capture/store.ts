@@ -44,6 +44,21 @@ export interface OverlayState {
   translatedBlocks: TranslatedBlock[];
   /** 原位翻译后：开着时拖动译文挪位置，关着时（默认）鼠标在字上是选字 */
   moveLabels: boolean;
+  /** 原位翻译的加载动画：翻的是哪块选区、识别出来要翻的每一行（识别完才有，之前是空的）；
+   *  done：翻完了，正在做收尾（占位条化开），收尾完清空 */
+  trLoading: { rect: Rect; lines: LoadingLine[]; done: boolean } | null;
+}
+
+/** 正在翻译的一行（物理像素）。bg / fg：这一行原图上的底色和字色，占位条按它配色；取不到色时为空 */
+export interface LoadingLine {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  bg: string | null;
+  fg: string | null;
+  /** 底色是浅色 */
+  light: boolean;
 }
 
 export const initialOverlay = (): Omit<OverlayState, 'options'> => ({
@@ -65,6 +80,7 @@ export const initialOverlay = (): Omit<OverlayState, 'options'> => ({
   translatedText: '',
   translatedBlocks: [],
   moveLabels: false,
+  trLoading: null,
 });
 
 // 工具的线宽/颜色在一次运行期间记忆（规格 02 §3.7.4）—— 不随会话重置

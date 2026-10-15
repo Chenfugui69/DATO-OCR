@@ -206,7 +206,11 @@ export function wrapLabel(text: string, fontSize: number, maxWidth: number): str
 
 export const LABEL_LINE_HEIGHT = 1.28;
 
-function drawLabel(ctx: Ctx, a: Extract<Annotation, { kind: 'label' }>) {
+/** 译文显现动画一块的时长（毫秒），见 drawLabel 的 progress */
+export const LABEL_REVEAL_MS = 640;
+
+/** progress < 1：正在显现。底色一开始就铺满（盖住原文），字一行接一行由虚到实、从下面一点浮上来 */
+function drawLabel(ctx: Ctx, a: Extract<Annotation, { kind: 'label' }>, progress = 1) {
   const r = a.rect;
   ctx.fillStyle = a.bg;
   ctx.fillRect(r.x, r.y, r.width, r.height);
@@ -219,7 +223,23 @@ function drawLabel(ctx: Ctx, a: Extract<Annotation, { kind: 'label' }>) {
   ctx.font = textFont({ fontSize: a.fontSize, bold: false });
   ctx.textBaseline = 'middle';
   ctx.fillStyle = a.color;
-  lines.forEach((line, i) => ctx.fillText(line, r.x + pad, top + i * lh + lh / 2));
+  if (progress >= 1) {
+    lines.forEach((line, i) => ctx.fillText(line, r.x + pad, top + i * lh + lh / 2));
+    return;
+  }
+  // 多行时后一行比前一行晚一点起步，总时长不变
+  const n = lines.length;
+  const lag = n > 1 ? Math.min(0.14, 0.42 / (n - 1)) : 0;
+  lines.forEach((line, i) => {
+    const q = Math.min(1, Math.max(0, (progress - i * lag) / (1 - (n - 1) * lag)));
+    if (q <= 0) return;
+    const e = 1 - (1 - q) ** 4;
+    ctx.globalAlpha = e;
+    ctx.filter = e < 0.995 ? `blur(${((1 - e) * a.fontSize * 0.28).toFixed(2)}px)` : 'none';
+    ctx.fillText(line, r.x + pad, top + i * lh + lh / 2 + (1 - e) * a.fontSize * 0.24);
+  });
+  ctx.globalAlpha = 1;
+  ctx.filter = 'none';
 }
 
 function drawArrow(ctx: Ctx, a: Extract<Annotation, { kind: 'arrow' }>) {
@@ -310,7 +330,7 @@ function drawText(ctx: Ctx, a: Extract<Annotation, { kind: 'text' }>) {
   });
 }
 
-export function drawAnnotation(ctx: Ctx, a: Annotation, bg: Backdrop): void {
+export function drawAnnotation(ctx: Ctx, a: Annotation, bg: Backdrop, progress = 1): void {
   ctx.save();
   switch (a.kind) {
     case 'rect': {
@@ -368,7 +388,7 @@ export function drawAnnotation(ctx: Ctx, a: Annotation, bg: Backdrop): void {
       drawText(ctx, a);
       break;
     case 'label':
-      if (!a.hidden) drawLabel(ctx, a);
+      if (!a.hidden) drawLabel(ctx, a, progress);
       break;
   }
   ctx.restore();

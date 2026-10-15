@@ -12,6 +12,7 @@
 
 use image::RgbaImage;
 use serde::{Deserialize, Serialize};
+use tauri::ipc::Channel;
 use tauri::AppHandle;
 
 use crate::error::{AppError, AppResult};
@@ -335,7 +336,13 @@ fn split_back(text: &str, n: usize) -> Option<Vec<String>> {
     (by_line.len() == n).then_some(by_line)
 }
 
-pub async fn translate_region(app: &AppHandle, req: RegionRequest) -> AppResult<RegionTranslation> {
+/// 识别完、开始翻译前先把要翻的每一行的位置（本屏局部物理坐标 x, y, 宽, 高）交给前端：
+/// 翻译要等网络，这段时间遮罩在这些行上放"正在加载"的占位动画，而不是整块干等。
+pub async fn translate_region(
+    app: &AppHandle,
+    req: RegionRequest,
+    on_lines: Option<Channel<Vec<[f64; 4]>>>,
+) -> AppResult<RegionTranslation> {
     if req.rect.is_empty() {
         return Err(AppError::msg("选区为空"));
     }
@@ -382,6 +389,14 @@ pub async fn translate_region(app: &AppHandle, req: RegionRequest) -> AppResult<
         return Err(AppError::msg("选区里的文字已经是目标语言"));
     }
     let sources: Vec<String> = blocks.iter().map(TextBlock::text).collect();
+    if let Some(ch) = &on_lines {
+        let (ox, oy) = (f64::from(req.rect.x), f64::from(req.rect.y));
+        let lines = blocks
+            .iter()
+            .flat_map(|b| b.lines.iter().map(|(r, _)| [r.x + ox, r.y + oy, r.w, r.h]))
+            .collect();
+        let _ = ch.send(lines);
+    }
 
     let request = |text: String, provider: Option<String>| TranslateRequest {
         text,

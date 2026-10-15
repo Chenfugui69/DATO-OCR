@@ -80,6 +80,12 @@ export function sampleColors(src: PixelSource, r: Rect): { bg: Rgb; fg: Rgb } {
   return { bg, fg };
 }
 
+/** 一行原文的底色、字色（CSS 颜色），light：底色是浅色。翻译中的占位条按它配色 */
+export function lineColors(src: PixelSource, r: Rect): { bg: string; fg: string; light: boolean } {
+  const { bg, fg } = sampleColors(src, r);
+  return { bg: css(bg), fg: css(fg), light: luma(bg) > 140 };
+}
+
 /** 从原文行高起步，排不进框就缩小。 */
 export function fitFontSize(text: string, r: Rect, lineHeight: number, minSize: number): number {
   let size = Math.max(minSize, lineHeight * 0.74);

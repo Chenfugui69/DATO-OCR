@@ -67,9 +67,13 @@ export const capture = {
   cancel: (sessionId: number) => call<void>('capture_cancel', { sessionId }),
   /** 截图工具条底下垫 / 撤掉系统的毛玻璃。rect：工具条在窗口里的位置（物理像素 x, y, 宽, 高），null = 撤掉 */
   toolbarGlass: (rect: [number, number, number, number] | null, radius: number) => call<void>('capture_toolbar_glass', { rect, radius }),
-  /** 截图原位翻译：识别选区文字、整批翻译，返回每段的位置和译文 */
-  translateRegion: (request: { sessionId: number; monitorId: number; rect: PhysicalRect }) =>
-    call<RegionTranslation>('capture_translate', { request }),
+  /** 截图原位翻译：识别选区文字、整批翻译，返回每段的位置和译文。
+   *  onLines：识别完、开始翻译前收到要翻的每一行的位置（物理像素 x, y, 宽, 高） */
+  translateRegion: (request: { sessionId: number; monitorId: number; rect: PhysicalRect }, onLines?: (lines: [number, number, number, number][]) => void) => {
+    const channel = new Channel<[number, number, number, number][]>();
+    if (onLines) channel.onmessage = onLines;
+    return call<RegionTranslation>('capture_translate', { request, onLines: channel });
+  },
   writeText: (text: string) => call<void>('clipboard_write_text', { text }),
 };
 

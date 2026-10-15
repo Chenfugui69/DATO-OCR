@@ -24,7 +24,7 @@ import {
 } from '@/views/capture/geometry';
 
 import { newId, type Annotation, type Tool, type ToolOptions } from './model';
-import { annotationBounds, drawAnnotation, measureText, mosaicCell, type Backdrop } from './render';
+import { annotationBounds, drawAnnotation, LABEL_REVEAL_MS, measureText, mosaicCell, type Backdrop } from './render';
 
 export interface TextDraft {
   at: Point;
@@ -156,6 +156,7 @@ export class AnnotationEngine {
   }
 
   reset() {
+    this.stopReveal();
     this.lockedGroups.clear();
     this.annotations = [];
     this.draft = null;
@@ -333,6 +334,39 @@ export class AnnotationEngine {
       this.transform = null;
       this.changed();
     }
+  }
+
+  /** 译文显现：组里每块按 delayOf 给的毫秒数错开，底色先铺满，字再由虚到实浮上来（见 render.ts drawLabel） */
+  private reveal: { start: number; delays: Map<string, number>; raf: number } | null = null;
+
+  revealGroup(group: string, delayOf: (r: Rect) => number) {
+    this.stopReveal();
+    const delays = new Map<string, number>();
+    for (const a of this.annotations) if (a.kind === 'label' && a.group === group) delays.set(a.id, delayOf(a.rect));
+    if (delays.size === 0) return;
+    const end = Math.max(...delays.values()) + LABEL_REVEAL_MS;
+    const reveal = { start: performance.now(), delays, raf: 0 };
+    const tick = () => {
+      this.renderCommitted();
+      if (performance.now() - reveal.start < end) reveal.raf = requestAnimationFrame(tick);
+      else {
+        this.reveal = null;
+        this.renderCommitted();
+      }
+    };
+    this.reveal = reveal;
+    tick();
+  }
+
+  private stopReveal() {
+    if (this.reveal) cancelAnimationFrame(this.reveal.raf);
+    this.reveal = null;
+  }
+
+  private revealProgress(a: Annotation): number {
+    const delay = this.reveal?.delays.get(a.id);
+    if (delay === undefined || !this.reveal) return 1;
+    return Math.min(1, Math.max(0, (performance.now() - this.reveal.start - delay) / LABEL_REVEAL_MS));
   }
 
   // ───────────────────────── 选中 / 挪动 / 改大小 ─────────────────────────
@@ -658,7 +692,7 @@ export class AnnotationEngine {
     this.committedEmpty = this.annotations.length === 0;
     ctx.setTransform(1, 0, 0, 1, -this.origin.x, -this.origin.y);
     this.withClip(ctx, () => {
-      for (const a of this.annotations) drawAnnotation(ctx, a, this.backdrop);
+      for (const a of this.annotations) drawAnnotation(ctx, a, this.backdrop, this.reveal ? this.revealProgress(a) : 1);
     });
   }
 
