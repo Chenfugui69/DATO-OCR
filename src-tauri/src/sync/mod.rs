@@ -970,7 +970,10 @@ async fn run_join(app: &AppHandle, code: &str, manual: Option<SocketAddr>) -> Ap
             }
             a
         }
-        None => lan::member::find_host(code).await?.0,
+        None => {
+            let port = state(app).settings.read().sync.lan_port;
+            lan::member::find_host(code, port).await?.0
+        }
     };
     let my_name = device_name(app);
     let creds = lan::member::pair(addr, code, &my_id, &my_name, platform_name(), |sas| {

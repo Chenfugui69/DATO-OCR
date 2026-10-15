@@ -64,27 +64,31 @@ struct WaitResponse {
     sealed_key: Option<String>,
 }
 
-/// 在局域网里按设备码找主机，返回能连上的地址。
-pub async fn find_host(code: &str) -> AppResult<(SocketAddr, String)> {
-    let code = code.to_string();
+/// 在局域网里按设备码找主机，返回能连上的地址。`port` 是 mDNS 也找不到时扫网段用的端口。
+pub async fn find_host(code: &str, port: u16) -> AppResult<(SocketAddr, String)> {
+    let want = code.to_string();
     let found = tokio::task::spawn_blocking(move || {
-        discovery::browse(Duration::from_secs(5), |f| f.code == code)
+        discovery::browse(Duration::from_secs(5), |f| f.code == want)
     })
     .await
     .map_err(|e| AppError::msg(e.to_string()))??;
     let client = http_client();
-    for f in found {
+    for f in found.into_iter().filter(|f| f.code == code) {
         if let Some(addr) = reachable(&client, &f).await {
             return Ok((addr, f.device_id));
         }
+    }
+    // 组播过不去（两边开着代理软件的 TUN 模式、路由器挡组播）但直连是通的：把本机网段挨个问一遍
+    if let Some(hit) = scan(port, |i| i.code == code).await {
+        return Ok(hit);
     }
     Err(AppError::msg(
         "局域网里没找到这个设备码。确认两台设备连着同一个网络、主机打开了局域网同步；也可以手动填主机地址",
     ))
 }
 
-/// 按设备 ID 重新找主机的地址。
-async fn rediscover(host_id: &str) -> Option<SocketAddr> {
+/// 按设备 ID 重新找主机的地址：先 mDNS，找不到再按 `port` 扫本机网段。
+async fn rediscover(host_id: &str, port: u16) -> Option<SocketAddr> {
     let id = host_id.to_string();
     let found = tokio::task::spawn_blocking(move || {
         discovery::browse(Duration::from_secs(4), |f| f.device_id == id)
@@ -98,14 +102,9 @@ async fn rediscover(host_id: &str) -> Option<SocketAddr> {
             return Some(addr);
         }
     }
-    None
+    scan(port, |i| i.device_id == host_id).await.map(|(a, _)| a)
 }
 
-/// 广播里的地址挨个试，返回第一个连得上、而且应答的确实是这台设备的。
-///
-/// 广播里会带上代理软件 TUN 模式的虚拟地址（198.18.0.1 之类）。本机也开着同样的代理时，
-/// 这个地址在本机指向的是**本机自己**：连上去应答的是本机的同步服务，配对时就报"设备码不对"。
-/// 所以本机自己的地址直接跳过，应答的设备 ID 也要核对。
 async fn reachable(client: &reqwest::Client, found: &discovery::Found) -> Option<SocketAddr> {
     let mine = discovery::own_ips();
     for &addr in &found.addrs {
@@ -119,23 +118,80 @@ async fn reachable(client: &reqwest::Client, found: &discovery::Found) -> Option
     None
 }
 
-/// 问一下这个地址上的 DATO OCR 是哪台设备（设备 ID）；连不上返回 None。
-pub async fn probe(client: &reqwest::Client, addr: SocketAddr) -> Option<String> {
-    #[derive(Deserialize)]
-    #[serde(rename_all = "camelCase")]
-    struct Info {
-        device_id: String,
-    }
+/// 主机 `/api/info` 里用得到的部分
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct Info {
+    device_id: String,
+    /// 旧版本的主机没有这一项
+    #[serde(default)]
+    code: String,
+}
+
+async fn info_at(client: &reqwest::Client, addr: SocketAddr, timeout: Duration) -> Option<Info> {
     let resp = client
         .get(format!("http://{addr}/api/info"))
-        .timeout(Duration::from_secs(2))
+        .timeout(timeout)
         .send()
         .await
         .ok()?;
     if !resp.status().is_success() {
         return None;
     }
-    resp.json::<Info>().await.ok().map(|i| i.device_id)
+    resp.json::<Info>().await.ok()
+}
+
+/// 问一下这个地址上的 DATO OCR 是哪台设备（设备 ID）；连不上返回 None。
+pub async fn probe(client: &reqwest::Client, addr: SocketAddr) -> Option<String> {
+    info_at(client, addr, Duration::from_secs(2))
+        .await
+        .map(|i| i.device_id)
+}
+
+/// mDNS 找不到时的退路：本机所在的每个局域网 /24 网段，挨个问 `port` 上的 `/api/info`，
+/// 第一个 `want` 认的就是。全部并发，连不上的地址很快就超时，一个网段一两秒扫完。
+/// 代理软件的虚拟网段（198.18）、链路本地（169.254）不扫。
+async fn scan(port: u16, want: impl Fn(&Info) -> bool) -> Option<(SocketAddr, String)> {
+    let client = reqwest::Client::builder()
+        .no_proxy()
+        .connect_timeout(Duration::from_millis(800))
+        .build()
+        .ok()?;
+    let mine = discovery::own_ips();
+    let mut targets: Vec<SocketAddr> = Vec::new();
+    for ip in discovery::local_ips() {
+        let std::net::IpAddr::V4(v4) = ip else { continue };
+        if discovery::rank(ip) > 3 || v4.is_link_local() {
+            continue;
+        }
+        let [a, b, c, _] = v4.octets();
+        for d in 1..=254u8 {
+            let ip = std::net::IpAddr::V4(std::net::Ipv4Addr::new(a, b, c, d));
+            let addr = SocketAddr::new(ip, port);
+            if !mine.contains(&ip) && !targets.contains(&addr) {
+                targets.push(addr);
+            }
+        }
+    }
+    let mut tasks = tokio::task::JoinSet::new();
+    for addr in targets {
+        let client = client.clone();
+        tasks.spawn(async move {
+            info_at(&client, addr, Duration::from_millis(1500))
+                .await
+                .map(|i| (addr, i))
+        });
+    }
+    while let Some(done) = tasks.join_next().await {
+        if let Ok(Some((addr, info))) = done {
+            if want(&info) {
+                tasks.abort_all();
+                tracing::info!(%addr, "mDNS 没找到，扫网段找到了主机");
+                return Some((addr, info.device_id));
+            }
+        }
+    }
+    None
 }
 
 /// 配对：申请加入、等主机同意。`on_sas` 拿到核对数字时调用（界面显示出来让用户和主机比对）。
@@ -358,7 +414,11 @@ async fn run(ctx: Ctx, mut stop: watch::Receiver<bool>) {
             break;
         }
         if addr.is_none() || failures >= 2 {
-            if let Some(found) = rediscover(&ctx.creds.host_id).await {
+            if let Some(found) = rediscover(
+                &ctx.creds.host_id,
+                ctx.creds.address.map_or(discovery::DEFAULT_PORT, |a| a.port()),
+            )
+            .await {
                 if addr != Some(found) {
                     (ctx.on_address)(found);
                 }

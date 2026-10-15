@@ -12,6 +12,8 @@ use mdns_sd::{ServiceDaemon, ServiceEvent, ServiceInfo};
 use crate::error::{AppError, AppResult};
 
 pub const SERVICE: &str = "_datocor._tcp.local.";
+/// 局域网同步的默认端口（设置里可改）
+pub const DEFAULT_PORT: u16 = 47380;
 
 pub struct Advertiser {
     daemon: ServiceDaemon,

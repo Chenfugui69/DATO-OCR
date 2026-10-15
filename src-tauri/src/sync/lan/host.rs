@@ -409,6 +409,8 @@ async fn info(State(host): State<Shared>) -> Json<serde_json::Value> {
         "name": i.name,
         "platform": i.platform,
         "web": i.web_enabled,
+        // 设备码 mDNS 广播里本来就有（不是秘密，门槛是主机上点"同意"）；组播过不去时加入方扫网段靠它认主机
+        "code": i.code,
         "v": 1,
     }))
 }
