@@ -116,6 +116,9 @@ pub fn preview_popup(app: &AppHandle, show: bool) {
             if let Some(window) = ui.get_webview_window(WINDOW) {
                 // 预览是原生"显示但不激活"亮出来的，藏也要走原生的：Tauri 的 hide() 以为它本来就藏着，什么都不做
                 platform::hide_window(&window);
+                // 反过来，预览之前面板要是正常开着（钉住、对话模式），Tauri 记着"显示中"；原生藏了它不知道，
+                // 下次点划词按钮 show() 以为已经显示、什么都不做，面板就弹不出来。这里把它记的状态也改成藏着
+                let _ = window.hide();
             }
             let _ = ui.emit_to(wm::MAIN, events::TRANSLATE_PREVIEW_CLOSED, ());
         });
@@ -357,6 +360,11 @@ fn open_popup(app: &AppHandle, text: String, at: Option<(i32, i32)>, preview: bo
             // 用户正在主窗口里拖滑块，不能把焦点抢走
             let _ = platform::show_without_activate(&window);
             return;
+        }
+        // Tauri 的 show() 只在它记的状态从"藏"变"显示"时才真的显示。窗口被原生调用藏过的话，
+        // 它可能还记着"显示中"，先对齐一下
+        if !window.is_visible().unwrap_or(false) {
+            let _ = window.hide();
         }
         let _ = window.show();
         let _ = platform::take_focus(&window);
