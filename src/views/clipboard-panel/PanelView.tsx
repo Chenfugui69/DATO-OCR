@@ -9,7 +9,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import clsx from 'clsx';
-import { Clipboard, ListFilter, MoreHorizontal, Sparkles, X } from 'lucide-react';
+import { AppWindow, Clipboard, ListFilter, MoreHorizontal, Settings, Sparkles, X } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
@@ -21,7 +21,7 @@ import { useClipItems, useLiveInvalidation } from '@/lib/queries';
 import type { ClipDetail, ClipItem, ClipType, SmartSuggestion } from '@/lib/types';
 import { EmptyState, SearchField, Skeleton } from '@/ui/controls';
 import { isNativeMenuOpen, popupMenu } from '@/ui/nativeMenu';
-import { notify } from '@/ui/overlays';
+import { DropdownMenu, notify } from '@/ui/overlays';
 
 import { clipMenu } from './actions';
 import { BoardTabs, boardColor } from './BoardTabs';
@@ -643,39 +643,39 @@ export default function PanelView() {
             />
           )}
           <div className="panel__side panel__side--end">
-            <button
-              type="button"
-              className="panel__more"
-              aria-label={t('common.more')}
-              onClick={() =>
-                void popupMenu([
-                  {
-                    label: t('clip.singleClickPaste'),
-                    checked: singleClick,
-                    onSelect: () => void useSettingsStore.getState().update((d) => void (d.clipboard.singleClickPaste = !singleClick)).catch(notify.error),
+            {/* 应用自己的菜单（不用系统菜单：Windows 上系统菜单是老式样式）。只有几项、从顶栏往下开，面板里放得下 */}
+            <DropdownMenu
+              items={[
+                {
+                  label: t('clip.singleClickPaste'),
+                  checked: singleClick,
+                  onSelect: () => void useSettingsStore.getState().update((d) => void (d.clipboard.singleClickPaste = !singleClick)).catch(notify.error),
+                },
+                { separator: true },
+                {
+                  label: t('clip.panelSettings'),
+                  icon: Settings,
+                  onSelect: () => {
+                    hide();
+                    void system.showMain('settings:clipboard');
                   },
-                  { separator: true },
-                  {
-                    label: t('clip.panelSettings'),
-                    onSelect: () => {
-                      hide();
-                      void system.showMain('settings:clipboard');
-                    },
+                },
+                {
+                  label: t('clip.openManager'),
+                  icon: AppWindow,
+                  onSelect: () => {
+                    hide();
+                    void system.showMain('clipboard');
                   },
-                  {
-                    label: t('clip.openManager'),
-                    onSelect: () => {
-                      hide();
-                      void system.showMain('clipboard');
-                    },
-                  },
-                  { separator: true },
-                  { label: t('common.close'), onSelect: hide },
-                ]).finally(watchFocus)
-              }
+                },
+                { separator: true },
+                { label: t('common.close'), icon: X, onSelect: hide },
+              ]}
             >
-              <MoreHorizontal size={16} strokeWidth={2} />
-            </button>
+              <button type="button" className="panel__more" aria-label={t('common.more')}>
+                <MoreHorizontal size={16} strokeWidth={2} />
+              </button>
+            </DropdownMenu>
           </div>
         </header>
 
