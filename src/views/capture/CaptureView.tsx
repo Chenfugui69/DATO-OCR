@@ -1025,6 +1025,21 @@ function Toolbars({
   const version = useEngineVersion(engine);
   const tool = useOverlay((x) => x.tool);
   const translating = useOverlay((x) => x.translating);
+  // 翻译完那一下：扫描层不是直接消失，而是在译文上淡出去
+  const [scanFading, setScanFading] = useState(false);
+  const wasTranslating = useRef(false);
+  useEffect(() => {
+    if (translating) {
+      wasTranslating.current = true;
+      setScanFading(false);
+      return;
+    }
+    if (!wasTranslating.current) return;
+    wasTranslating.current = false;
+    setScanFading(true);
+    const timer = window.setTimeout(() => setScanFading(false), 520);
+    return () => window.clearTimeout(timer);
+  }, [translating]);
   const options = useOverlay((x) => x.options);
   const pixelsReady = useOverlay((x) => x.pixelsReady);
   const bitmapReady = useOverlay((x) => x.bitmapReady);
@@ -1141,6 +1156,13 @@ function Toolbars({
         />
       )}
       <TranslationBar css={css} />
+      {(translating || scanFading) && (
+        // 翻译中：一道光从上往下扫过选区，边框跟着呼吸；翻完在译文上淡出
+        <div
+          className={`cap-scan${scanFading ? ' cap-scan--done' : ''}`}
+          style={{ transform: `translate(${css.x}px, ${css.y}px)`, width: css.width, height: css.height }}
+        />
+      )}
       {translating && (
         <div className="cap-busy cn-glass" style={{ transform: `translate(${css.x + css.width / 2}px, ${css.y + css.height / 2}px)` }}>
           <Spinner size={16} />

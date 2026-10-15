@@ -506,3 +506,71 @@ html[data-view='capture'] #root {
   display: flex;
   gap: 4px;
 }
+
+/* 截图原位翻译进行中：选区里一道光从上往下扫，边框跟着呼吸；翻完整层淡出（CaptureView 的 cap-scan） */
+.cap-scan {
+  position: absolute;
+  left: 0;
+  top: 0;
+  overflow: hidden;
+  pointer-events: none;
+  --scan: color-mix(in srgb, var(--cn-accent) 60%, white);
+}
+.cap-scan::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: -40%;
+  height: 40%;
+  background: linear-gradient(
+    to bottom,
+    transparent 0%,
+    color-mix(in srgb, var(--cn-accent) 10%, transparent) 55%,
+    color-mix(in srgb, var(--cn-accent) 30%, transparent) 92%,
+    var(--scan) 98%,
+    transparent 100%
+  );
+  animation: cap-scan-sweep 1.5s cubic-bezier(0.45, 0, 0.25, 1) infinite;
+}
+.cap-scan::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  box-shadow:
+    inset 0 0 0 1.5px color-mix(in srgb, var(--cn-accent) 70%, transparent),
+    inset 0 0 18px color-mix(in srgb, var(--cn-accent) 35%, transparent);
+  animation: cap-scan-breathe 1.5s ease-in-out infinite;
+}
+.cap-scan--done {
+  animation: cap-scan-out 500ms var(--cn-ease-out) forwards;
+}
+.cap-scan--done::before {
+  animation-iteration-count: 1;
+}
+@keyframes cap-scan-sweep {
+  from {
+    transform: translateY(0);
+  }
+  to {
+    /* 光带高 40%，从选区上方 -40% 扫到下边 100%：走 140% / 40% = 350% 个自身高度 */
+    transform: translateY(350%);
+  }
+}
+@keyframes cap-scan-breathe {
+  0%,
+  100% {
+    opacity: 0.45;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+@keyframes cap-scan-out {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
