@@ -4,7 +4,8 @@
 //   同一帧里来的滚动先攒起来、每帧最多缩放一档，触控板的惯性滑动也不会一下冲到最大
 // - 触控板捏合：缩放（macOS 的 WebKit 发 gesture 事件，Windows 的 WebView2 发带 Ctrl 的滚轮事件；捏合时两种都来的只认一种）
 // - 能缩到比"适应窗口"更小；左右滑动、按住拖动：放大后挪位置；双击在"适应窗口"和放大之间切换
-// - 底部一排按钮：缩小、百分比（点一下回到适应窗口）、放大；预览窗口里还能按 + / - / 0
+// - 底部一排按钮：缩小、百分比（点一下回到适应窗口）、放大；预览窗口里还能按 + / - / 0。
+//   平时藏着，缩放时冒出来一会儿；鼠标移到底部那个位置也会出来（好点按钮）
 
 import { Minus, Plus } from 'lucide-react';
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
@@ -198,6 +199,23 @@ export function ZoomImage({ src, size, keys = false }: { src: string | undefined
     return () => window.removeEventListener('keydown', onKey);
   }, [keys, stepZoom]);
 
+  // 缩放条：倍数变了才出来，停下 1.2 秒后淡出；鼠标在它上面时一直显示
+  const [barOn, setBarOn] = useState(false);
+  const barTimer = useRef<number | undefined>(undefined);
+  const barHover = useRef(false);
+  const hideBarLater = useCallback(() => {
+    window.clearTimeout(barTimer.current);
+    barTimer.current = window.setTimeout(() => !barHover.current && setBarOn(false), 1200);
+  }, []);
+  const zoomed = useRef(view.scale);
+  useEffect(() => {
+    if (zoomed.current === view.scale) return;
+    zoomed.current = view.scale;
+    setBarOn(true);
+    hideBarLater();
+  }, [view.scale, hideBarLater]);
+  useEffect(() => () => window.clearTimeout(barTimer.current), []);
+
   const drag = useRef<{ x: number; y: number; vx: number; vy: number } | null>(null);
   const pannable = !!nat && (nat.w * scale > stage.w + 1 || nat.h * scale > stage.h + 1);
 
@@ -251,7 +269,20 @@ export function ZoomImage({ src, size, keys = false }: { src: string | undefined
               { maxWidth: '100%', maxHeight: '100%', transform: 'translate(-50%, -50%)' }
         }
       />
-      <div className="zoom-image__bar" onClick={(e) => e.stopPropagation()}>
+      <div
+        className="zoom-image__bar"
+        data-on={barOn}
+        onClick={(e) => e.stopPropagation()}
+        onPointerEnter={() => {
+          barHover.current = true;
+          window.clearTimeout(barTimer.current);
+          setBarOn(true);
+        }}
+        onPointerLeave={() => {
+          barHover.current = false;
+          hideBarLater();
+        }}
+      >
         <button type="button" aria-label={t('clip.zoomOut')} title={t('clip.zoomOut')} disabled={scale <= minScale + 1e-6} onClick={() => stepZoom(-1)}>
           <Minus size={14} strokeWidth={2.2} />
         </button>

@@ -167,6 +167,9 @@ pub fn apply_window_effects(app: &AppHandle, window: &WebviewWindow) {
     if let Err(err) = window.set_effects(platform::window_effects(caps.glass)) {
         tracing::warn!(label = window.label(), "设置窗口材质失败：{err}");
     }
+    // Win11：无边框 + 透明的窗口系统默认不给圆角，四个角是直的，明确要一下（最大化时系统自己去掉）。
+    // macOS 上是空操作
+    platform::set_rounded(window, true);
 }
 
 /// 毛玻璃面板的圆角半径（逻辑像素），按窗口标签存；窗口大小一变就按它重新裁。

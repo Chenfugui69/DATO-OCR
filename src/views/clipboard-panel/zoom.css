@@ -44,6 +44,11 @@
   box-shadow: inset 0 0 0 0.5px rgba(255, 255, 255, 0.14);
   color: rgba(255, 255, 255, 0.95);
   cursor: default;
+  opacity: 0;
+  transition: opacity 200ms var(--cn-ease-out);
+}
+.zoom-image__bar[data-on='true'] {
+  opacity: 1;
 }
 .zoom-image__bar button {
   display: grid;

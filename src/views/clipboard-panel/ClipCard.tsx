@@ -12,6 +12,7 @@ import { useTranslation } from 'react-i18next';
 import { readableOn, relativeTime } from '@/lib/format';
 import { clipboard } from '@/lib/ipc';
 import { assetUrl } from '@/lib/platform';
+import { Tooltip } from '@/ui/overlays';
 import type { ClipItem } from '@/lib/types';
 
 import { highlightCode, looksLikeCode } from './codeText';
@@ -360,20 +361,21 @@ export const ClipCard = memo(function ClipCard({
             <div className="clip-card__actions" onMouseDown={(e) => e.stopPropagation()} onDoubleClick={(e) => e.stopPropagation()}>
               {actionsFor(item).map((a) => {
                 const Icon = ACTION_ICON[a];
+                // 悬停时在按钮正上方出提示（系统 title 要停很久、还出在鼠标底下挡着卡片）
                 return (
-                  <button
-                    key={a}
-                    type="button"
-                    className="clip-card__action"
-                    title={t(`clip.action.${a}`)}
-                    aria-label={t(`clip.action.${a}`)}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onAction(a, item);
-                    }}
-                  >
-                    <Icon size={14} strokeWidth={2} />
-                  </button>
+                  <Tooltip key={a} content={t(`clip.action.${a}`)} side="top">
+                    <button
+                      type="button"
+                      className="clip-card__action"
+                      aria-label={t(`clip.action.${a}`)}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onAction(a, item);
+                      }}
+                    >
+                      <Icon size={14} strokeWidth={2} />
+                    </button>
+                  </Tooltip>
                 );
               })}
             </div>
