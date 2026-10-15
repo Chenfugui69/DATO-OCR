@@ -229,10 +229,17 @@ fn start(app: &AppHandle, intent: CaptureIntent, instant: bool) -> AppResult<()>
 
     // 窗口和子控件跟抓屏并行枚举，而且必须赶在遮罩出现之前：Chromium 系浏览器发现自己
     // 被完全遮住会把网页内容区那个子窗口藏起来，遮罩一盖上就枚举不到了
-    let (shots, windows) = std::thread::scope(|scope| {
-        let windows = scope.spawn(|| enumerate_for_detection(&settings));
+    let (shots, windows, grab_ms, enum_ms) = std::thread::scope(|scope| {
+        let windows = scope.spawn(|| {
+            let t = Instant::now();
+            let w = enumerate_for_detection(&settings);
+            (w, t.elapsed().as_millis() as u64)
+        });
+        let t = Instant::now();
         let shots = platform::capture_all();
-        (shots, windows.join().unwrap_or_default())
+        let grab_ms = t.elapsed().as_millis() as u64;
+        let (windows, enum_ms) = windows.join().unwrap_or_default();
+        (shots, windows, grab_ms, enum_ms)
     });
     let mut shots = match shots {
         Ok(shots) => shots,
@@ -278,7 +285,8 @@ fn start(app: &AppHandle, intent: CaptureIntent, instant: bool) -> AppResult<()>
     let capture_ms = started.elapsed().as_millis() as u64;
     if capture_ms > 100 * shots.len() as u64 {
         // 正常热态单屏 ~50ms。显著变慢通常是 GPU 状态丢了（驱动重置之类），留个痕迹
-        tracing::warn!(capture_ms, "抓屏明显变慢");
+        // 抓屏和枚举窗口是并行的，分开记，看是哪个慢
+        tracing::warn!(capture_ms, grab_ms, enum_ms, windows = windows.len(), "抓屏明显变慢");
     }
 
     let source_app = previous.and_then(platform::app_info_of).map(|a| a.name);
