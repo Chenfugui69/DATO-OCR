@@ -275,6 +275,7 @@ pub fn run() {
             commands::system::mcp_regenerate_token,
             commands::system::window_set_bounds,
             commands::system::window_backdrop,
+            commands::system::window_backdrop_fade,
             commands::system::window_is_foreground,
             commands::system::window_set_region,
             commands::system::permissions_status,

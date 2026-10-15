@@ -382,6 +382,14 @@ pub async fn window_backdrop(
     Ok(())
 }
 
+/// 毛玻璃背板整体淡入 / 淡出（面板出场、收起时和页面的动画一起走）。没挂背板什么都不做。
+#[tauri::command]
+pub async fn window_backdrop_fade(window: tauri::WebviewWindow, visible: bool, ms: u32) -> AppResult<()> {
+    let w = window.clone();
+    window.run_on_main_thread(move || crate::platform::fade_backdrop(&w, visible, ms))?;
+    Ok(())
+}
+
 /// 窗口的位置和所在屏的可用区域（逻辑像素）。null = 页面自己读 `window.screenX` 那一套就行。
 #[tauri::command]
 pub async fn window_placement(

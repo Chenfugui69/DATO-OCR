@@ -354,6 +354,11 @@ pub fn set_backdrop_rect(window: &WebviewWindow, rect: Option<(f32, f32, f32, f3
     sys::effects::set_backdrop_rect(window, rect, ms);
 }
 
+/// 背板整体淡入（略放大）/ 淡出（略缩小，停在透明），`ms` = 0 直接到位。只能在 UI 线程调用。
+pub fn fade_backdrop(window: &WebviewWindow, visible: bool, ms: u32) {
+    sys::effects::fade_backdrop(window, visible, ms);
+}
+
 /// 窗口大小变了，背板的圆角裁剪跟上。
 pub fn resize_backdrop(window: &WebviewWindow) -> bool {
     sys::effects::resize_backdrop(window)

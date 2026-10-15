@@ -49,13 +49,15 @@ use windows::Win32::System::WinRT::{
 };
 use windows::Win32::UI::WindowsAndMessaging::GetClientRect;
 use windows::UI::Composition::Desktop::DesktopWindowTarget;
-use windows::UI::Composition::{CompositionRoundedRectangleGeometry, Compositor};
-use windows_numerics::Vector2;
+use windows::UI::Composition::{CompositionRoundedRectangleGeometry, Compositor, SpriteVisual};
+use windows_numerics::{Vector2, Vector3};
 
 struct Backdrop {
     // 目标一释放，挂在窗口上的视觉树就没了，所以得一直拿着
     _target: DesktopWindowTarget,
     geometry: CompositionRoundedRectangleGeometry,
+    /// 背板本身：出场 / 收起时整体淡入淡出、缩放（`fade_backdrop`）
+    visual: SpriteVisual,
     /// 背板的范围由页面指定（展开 / 收起动画期间），窗口变大小时不自动铺满
     manual: bool,
 }
@@ -163,6 +165,7 @@ fn attach_backdrop(h: HWND, radius: f32) -> windows::core::Result<()> {
             Backdrop {
                 _target: target,
                 geometry,
+                visual,
                 manual: false,
             },
         )
@@ -383,6 +386,67 @@ pub fn set_backdrop_rect(window: &WebviewWindow, rect: Option<(f32, f32, f32, f3
     })();
     if let Err(err) = result {
         tracing::debug!("毛玻璃背板范围设置失败：{err}");
+    }
+}
+
+/// 背板整体出场 / 收起：`visible` 时从透明、略小（0.96）放大淡入，否则淡出、略缩（0.98）并停在透明，
+/// 下次出场从透明开始。缩放以面板（背板裁剪范围）的中心为原点，和页面里面板自己的出场动画同一套。
+/// 系统背板是窗口底下的原生一层，页面的 CSS 动画带不动它，不一起动的话面板淡入时背后的毛玻璃是一下子出现的。
+/// 只能在 UI 线程调用；没挂背板什么都不做。
+pub fn fade_backdrop(window: &WebviewWindow, visible: bool, ms: u32) {
+    let Ok(h) = window.hwnd() else { return };
+    let parts = BACKDROPS.with(|b| {
+        b.borrow()
+            .get(&(h.0 as isize))
+            .map(|bd| (bd.visual.clone(), bd.geometry.clone()))
+    });
+    let Some((visual, geometry)) = parts else { return };
+    let result = (|| -> windows::core::Result<()> {
+        let at = geometry.Offset()?;
+        let size = geometry.Size()?;
+        visual.SetCenterPoint(Vector3 {
+            X: at.X + size.X / 2.0,
+            Y: at.Y + size.Y / 2.0,
+            Z: 0.0,
+        })?;
+        let opacity_name = windows::core::HSTRING::from("Opacity");
+        let scale_name = windows::core::HSTRING::from("Scale");
+        visual.StopAnimation(&opacity_name)?;
+        visual.StopAnimation(&scale_name)?;
+        let (from, to) = if visible { ((0.0, 0.96), (1.0, 1.0)) } else { ((visual.Opacity()?, visual.Scale()?.X), (0.0, 0.98)) };
+        let scale = |k: f32| Vector3 { X: k, Y: k, Z: 1.0 };
+        if ms == 0 {
+            visual.SetOpacity(to.0)?;
+            visual.SetScale(scale(to.1))?;
+            return Ok(());
+        }
+        let compositor = compositor()?;
+        // 出场：cubic-bezier(0.22, 1, 0.36, 1)，快起慢收；收起：cubic-bezier(0.4, 0, 1, 1)，干脆利落
+        let ease = if visible {
+            compositor.CreateCubicBezierEasingFunction(Vector2 { X: 0.22, Y: 1.0 }, Vector2 { X: 0.36, Y: 1.0 })?
+        } else {
+            compositor.CreateCubicBezierEasingFunction(Vector2 { X: 0.4, Y: 0.0 }, Vector2 { X: 1.0, Y: 1.0 })?
+        };
+        let duration = windows::Foundation::TimeSpan {
+            Duration: i64::from(ms) * 10_000,
+        };
+        let fade = compositor.CreateScalarKeyFrameAnimation()?;
+        fade.InsertKeyFrame(0.0, from.0)?;
+        fade.InsertKeyFrameWithEasingFunction(1.0, to.0, &ease)?;
+        fade.SetDuration(duration)?;
+        let grow = compositor.CreateVector3KeyFrameAnimation()?;
+        grow.InsertKeyFrame(0.0, scale(from.1))?;
+        grow.InsertKeyFrameWithEasingFunction(1.0, scale(to.1), &ease)?;
+        grow.SetDuration(duration)?;
+        // 动画开始前先落到起点：命令到的这一帧不会闪一下终点的样子
+        visual.SetOpacity(from.0)?;
+        visual.SetScale(scale(from.1))?;
+        visual.StartAnimation(&opacity_name, &fade)?;
+        visual.StartAnimation(&scale_name, &grow)?;
+        Ok(())
+    })();
+    if let Err(err) = result {
+        tracing::debug!("毛玻璃背板淡入淡出失败：{err}");
     }
 }
 

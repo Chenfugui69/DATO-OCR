@@ -75,6 +75,9 @@ const RESIZE_EDGES = [
 ] as const;
 
 const ANIM_MS = 340;
+/** 面板弹出 / 收起的时长（Windows，见 appear / hide） */
+const APPEAR_MS = 300;
+const LEAVE_MS = 140;
 
 /** 面板窗口在哪、所在屏的可用区域（逻辑像素）。 */
 async function whereAmI(): Promise<{ pos: { x: number; y: number }; mx: number; my: number; mw: number; mh: number }> {
@@ -240,12 +243,35 @@ export default function TranslatePopup() {
   }, []);
   // 设置页里的预览：点外面、失焦都不收起（用户正在主窗口里调设置），由设置页来收
   const previewRef = useRef(false);
+  // 出场 / 收起（Windows）：面板是同一个窗口藏了又显示，CSS 的入场动画只在页面第一次挂上时播一遍，
+  // 之后每次都是"啪"地一下出现。所以每次弹出手动播：面板从略小、透明放大淡入，毛玻璃背板（窗口底下
+  // 原生的一层，页面带不动）同一时刻、同一条曲线一起走。收起时先淡出再藏窗口：藏起来时最后一帧是空的，
+  // 下次显示不会先闪一下上次的内容。macOS 的出场交给系统
+  const blurRef = useRef(blur);
+  blurRef.current = blur;
+  const shownRef = useRef(false);
+  const leaving = useRef<{ anim: Animation; timer: number } | null>(null);
+  const appear = useCallback(() => {
+    if (isMac) return;
+    const wasLeaving = leaving.current;
+    if (wasLeaving) {
+      window.clearTimeout(wasLeaving.timer);
+      wasLeaving.anim.cancel();
+      leaving.current = null;
+    }
+    // 已经开着（又划了一段字）：只换内容，不再弹一次
+    if (shownRef.current && !wasLeaving) return;
+    shownRef.current = true;
+    if (blurRef.current) void system.backdropFade(true, APPEAR_MS).catch(() => undefined);
+    shellRef.current?.animate([{ opacity: 0, scale: '0.96' }, { opacity: 1, scale: '1' }], { duration: APPEAR_MS, easing: 'cubic-bezier(0.22, 1, 0.36, 1)' });
+  }, []);
   useEvent('translate-request', (p) => {
     previewRef.current = !!p.preview;
     grownInPlace.current = 0;
     setTopSpace(p.reserve ?? 0);
     setSheet(null);
     adopt(p.text);
+    appear();
   });
   // 面板第一次出现时页面可能还没加载完、错过了事件，加载好后主动取一次
   useEffect(() => {
@@ -261,8 +287,24 @@ export default function TranslatePopup() {
 
   // 设置页的预览是原生"显示但不激活"亮出来的，Tauri 的 hide() 藏不掉它；交给后端收（顺便让设置页把开关拨回去）
   const hide = useCallback(() => {
-    if (previewRef.current) void translate.popupPreview(false).catch(() => undefined);
-    else void getCurrentWindow().hide();
+    if (previewRef.current) {
+      shownRef.current = false;
+      void translate.popupPreview(false).catch(() => undefined);
+      return;
+    }
+    const shell = shellRef.current;
+    if (isMac || !shell) {
+      void getCurrentWindow().hide();
+      return;
+    }
+    if (leaving.current) return;
+    const anim = shell.animate([{ opacity: 1, scale: '1' }, { opacity: 0, scale: '0.98' }], { duration: LEAVE_MS, easing: 'cubic-bezier(0.4, 0, 1, 1)', fill: 'forwards' });
+    if (blurRef.current) void system.backdropFade(false, LEAVE_MS).catch(() => undefined);
+    const timer = window.setTimeout(() => {
+      shownRef.current = false;
+      void getCurrentWindow().hide();
+    }, LEAVE_MS + 16);
+    leaving.current = { anim, timer };
   }, []);
   // 鼠标在面板外面按下了（Rust 的全局鼠标监听报的）。平时靠失焦收起，但面板有时拿不到键盘焦点、
   // 就等不到失焦；这条不依赖焦点。和失焦一样：翻译模式才收，对话模式、钉住、正在拖动 / 改大小时不收

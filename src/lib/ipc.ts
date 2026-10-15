@@ -284,4 +284,6 @@ export const system = {
   setRegion: (rect: { x: number; y: number; width: number; height: number } | null) => call<void>('window_set_region', { rect }),
   /** 毛玻璃背板只铺窗口里的一块、`ms` 毫秒动画过去；`rect` 为 null = 铺满窗口 */
   backdrop: (rect: { x: number; y: number; width: number; height: number } | null, ms = 0) => call<void>('window_backdrop', { rect, ms }),
+  /** 毛玻璃背板整体淡入（略放大）/ 淡出（略缩小，停在透明）：面板出场、收起时和页面动画一起走 */
+  backdropFade: (visible: boolean, ms: number) => call<void>('window_backdrop_fade', { visible, ms }),
 };

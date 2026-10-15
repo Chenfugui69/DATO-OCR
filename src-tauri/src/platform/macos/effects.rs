@@ -514,6 +514,9 @@ pub fn resize_backdrop(_window: &WebviewWindow) -> bool {
     true
 }
 
+/// 背板出场 / 收起的淡入淡出：macOS 的面板出场交给系统，不做。
+pub fn fade_backdrop(_window: &WebviewWindow, _visible: bool, _ms: u32) {}
+
 /// 背板只铺在窗口里的一块（物理像素 x, y, w, h，原点在窗口左上角），`ms` > 0 时用和页面一样的
 /// 缓动曲线动画过去；`None` = 恢复铺满整个窗口。
 pub fn set_backdrop_rect(window: &WebviewWindow, rect: Option<(f32, f32, f32, f32)>, ms: u32) {
