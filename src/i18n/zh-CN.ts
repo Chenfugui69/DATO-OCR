@@ -78,6 +78,8 @@ const zhCN = {
     original: '原文',
     copyTranslation: '复制译文',
     translationCopied: '已复制译文',
+    moveLabels: '移动译文（打开后拖动译文挪位置；关着时可以直接选字复制）',
+    textCopied: '已复制选中的文字',
     removeTranslation: '去掉译文',
     intent: {
       ocr: '选好区域后按 Enter 识字',

@@ -15,6 +15,7 @@ import type { GifProgress, LongshotProgress, SessionInfo } from '@/lib/types';
 import { defaultToolOptions, type Tool, type ToolOptions } from '@/views/annotate/model';
 
 import type { Point, Rect } from './geometry';
+import type { TranslatedBlock } from '@/views/annotate/translateLayer';
 
 export type Phase = 'idle' | 'detect' | 'pressing' | 'selecting' | 'editing' | 'passive' | 'longshot' | 'longshot-other' | 'gif' | 'gif-other';
 
@@ -39,6 +40,10 @@ export interface OverlayState {
   showOriginal: boolean;
   /** 原位翻译的全部译文（复制用） */
   translatedText: string;
+  /** 原位翻译的各块（原文、位置）：看原文时在上面铺可选的文字 */
+  translatedBlocks: TranslatedBlock[];
+  /** 原位翻译后：开着时拖动译文挪位置，关着时（默认）鼠标在字上是选字 */
+  moveLabels: boolean;
 }
 
 export const initialOverlay = (): Omit<OverlayState, 'options'> => ({
@@ -58,6 +63,8 @@ export const initialOverlay = (): Omit<OverlayState, 'options'> => ({
   translating: false,
   showOriginal: false,
   translatedText: '',
+  translatedBlocks: [],
+  moveLabels: false,
 });
 
 // 工具的线宽/颜色在一次运行期间记忆（规格 02 §3.7.4）—— 不随会话重置

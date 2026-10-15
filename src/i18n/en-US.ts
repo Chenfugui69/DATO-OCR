@@ -48,6 +48,8 @@ const enUS: Dict = {
     original: 'Original',
     copyTranslation: 'Copy translation',
     translationCopied: 'Translation copied',
+    moveLabels: 'Move translations (drag them while on; when off you can select and copy text)',
+    textCopied: 'Copied the selected text',
     removeTranslation: 'Remove translation',
     intent: {
       ocr: 'Select an area, then press Enter to recognize text',

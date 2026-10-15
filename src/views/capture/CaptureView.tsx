@@ -8,11 +8,12 @@ import './capture.css';
 import '@/views/annotate/annotate.css';
 
 import { Window } from '@tauri-apps/api/window';
-import { Copy, Eye, Languages, X } from 'lucide-react';
+import { Copy, Eye, Languages, Move, X } from 'lucide-react';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { flushSync } from 'react-dom';
 import { useTranslation } from 'react-i18next';
 
+import i18n from '@/i18n';
 import { broadcast, on } from '@/lib/events';
 import { formatColor, readableOn } from '@/lib/format';
 import { CONTENT_INTERVAL, useElementSize, useThrottled } from '@/lib/hooks';
@@ -57,6 +58,7 @@ import { GifUI } from './GifUI';
 import { LongshotUI } from './LongshotUI';
 import { Magnifier } from './Magnifier';
 import { get, initialOverlay, set, useOverlay } from './store';
+import { TranslationText } from './TranslationText';
 
 const MONITOR_ID = Number(windowLabel().replace('capture-', ''));
 const DRAG_THRESHOLD_CSS = 4;
@@ -335,7 +337,7 @@ async function translateInPlace() {
     if (get().session?.sessionId !== session.sessionId) return;
     engine.removeGroup(TRANSLATION_GROUP);
     engine.addAll(buildLabels(r.blocks, pixels, scale(), selection));
-    set({ showOriginal: false, translatedText: r.blocks.map((b) => b.text).join('\n') });
+    set({ showOriginal: false, moveLabels: false, translatedBlocks: r.blocks, translatedText: r.blocks.map((b) => b.text).join('\n') });
   } catch (err) {
     notify.error(err);
   } finally {
@@ -656,7 +658,19 @@ function onKeyDown(e: KeyboardEvent) {
   if (ctrl && key.toLowerCase() === 'p') return void (e.preventDefault(), finish('pin'));
   if (ctrl && key.toLowerCase() === 'g') return void (e.preventDefault(), finish('gif'));
   if (ctrl && key.toLowerCase() === 't') return void (e.preventDefault(), translateInPlace());
-  if (ctrl && key.toLowerCase() === 'c') return void (e.preventDefault(), finish('copy'));
+  if (ctrl && key.toLowerCase() === 'c') {
+    e.preventDefault();
+    // 在译文 / 原文上选了字：复制选中的字，不是完成截图
+    const picked = selectedTranslationText();
+    if (picked) {
+      void capture
+        .writeText(picked)
+        .then(() => notify.success(i18n.t('capture.textCopied')))
+        .catch(notify.error);
+      return;
+    }
+    return void finish('copy');
+  }
 
   const arrows: Record<string, [number, number]> = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] };
   const dir = arrows[key];
@@ -949,6 +963,7 @@ function TranslationBar({ css }: { css: { x: number; y: number; width: number } 
   const { t } = useTranslation();
   useEngineVersion(engine);
   const showOriginal = useOverlay((x) => x.showOriginal);
+  const moveLabels = useOverlay((x) => x.moveLabels);
   const text = useOverlay((x) => x.translatedText);
   const ref = useRef<HTMLDivElement>(null);
   const size = useElementSize(ref, { width: 220, height: 34 });
@@ -972,6 +987,17 @@ function TranslationBar({ css }: { css: { x: number; y: number; width: number } 
         <Eye size={14} strokeWidth={1.75} />
         {t('capture.original')}
       </button>
+      {/* 默认鼠标在字上是选字；打开这个才能拖动译文挪位置（看原文时没有可挪的） */}
+      <button
+        type="button"
+        className={moveLabels && !showOriginal ? 'is-on' : ''}
+        title={t('capture.moveLabels')}
+        aria-pressed={moveLabels}
+        disabled={showOriginal}
+        onClick={() => set({ moveLabels: !moveLabels })}
+      >
+        <Move size={14} strokeWidth={1.75} />
+      </button>
       <span className="cap-trbar__sep" />
       <button
         type="button"
@@ -990,13 +1016,33 @@ function TranslationBar({ css }: { css: { x: number; y: number; width: number } 
         title={t('capture.removeTranslation')}
         onClick={() => {
           engine.removeGroup(TRANSLATION_GROUP);
-          set({ showOriginal: false });
+          set({ showOriginal: false, moveLabels: false, translatedBlocks: [] });
         }}
       >
         <X size={14} strokeWidth={1.75} />
       </button>
     </div>
   );
+}
+
+/** 原位翻译后叠在选区上的可选文字（见 TranslationText）。翻译中、打开了"移动"时不显示 */
+function TranslationTextLayer({ s }: { s: number }) {
+  useEngineVersion(engine);
+  const showOriginal = useOverlay((x) => x.showOriginal);
+  const moveLabels = useOverlay((x) => x.moveLabels);
+  const translating = useOverlay((x) => x.translating);
+  const blocks = useOverlay((x) => x.translatedBlocks);
+  if (translating || !engine.hasGroup(TRANSLATION_GROUP) || (moveLabels && !showOriginal)) return null;
+  return <TranslationText engine={engine} blocks={blocks} showOriginal={showOriginal} s={s} />;
+}
+
+/** 当前在译文 / 原文上选中的字（没选、选的不是这层里的字返回空） */
+function selectedTranslationText(): string {
+  const sel = window.getSelection();
+  const text = sel?.toString().trim() ?? '';
+  if (!text || !sel?.anchorNode) return '';
+  const el = sel.anchorNode instanceof Element ? sel.anchorNode : sel.anchorNode.parentElement;
+  return el?.closest('.cap-trtext') ? text : '';
 }
 
 /** 选区左上角留给尺寸提示的宽度（CSS 像素），够放下 "3840 × 2160" */
@@ -1157,16 +1203,20 @@ function Toolbars({
       )}
       <TranslationBar css={css} />
       {(translating || scanFading) && (
-        // 翻译中：一道光从上往下扫过选区，边框跟着呼吸；翻完在译文上淡出
+        // 翻译中：选区边上一圈流动的彩光，里面蒙一层带高光的毛玻璃；翻完雾散开、光圈淡出
         <div
-          className={`cap-scan${scanFading ? ' cap-scan--done' : ''}`}
+          className={`cap-ai${scanFading ? ' cap-ai--done' : ''}`}
           style={{ transform: `translate(${css.x}px, ${css.y}px)`, width: css.width, height: css.height }}
-        />
+        >
+          <div className="cap-ai__veil" />
+          <div className="cap-ai__glow" />
+          <div className="cap-ai__edge" />
+        </div>
       )}
       {translating && (
         <div className="cap-busy cn-glass" style={{ transform: `translate(${css.x + css.width / 2}px, ${css.y + css.height / 2}px)` }}>
           <Spinner size={16} />
-          {t('capture.translating')}
+          <span className="cap-busy__label">{t('capture.translating')}</span>
         </div>
       )}
       {intent !== 'normal' && !engine.hasGroup(TRANSLATION_GROUP) && (
@@ -1312,6 +1362,7 @@ export default function CaptureView() {
       )}
       {phase === 'editing' && selection && (
         <>
+          <TranslationTextLayer s={s} />
           <div className="cap-text-layer">
             <SelectionOverlay engine={engine} displayScale={s} />
             <TextEditor engine={engine} displayScale={s} />

@@ -507,70 +507,135 @@ html[data-view='capture'] #root {
   gap: 4px;
 }
 
-/* 截图原位翻译进行中：选区里一道光从上往下扫，边框跟着呼吸；翻完整层淡出（CaptureView 的 cap-scan） */
-.cap-scan {
+/* 截图原位翻译进行中（CaptureView 的 cap-ai）：
+   - 选区边上一圈流动的彩色光（蓝 → 紫 → 粉 → 橙，绕着转），外面一层柔光
+   - 选区里蒙一层轻微的毛玻璃，一道斜的高光慢慢划过
+   - 翻完：毛玻璃退掉、光圈淡出，译文从雾里"显"出来 */
+@property --cap-ai-angle {
+  syntax: '<angle>';
+  inherits: false;
+  initial-value: 0deg;
+}
+.cap-ai {
   position: absolute;
   left: 0;
   top: 0;
-  overflow: hidden;
   pointer-events: none;
-  --scan: color-mix(in srgb, var(--cn-accent) 60%, white);
+  --cap-ai-colors: #5ac8fa, #007aff, #af52de, #ff2d55, #ff9f0a, #5ac8fa;
 }
-.cap-scan::before {
-  content: '';
+.cap-ai__veil {
   position: absolute;
-  left: 0;
-  right: 0;
-  top: -40%;
-  height: 40%;
-  background: linear-gradient(
-    to bottom,
-    transparent 0%,
-    color-mix(in srgb, var(--cn-accent) 10%, transparent) 55%,
-    color-mix(in srgb, var(--cn-accent) 30%, transparent) 92%,
-    var(--scan) 98%,
-    transparent 100%
-  );
-  animation: cap-scan-sweep 1.5s cubic-bezier(0.45, 0, 0.25, 1) infinite;
+  inset: 0;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.05);
+  -webkit-backdrop-filter: blur(2px) saturate(1.15);
+  backdrop-filter: blur(2px) saturate(1.15);
+  animation: cap-ai-veil-in 280ms var(--cn-ease-out);
 }
-.cap-scan::after {
+.cap-ai__veil::after {
   content: '';
   position: absolute;
   inset: 0;
-  box-shadow:
-    inset 0 0 0 1.5px color-mix(in srgb, var(--cn-accent) 70%, transparent),
-    inset 0 0 18px color-mix(in srgb, var(--cn-accent) 35%, transparent);
-  animation: cap-scan-breathe 1.5s ease-in-out infinite;
+  background: linear-gradient(105deg, transparent 38%, rgba(255, 255, 255, 0.22) 50%, transparent 62%);
+  background-size: 260% 100%;
+  animation: cap-ai-sheen 2.2s ease-in-out infinite;
 }
-.cap-scan--done {
-  animation: cap-scan-out 500ms var(--cn-ease-out) forwards;
+.cap-ai__edge,
+.cap-ai__glow {
+  position: absolute;
+  inset: -2px;
+  padding: 2px;
+  border-radius: 3px;
+  background: conic-gradient(from var(--cap-ai-angle), var(--cap-ai-colors));
+  /* 只留边框那一圈：内容区和整块做"异或" */
+  -webkit-mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask:
+    linear-gradient(#000 0 0) content-box exclude,
+    linear-gradient(#000 0 0);
+  animation: cap-ai-spin 3.2s linear infinite;
 }
-.cap-scan--done::before {
-  animation-iteration-count: 1;
+.cap-ai__glow {
+  inset: -7px;
+  padding: 7px;
+  border-radius: 8px;
+  filter: blur(9px);
+  opacity: 0.75;
 }
-@keyframes cap-scan-sweep {
+.cap-ai--done .cap-ai__veil {
+  animation: cap-ai-veil-out 520ms var(--cn-ease-out) forwards;
+}
+.cap-ai--done .cap-ai__edge,
+.cap-ai--done .cap-ai__glow {
+  animation:
+    cap-ai-spin 3.2s linear infinite,
+    cap-ai-fade 520ms var(--cn-ease-out) forwards;
+}
+@keyframes cap-ai-spin {
+  to {
+    --cap-ai-angle: 360deg;
+  }
+}
+@keyframes cap-ai-sheen {
   from {
-    transform: translateY(0);
+    background-position: 130% 0;
   }
   to {
-    /* 光带高 40%，从选区上方 -40% 扫到下边 100%：走 140% / 40% = 350% 个自身高度 */
-    transform: translateY(350%);
+    background-position: -30% 0;
   }
 }
-@keyframes cap-scan-breathe {
-  0%,
-  100% {
-    opacity: 0.45;
-  }
-  50% {
-    opacity: 1;
-  }
-}
-@keyframes cap-scan-out {
+@keyframes cap-ai-veil-in {
   from {
-    opacity: 1;
+    opacity: 0;
   }
+}
+@keyframes cap-ai-veil-out {
+  to {
+    opacity: 0;
+    -webkit-backdrop-filter: blur(0) saturate(1);
+    backdrop-filter: blur(0) saturate(1);
+  }
+}
+@keyframes cap-ai-fade {
   to {
     opacity: 0;
   }
+}
+/* "翻译中…"胶囊里的字也带一道流光 */
+.cap-busy__label {
+  background: linear-gradient(90deg, var(--cn-label) 35%, var(--cn-accent) 50%, var(--cn-label) 65%);
+  background-size: 300% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: cap-ai-sheen 1.8s linear infinite;
+}
+
+/* 原位翻译后叠在选区上的透明文字（TranslationText）：能用鼠标选、Ctrl+C 复制，看到的还是画布上的字 */
+.cap-trtext {
+  position: absolute;
+  left: 0;
+  top: 0;
+  transform-origin: 0 0;
+  pointer-events: none;
+}
+.cap-trtext__line {
+  position: absolute;
+  white-space: pre;
+  overflow: visible;
+  color: transparent;
+  cursor: text;
+  pointer-events: auto;
+  user-select: text;
+  -webkit-user-select: text;
+}
+.cap-trtext__line--wrap {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.cap-trtext__line::selection {
+  color: transparent;
+  background: color-mix(in srgb, var(--cn-accent) 38%, transparent);
 }
