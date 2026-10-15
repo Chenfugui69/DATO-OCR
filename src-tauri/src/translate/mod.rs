@@ -216,6 +216,36 @@ pub fn list_providers(app: &AppHandle) -> Vec<ProviderInfo> {
         .collect()
 }
 
+/// 被限流（429）、超时、连不上的源，这么久之内自动降级时排到最后。
+/// 开着代理的机器上谷歌常年回 429、外网源偶尔超时，每次都先等它失败，一次翻译要十几秒。
+const BENCH_FOR: Duration = Duration::from_secs(300);
+static BENCHED: Mutex<Option<HashMap<String, Instant>>> = Mutex::new(None);
+
+fn bench(provider: &str) {
+    BENCHED
+        .lock()
+        .get_or_insert_with(HashMap::new)
+        .insert(provider.to_string(), Instant::now() + BENCH_FOR);
+}
+
+fn benched(provider: &str) -> bool {
+    BENCHED
+        .lock()
+        .as_ref()
+        .and_then(|m| m.get(provider))
+        .is_some_and(|until| *until > Instant::now())
+}
+
+/// 过一会儿可能就好的失败：限流、超时、连不上
+fn is_transient(err: &AppError) -> bool {
+    match err {
+        AppError::Network(msg) => {
+            msg.contains("429") || msg.contains("请求超时") || msg.contains("无法连接服务器")
+        }
+        _ => false,
+    }
+}
+
 /// 限流：间隔不够就等到够了再发，而不是直接失败（命中缓存的不走这里）。
 async fn throttle(app: &AppHandle, provider: &str) {
     let wait = {
@@ -269,11 +299,16 @@ pub async fn translate(app: &AppHandle, req: TranslateRequest) -> AppResult<Tran
 
     let order: Vec<String> = match req.provider.filter(|p| p != "auto") {
         Some(p) => vec![p],
-        None => list_providers(app)
-            .into_iter()
-            .filter(|p| p.enabled && p.configured)
-            .map(|p| p.id)
-            .collect(),
+        None => {
+            let mut order: Vec<String> = list_providers(app)
+                .into_iter()
+                .filter(|p| p.enabled && p.configured)
+                .map(|p| p.id)
+                .collect();
+            // 刚被限流 / 超时的源挪到最后（稳定排序，其余顺序不变）：不然每次都先在它身上耗掉几秒
+            order.sort_by_key(|p| benched(p));
+            order
+        }
     };
     if order.is_empty() {
         return Err(AppError::msg("没有可用的翻译源，请在设置中启用"));
@@ -379,6 +414,9 @@ pub async fn translate(app: &AppHandle, req: TranslateRequest) -> AppResult<Tran
             Err(err) => {
                 // 日志里只记源和错误，不记原文（规格 00 §6.3）
                 tracing::warn!(%provider, chars = text.chars().count(), "翻译失败，换下一个：{err}");
+                if is_transient(&err) {
+                    bench(&provider);
+                }
                 last_err = Some(err);
             }
         }
@@ -393,4 +431,26 @@ pub async fn translate(app: &AppHandle, req: TranslateRequest) -> AppResult<Tran
 
 fn secret(app: &AppHandle, key: &str) -> Option<String> {
     state(app).db.with(|c| secrets::get(c, key)).ok().flatten()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rate_limits_and_timeouts_bench_a_provider() {
+        assert!(is_transient(&AppError::Network(
+            "HTTP status client error (429 Too Many Requests) for url (...)".into()
+        )));
+        assert!(is_transient(&AppError::Network("请求超时".into())));
+        assert!(!is_transient(&AppError::Network("必应翻译返回格式异常".into())));
+        assert!(!is_transient(&AppError::msg("未填写 DeepL 密钥")));
+
+        assert!(!benched("test-provider"));
+        bench("test-provider");
+        assert!(benched("test-provider"));
+        let mut order = vec!["test-provider".to_string(), "other".to_string()];
+        order.sort_by_key(|p| benched(p));
+        assert_eq!(order, ["other", "test-provider"]);
+    }
 }
