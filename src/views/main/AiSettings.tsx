@@ -12,6 +12,7 @@ import { Button, IconButton, Segmented, Select, Slider, Switch, TextField } from
 import { DropdownMenu, notify, promptDialog } from '@/ui/overlays';
 
 import { Group, Row } from './settingsParts';
+import { normalizeAiBaseUrl } from './aiUrl';
 
 /** 常见服务商的预设：只是帮用户填好名称、格式和接口地址。 */
 const PRESETS: { name: string; en?: string; kind: AiProvider['kind']; baseUrl: string }[] = [
@@ -133,7 +134,12 @@ export function AiSettingsGroups({ settings, set }: { settings: Settings; set: (
                   defaultValue={p.baseUrl}
                   placeholder="https://…/v1"
                   style={{ width: 300 }}
-                  onBlur={(e) => editProvider(p.id, (x) => void (x.baseUrl = e.target.value.trim()))}
+                  onBlur={(e) => {
+                    // 少填了版本号、整个接口地址贴进来之类的，补齐 / 去掉多的，框里也换成补好的
+                    const url = normalizeAiBaseUrl(e.target.value, p.kind === 'anthropic' ? 'anthropic' : 'openai');
+                    e.target.value = url;
+                    editProvider(p.id, (x) => void (x.baseUrl = url));
+                  }}
                 />
               </Row>
               <Row title={t('settings.ai.apiKey')} desc={t('settings.ai.apiKeyDesc')}>
