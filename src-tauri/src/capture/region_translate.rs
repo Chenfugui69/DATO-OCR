@@ -286,7 +286,10 @@ fn layout_blocks(blocks: &[OcrBlock], image: Option<&RgbaImage>) -> Vec<TextBloc
                 (Some(a), Some(c)) => color_dist(a, c) < 70.0,
                 _ => true,
             };
-            below && similar && aligned && filled && same_color
+            // 语言不同的不拼：英文标题下面一行"Bash 已完成 12分钟"拼进去，整段被翻译服务当成中文原样退回，
+            // 标题也跟着没翻
+            let same_lang = translate::detect::detect(last_text) == translate::detect::detect(&t);
+            below && similar && aligned && filled && same_color && same_lang
         });
         match target {
             Some(b) => {
@@ -301,7 +304,8 @@ fn layout_blocks(blocks: &[OcrBlock], image: Option<&RgbaImage>) -> Vec<TextBloc
             }),
         }
     }
-    out.retain(|b| b.text().chars().any(char::is_alphanumeric));
+    // 只有一个字母 / 字的（关闭按钮的"x"、图标认成的"口"）不是要翻的正文
+    out.retain(|b| b.text().chars().filter(|c| c.is_alphanumeric()).count() >= 2);
     out
 }
 
@@ -490,6 +494,27 @@ mod tests {
         assert_eq!(strip_icon_glyphs("Say hello to everyone in 你好世界", &mut r), "Say hello to everyone in 你好世界");
         assert_eq!(strip_icon_glyphs("你好世界 means hello world in Chinese", &mut r), "你好世界 means hello world in Chinese");
         assert_eq!(r.w, 300.0);
+    }
+
+    #[test]
+    fn lines_in_different_languages_stay_apart() {
+        // 用户截图里识别出来的四行：英文标题，下面一行中文的状态
+        let blocks = vec![
+            block("Wait for dev apprebuilt afteredit", 42.0, 20.0, 304.0, 25.0),
+            block("Bash已完成12分钟17秒", 41.0, 53.0, 227.0, 25.0),
+            block("Run clippy in separate target dir", 40.0, 114.0, 295.0, 29.0),
+            block("Bash已完成4分钟15秒", 40.0, 146.0, 217.0, 25.0),
+        ];
+        let texts: Vec<String> = layout_blocks(&blocks, None).iter().map(TextBlock::text).collect();
+        assert_eq!(
+            texts,
+            vec![
+                "Wait for dev apprebuilt afteredit",
+                "Bash已完成12分钟17秒",
+                "Run clippy in separate target dir",
+                "Bash已完成4分钟15秒",
+            ]
+        );
     }
 
     #[test]
