@@ -138,7 +138,8 @@ async function video() {
     '-y', '-loglevel', 'error',
     '-f', 'concat', '-safe', '0', '-i', list,
     ...audioIn,
-    '-c:v', 'libx264', '-preset', 'slow', '-crf', String(args.crf || 17), '-pix_fmt', 'yuv420p',
+    // CRF 21 + 码率上限：成片 40 MB 左右（GitHub 单文件超过 50 MB 会警告、100 MB 直接拒收）
+    '-c:v', 'libx264', '-preset', 'slow', '-crf', String(args.crf || 21), '-maxrate', '9M', '-bufsize', '18M', '-pix_fmt', 'yuv420p',
     '-profile:v', 'high', '-tune', 'animation', '-g', String(fps * 2),
     '-x264-params', 'aq-mode=3',
     ...(args['no-audio'] ? [] : ['-c:a', 'aac', '-b:a', '256k', '-shortest']),
