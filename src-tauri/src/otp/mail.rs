@@ -7,8 +7,10 @@
 //! - 服务器支持 IDLE 就挂着等推送（几秒内到），不支持的隔一会儿问一次。
 //! - 密码（授权码 / 应用专用密码）加密存在密钥表里，不进设置文件，不参与多端同步。
 
+use std::io::{self, Read, Write};
 use std::net::{TcpStream, ToSocketAddrs};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use native_tls::{TlsConnector, TlsStream};
@@ -40,7 +42,95 @@ const MAX_MAIL_BYTES: u32 = 400 * 1024;
 const RETRY_FIRST: Duration = Duration::from_secs(5);
 const RETRY_MAX: Duration = Duration::from_secs(5 * 60);
 
-type Session = imap::Session<TlsStream<TcpStream>>;
+type Session = imap::Session<Wire<TlsStream<TcpStream>>>;
+
+/// 连接外面套的一层：发 ID 命令期间把服务器回的 `* ID (...)` 那一行滤掉。
+///
+/// 用的 IMAP 库（imap 2.4 / imap-proto 0.10）不认识这种回应：读到它就当出错返回，ID 命令自己的
+/// 结束行（`a3 OK`）留在连接里没读走。下一条命令（打开收件箱，`a4`）读到的是这行旧的，标签对不上，
+/// 库里的断言直接崩掉（用户在 Gmail 上点"测试连接"报过 `left: [97, 51] right: [97, 52]`）。
+/// 那一行本来就用不上，在它进库之前扔掉，ID 命令就能正常收尾。只在发 ID 时打开，
+/// 免得误伤邮件正文里恰好以 `* ID ` 开头的行。
+pub struct Wire<S> {
+    inner: S,
+    filter: Arc<AtomicBool>,
+    /// 已经从连接上读到、还没凑成整行的字节（只在过滤时用）
+    pending: Vec<u8>,
+    /// 过滤完、等着交给库的字节
+    ready: Vec<u8>,
+}
+
+impl<S> Wire<S> {
+    fn new(inner: S, filter: Arc<AtomicBool>) -> Self {
+        Self {
+            inner,
+            filter,
+            pending: Vec::new(),
+            ready: Vec::new(),
+        }
+    }
+
+    fn hand_out(&mut self, out: &mut [u8]) -> usize {
+        let n = out.len().min(self.ready.len());
+        out[..n].copy_from_slice(&self.ready[..n]);
+        self.ready.drain(..n);
+        n
+    }
+}
+
+impl<S: Read> Read for Wire<S> {
+    fn read(&mut self, out: &mut [u8]) -> io::Result<usize> {
+        loop {
+            if !self.ready.is_empty() {
+                return Ok(self.hand_out(out));
+            }
+            if !self.filter.load(Ordering::SeqCst) {
+                if self.pending.is_empty() {
+                    return self.inner.read(out);
+                }
+                self.ready.append(&mut self.pending);
+                continue;
+            }
+            if let Some(end) = self.pending.iter().position(|&b| b == b'\n') {
+                let line: Vec<u8> = self.pending.drain(..=end).collect();
+                if !line.starts_with(b"* ID ") {
+                    self.ready.extend_from_slice(&line);
+                }
+                continue;
+            }
+            let mut chunk = [0u8; 4096];
+            let n = self.inner.read(&mut chunk)?;
+            if n == 0 {
+                // 连接断了：剩下的半行原样交出去，让库自己报错
+                self.ready.append(&mut self.pending);
+                if self.ready.is_empty() {
+                    return Ok(0);
+                }
+                continue;
+            }
+            self.pending.extend_from_slice(&chunk[..n]);
+        }
+    }
+}
+
+impl<S: Write> Write for Wire<S> {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        self.inner.write(buf)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.inner.flush()
+    }
+}
+
+impl imap::extensions::idle::SetReadTimeout for Wire<TlsStream<TcpStream>> {
+    fn set_read_timeout(&mut self, timeout: Option<Duration>) -> imap::Result<()> {
+        self.inner
+            .get_ref()
+            .set_read_timeout(timeout)
+            .map_err(imap::Error::Io)
+    }
+}
 
 /// 每次重新配置加一；后台线程发现自己的号过期了就退出
 static GENERATION: AtomicU64 = AtomicU64::new(0);
@@ -335,15 +425,18 @@ fn connect(endpoint: &Endpoint, user: &str, password: &str) -> AppResult<(Sessio
         .build()
         .map_err(|e| AppError::Network(e.to_string()))?;
     let fail = |e: imap::Error| explain(&e, endpoint);
+    let handshake = |tcp: TcpStream| {
+        tls.connect(&endpoint.host, tcp)
+            .map_err(|e| AppError::Network(format!("加密连接建立失败：{e}")))
+    };
+    let filter = Arc::new(AtomicBool::new(false));
     let client = if endpoint.starttls {
-        let mut client = imap::Client::new(tcp);
-        client.read_greeting().map_err(fail)?;
-        client.secure(&endpoint.host, &tls).map_err(fail)?
+        // 明文连上、说 STARTTLS，再在同一个连接上握手。不用库的 `secure()`：那样拿不到底下的连接，套不上 `Wire`
+        let mut tcp = tcp;
+        starttls(&mut tcp)?;
+        imap::Client::new(Wire::new(handshake(tcp)?, filter.clone()))
     } else {
-        let stream = tls
-            .connect(&endpoint.host, tcp)
-            .map_err(|e| AppError::Network(format!("加密连接建立失败：{e}")))?;
-        let mut client = imap::Client::new(stream);
+        let mut client = imap::Client::new(Wire::new(handshake(tcp)?, filter.clone()));
         client.read_greeting().map_err(fail)?;
         client
     };
@@ -363,9 +456,45 @@ fn connect(endpoint: &Endpoint, user: &str, password: &str) -> AppResult<(Sessio
             "ID (\"name\" \"DATO OCR\" \"version\" \"{}\")",
             env!("CARGO_PKG_VERSION")
         );
-        let _ = session.run_command_and_read_response(id);
+        filter.store(true, Ordering::SeqCst);
+        let sent = session.run_command_and_read_response(id);
+        filter.store(false, Ordering::SeqCst);
+        if let Err(err) = sent {
+            tracing::debug!("邮箱 ID 命令没成功（不影响收信）：{err}");
+        }
     }
     Ok((session, socket))
+}
+
+/// STARTTLS 明文的那一小段自己说：读问候、发 STARTTLS、等它回 OK。一个字节一个字节地读，
+/// 握手之前不能从连接上多读走任何东西。
+fn starttls(tcp: &mut TcpStream) -> AppResult<()> {
+    fn line(tcp: &mut TcpStream) -> io::Result<String> {
+        let mut bytes = Vec::new();
+        let mut b = [0u8];
+        while bytes.last() != Some(&b'\n') {
+            if tcp.read(&mut b)? == 0 {
+                return Err(io::ErrorKind::UnexpectedEof.into());
+            }
+            bytes.push(b[0]);
+        }
+        Ok(String::from_utf8_lossy(&bytes).trim_end().to_string())
+    }
+    let greeting = line(tcp)?;
+    if !greeting.starts_with("* OK") {
+        return Err(AppError::Network(format!("邮箱服务器没有正常应答：{greeting}")));
+    }
+    tcp.write_all(b"a0 STARTTLS\r\n")?;
+    loop {
+        let reply = line(tcp)?;
+        if let Some(rest) = reply.strip_prefix("a0 ") {
+            return if rest.starts_with("OK") {
+                Ok(())
+            } else {
+                Err(AppError::Network(format!("邮箱服务器不肯切换到加密连接：{rest}")))
+            };
+        }
+    }
 }
 
 /// 把库的报错换成用户看得懂的一句。
@@ -441,6 +570,53 @@ fn check_new(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 一问一答的假服务器：收到一条完整的命令才放出对应的那段回应（和真服务器一样，不会提前到）
+    struct Script {
+        replies: Vec<&'static str>,
+        out: Vec<u8>,
+    }
+    impl Read for Script {
+        fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+            // 一次只给几个字节，测半行的情况
+            let n = buf.len().min(5).min(self.out.len());
+            buf[..n].copy_from_slice(&self.out[..n]);
+            self.out.drain(..n);
+            Ok(n)
+        }
+    }
+    impl Write for Script {
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            if buf.ends_with(b"\r\n") && !self.replies.is_empty() {
+                self.out.extend_from_slice(self.replies.remove(0).as_bytes());
+            }
+            Ok(buf.len())
+        }
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn id_reply_is_dropped_so_the_next_command_stays_in_step() {
+        let script = Script {
+            replies: vec![
+                "a1 OK LOGIN done\r\n",
+                "* ID (\"name\" \"GImap\" \"vendor\" \"Google, Inc.\")\r\na2 OK Success\r\n",
+                "* 3 EXISTS\r\n* OK [UIDNEXT 9] next\r\na3 OK [READ-ONLY] INBOX selected\r\n",
+            ],
+            out: Vec::new(),
+        };
+        let filter = Arc::new(AtomicBool::new(false));
+        let wire = Wire::new(script, filter.clone());
+        let mut session = imap::Client::new(wire).login("u", "p").map_err(|(e, _)| e).unwrap();
+        filter.store(true, Ordering::SeqCst);
+        session.run_command_and_read_response("ID NIL").unwrap();
+        filter.store(false, Ordering::SeqCst);
+        let mailbox = session.examine("INBOX").unwrap();
+        assert_eq!(mailbox.exists, 3);
+        assert_eq!(mailbox.uid_next, Some(9));
+    }
 
     fn cfg(provider: &str) -> MailCodeSettings {
         MailCodeSettings {
