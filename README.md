@@ -91,7 +91,7 @@ DATO OCR 把这四步做成了一个工具：按一个键开始，结果直接�
 
 - 首次打开会被系统拦下：到「系统设置 → 隐私与安全性」点「仍要打开」。
 - 截图需要「屏幕录制」权限，划词翻译和选中即粘贴需要「辅助功能」权限，读 iPhone 转发来的短信验证码需要「完全磁盘访问权限」。应用的「设置 → 系统权限」里可以直接跳过去授权，给完重启应用。
-- Mac 版暂时没有自动更新，新版本需要手动下载。
+- 有新版本时在「设置 → 更新」里一键升级：下载、校验后自动换成新版本并重新打开，系统授权不用重给。更早的 Mac 版（0.3.2 及以前，以及 10 月 16 日之前下载的 0.3.3）还不会自己换，要手动下载一次新版。
 
 ## 隐私
 
@@ -141,6 +141,8 @@ corepack pnpm build:mac      # macOS 出 .app：…/release/bundle/macos/DATO OC
 
 ```bash
 node scripts/release.mjs     # 打包 → 用更新私钥签名 → 生成 update/latest.json（国外）和 latest-cn.json（国内）
+                             # 在哪台电脑上跑就发哪个平台：Windows 出 .exe，Mac 出 .app.tar.gz（自动更新用）和 .dmg；
+                             # 同一个版本两台电脑各跑一次，清单会合并
 ```
 
 发版前把三处版本号（`package.json`、`src-tauri/Cargo.toml`、`src-tauri/tauri.conf.json`）改成新版本，

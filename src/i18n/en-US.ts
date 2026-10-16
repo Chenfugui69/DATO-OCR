@@ -102,6 +102,7 @@ const enUS: Dict = {
     downloadingNoSize: 'Downloading…',
     verifying: 'Checking the installer…',
     installing: 'Opening the installer. DATO OCR will reopen when it is done',
+    installingMac: 'Switching to the new version. DATO OCR will reopen in a moment',
     ready: 'Installer downloaded and verified (test mode, not installing)',
     current: 'Version {{version}}',
     found: 'Version {{version}} is available',

@@ -91,7 +91,7 @@ Get it from the [releases page](https://github.com/Chenfugui69/DATO-OCR/releases
 
 - The first launch is blocked by the system: go to System Settings → Privacy & Security and click "Open Anyway".
 - Capturing needs the Screen Recording permission; selection translate and paste-on-select need Accessibility; reading SMS codes forwarded from your iPhone needs Full Disk Access. Settings → Permissions in the app takes you straight there. Restart the app after granting.
-- The macOS version does not update itself yet; download new versions manually.
+- New versions install from Settings → Updates with one click: downloaded, verified, swapped in and reopened, and permissions stay granted. Older Mac builds (0.3.2 and earlier, and 0.3.3 downloaded before October 16) can't do this yet, so download a new version manually once.
 
 ## Privacy
 

@@ -57,6 +57,19 @@ fn test_url() -> Option<String> {
         .filter(|u| !u.is_empty())
 }
 
+/// 验签用的公钥。调试版可以用 `CHENOCR_TEST_UPDATE_PUBKEY`（`tauri signer generate` 生成的 .pub 内容）换成测试钥匙，
+/// 不用发版私钥也能把"下载 → 验签 → 安装"整个走一遍；正式版里没有这个入口，只认内置的公钥。
+fn pubkey() -> String {
+    if cfg!(debug_assertions) {
+        if let Ok(key) = std::env::var("CHENOCR_TEST_UPDATE_PUBKEY") {
+            if !key.trim().is_empty() {
+                return key.trim().to_string();
+            }
+        }
+    }
+    PUBKEY.to_string()
+}
+
 /// 测试开关 `CHENOCR_TEST_UPDATE_NO_INSTALL=1`：下载并验签，但不运行安装包、不退出。
 fn test_no_install() -> bool {
     std::env::var("CHENOCR_TEST_UPDATE_NO_INSTALL").is_ok_and(|v| v == "1")
@@ -330,7 +343,7 @@ pub fn verify(data: &[u8], signature_b64: &str, version: &str) -> AppResult<()> 
             .map_err(|_| AppError::msg("签名格式不对"))?;
         String::from_utf8(bytes).map_err(|_| AppError::msg("签名格式不对"))
     };
-    let pk = minisign_verify::PublicKey::decode(&decode(PUBKEY)?)
+    let pk = minisign_verify::PublicKey::decode(&decode(&pubkey())?)
         .map_err(|e| AppError::msg(format!("公钥无效：{e}")))?;
     let sig = minisign_verify::Signature::decode(&decode(signature_b64)?)
         .map_err(|e| AppError::msg(format!("签名无效：{e}")))?;
@@ -421,7 +434,11 @@ async fn install_inner(app: &AppHandle) -> AppResult<()> {
 
     let dir = std::env::temp_dir().join("DATO-OCR-update");
     std::fs::create_dir_all(&dir)?;
-    let file = dir.join(format!("DATO-OCR_{version}_setup.exe"));
+    let file = dir.join(if cfg!(target_os = "macos") {
+        format!("DATO-OCR_{version}_macos.app.tar.gz")
+    } else {
+        format!("DATO-OCR_{version}_setup.exe")
+    });
     std::fs::write(&file, &data)?;
     tracing::info!(version, path = %file.display(), "更新包已下载并校验");
 
@@ -430,11 +447,11 @@ async fn install_inner(app: &AppHandle) -> AppResult<()> {
         return Ok(());
     }
     set(app, |s| s.stage = Some("installing".into()));
-    launch_installer(app, &file)
+    launch_installer(app, &file, &version)
 }
 
 #[cfg(windows)]
-fn launch_installer(app: &AppHandle, file: &std::path::Path) -> AppResult<()> {
+fn launch_installer(app: &AppHandle, file: &std::path::Path, _version: &str) -> AppResult<()> {
     // 和 Tauri 官方更新插件一样的参数：/P 只显示进度，/UPDATE 走更新流程，/R 装完重新打开
     std::process::Command::new(file)
         .args(["/P", "/UPDATE", "/R"])
@@ -445,12 +462,183 @@ fn launch_installer(app: &AppHandle, file: &std::path::Path) -> AppResult<()> {
     Ok(())
 }
 
-#[cfg(not(windows))]
-fn launch_installer(_app: &AppHandle, file: &std::path::Path) -> AppResult<()> {
+#[cfg(target_os = "macos")]
+fn launch_installer(app: &AppHandle, file: &std::path::Path, version: &str) -> AppResult<()> {
+    let target = mac::running_bundle()?;
+    let work = file.with_file_name(format!("DATO-OCR_{version}_unpacked"));
+    let _ = std::fs::remove_dir_all(&work);
+    std::fs::create_dir_all(&work)?;
+    let new_app = mac::extract(file, &work)?;
+    mac::check_bundle(&new_app, &app.config().identifier, version)?;
+    mac::replace(&target, &new_app)?;
+    let _ = std::fs::remove_dir_all(&work);
+    let _ = std::fs::remove_file(file);
+    tracing::info!(version, path = %target.display(), "新版本已替换好，退出后重新打开");
+    mac::relaunch_after_exit(&target)?;
+    crate::quit(app);
+    Ok(())
+}
+
+#[cfg(not(any(windows, target_os = "macos")))]
+fn launch_installer(_app: &AppHandle, file: &std::path::Path, _version: &str) -> AppResult<()> {
     Err(AppError::msg(format!(
         "这个系统上还不能自动安装，安装包已下载到 {}",
         file.display()
     )))
+}
+
+/// macOS 的更新包是整个 `DATO OCR.app` 打成的 `.app.tar.gz`（和 Tauri updater 一样）：
+/// 解开 → 核对包标识、版本号、签名 → 在同一个文件夹里换掉正在运行的那个 .app → 等自己退出后重新打开。
+///
+/// 系统授权（屏幕录制、辅助功能）记在签名的"指定要求"上，发版时 `scripts/mac-sign.mjs` 把它固定成包标识，
+/// 换了 .app 授权也还在。程序自己下载的文件不带隔离标记，新版打开时也不会被 Gatekeeper 拦。
+#[cfg(target_os = "macos")]
+mod mac {
+    use std::path::{Path, PathBuf};
+    use std::process::Command;
+
+    use crate::error::{AppError, AppResult};
+
+    /// 正在运行的 .app（`…/DATO OCR.app/Contents/MacOS/chenocr` 往上三层）
+    pub fn running_bundle() -> AppResult<PathBuf> {
+        let exe = std::env::current_exe()?;
+        bundle_of(&exe.canonicalize().unwrap_or(exe))
+    }
+
+    pub fn bundle_of(exe: &Path) -> AppResult<PathBuf> {
+        let bundle = exe
+            .ancestors()
+            .nth(3)
+            .filter(|p| p.extension().is_some_and(|e| e == "app"))
+            .ok_or_else(|| AppError::msg("开发版不能自动更新，请从发行版页面下载"))?;
+        // 没拖进「应用程序」就直接打开的，系统会把它挪到一个只读的临时位置运行（App Translocation）
+        if bundle.to_string_lossy().contains("/AppTranslocation/") {
+            return Err(AppError::msg(
+                "先把 DATO OCR 拖进「应用程序」文件夹、从那里打开，再检查更新",
+            ));
+        }
+        Ok(bundle.to_path_buf())
+    }
+
+    fn run(cmd: &mut Command, what: &str) -> AppResult<String> {
+        let out = cmd
+            .output()
+            .map_err(|e| AppError::msg(format!("{what}失败：{e}")))?;
+        if !out.status.success() {
+            let err = String::from_utf8_lossy(&out.stderr);
+            return Err(AppError::msg(format!("{what}失败：{}", err.trim())));
+        }
+        Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
+    }
+
+    /// 解开更新包，返回里面唯一的那个 .app
+    pub fn extract(archive: &Path, dir: &Path) -> AppResult<PathBuf> {
+        run(
+            Command::new("/usr/bin/tar")
+                .arg("-xzf")
+                .arg(archive)
+                .arg("-C")
+                .arg(dir),
+            "解开更新包",
+        )?;
+        let apps: Vec<PathBuf> = std::fs::read_dir(dir)?
+            .filter_map(|e| e.ok().map(|e| e.path()))
+            .filter(|p| p.extension().is_some_and(|e| e == "app") && p.is_dir())
+            .collect();
+        match apps.as_slice() {
+            [one] => Ok(one.clone()),
+            _ => Err(AppError::msg("更新包里的内容不对，已停止更新")),
+        }
+    }
+
+    fn plist_value(app: &Path, key: &str) -> AppResult<String> {
+        run(
+            Command::new("/usr/bin/plutil")
+                .args(["-extract", key, "raw", "-o", "-"])
+                .arg(app.join("Contents/Info.plist")),
+            "读取新版本信息",
+        )
+    }
+
+    /// 解出来的必须是同一个应用、正是要装的版本、签名完整
+    pub fn check_bundle(app: &Path, identifier: &str, version: &str) -> AppResult<()> {
+        if plist_value(app, "CFBundleIdentifier")? != identifier {
+            return Err(AppError::msg("更新包不是 DATO OCR，已停止更新"));
+        }
+        if plist_value(app, "CFBundleShortVersionString")? != version {
+            return Err(AppError::msg("更新包和版本号对不上，已停止更新"));
+        }
+        run(
+            Command::new("/usr/bin/codesign")
+                .args(["--verify", "--deep", "--strict"])
+                .arg(app),
+            "检查新版本的签名",
+        )?;
+        Ok(())
+    }
+
+    /// 在 `target` 所在的文件夹里换成 `new_app`。先完整复制到旁边，再两次改名，
+    /// 中途失败就把原来的放回去，不会留下一个装了一半的应用。
+    pub fn replace(target: &Path, new_app: &Path) -> AppResult<()> {
+        let parent = target
+            .parent()
+            .ok_or_else(|| AppError::msg("找不到应用所在的文件夹"))?;
+        let name = target
+            .file_name()
+            .ok_or_else(|| AppError::msg("找不到应用所在的文件夹"))?
+            .to_string_lossy()
+            .to_string();
+        let staged = parent.join(format!(".{name}.update"));
+        let old = parent.join(format!(".{name}.old"));
+        let _ = std::fs::remove_dir_all(&staged);
+        let _ = std::fs::remove_dir_all(&old);
+        if std::fs::create_dir(&staged).is_err() {
+            return Err(AppError::msg(format!(
+                "没有权限写入 {}，请从发行版页面下载新版本手动安装",
+                parent.display()
+            )));
+        }
+        let _ = std::fs::remove_dir(&staged);
+        // ditto 原样复制（符号链接、扩展属性、签名都保留）
+        if let Err(err) = run(
+            Command::new("/usr/bin/ditto").arg(new_app).arg(&staged),
+            "复制新版本",
+        ) {
+            let _ = std::fs::remove_dir_all(&staged);
+            return Err(err);
+        }
+        let _ = Command::new("/usr/bin/xattr")
+            .args(["-dr", "com.apple.quarantine"])
+            .arg(&staged)
+            .output();
+        std::fs::rename(target, &old).map_err(|e| {
+            let _ = std::fs::remove_dir_all(&staged);
+            AppError::msg(format!("替换旧版本失败：{e}"))
+        })?;
+        if let Err(e) = std::fs::rename(&staged, target) {
+            let _ = std::fs::rename(&old, target);
+            let _ = std::fs::remove_dir_all(&staged);
+            return Err(AppError::msg(format!("替换旧版本失败：{e}")));
+        }
+        // 正在运行的程序文件删掉了也不影响它跑完
+        let _ = std::fs::remove_dir_all(&old);
+        Ok(())
+    }
+
+    /// 等这个进程退出后再 `open` 新的 .app：早了的话单实例会把它转回给还没退出的旧进程
+    pub fn relaunch_after_exit(target: &Path) -> AppResult<()> {
+        Command::new("/bin/sh")
+            .args([
+                "-c",
+                r#"while kill -0 "$1" 2>/dev/null; do sleep 0.2; done; exec /usr/bin/open "$2""#,
+                "sh",
+            ])
+            .arg(std::process::id().to_string())
+            .arg(target)
+            .spawn()
+            .map_err(|e| AppError::msg(format!("没能重新打开 DATO OCR：{e}")))?;
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -563,5 +751,117 @@ mod tests {
             "untrusted comment: x\nRUQ+qyeJA0KpuR3a0WbHDYhfWd2aVOhAwq9ZbNt+K8L9Z5DK7Xw4gKbLbuGiY+M+DcJ4G6r1pLzlzJwKHYhaN9cS7WNd1Ql9Ewo=\ntrusted comment: timestamp:1\tfile:DATO-COR_0.3.0_x64-setup.exe\nAAAA\n",
         );
         assert!(verify(b"data", &foreign, "0.3.0").is_err());
+    }
+
+    #[test]
+    fn mac_update_file_name_carries_version() {
+        assert!(signed_for_version(
+            "timestamp:1\tfile:DATO-OCR_0.3.4_macos-arm64.app.tar.gz",
+            "0.3.4"
+        ));
+    }
+
+    #[cfg(target_os = "macos")]
+    fn scratch(name: &str) -> std::path::PathBuf {
+        let dir =
+            std::env::temp_dir().join(format!("dato-update-test-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn mac_bundle_of_exe() {
+        use std::path::Path;
+        let b = mac::bundle_of(Path::new(
+            "/Applications/DATO OCR.app/Contents/MacOS/chenocr",
+        ))
+        .unwrap();
+        assert_eq!(b, Path::new("/Applications/DATO OCR.app"));
+        // 开发版不在 .app 里
+        assert!(mac::bundle_of(Path::new("/x/target/debug/chenocr")).is_err());
+        let err = mac::bundle_of(Path::new(
+            "/private/var/folders/x/AppTranslocation/ABC/d/DATO OCR.app/Contents/MacOS/chenocr",
+        ))
+        .unwrap_err();
+        assert!(err.to_string().contains("应用程序"), "{err}");
+    }
+
+    /// 打包 → 解开 → 换掉旧的：内容换成新的，旁边不留临时文件夹
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn mac_extract_and_replace() {
+        let root = scratch("replace");
+        let fake_app = |dir: &std::path::Path, marker: &str| {
+            let app = dir.join("DATO OCR.app");
+            std::fs::create_dir_all(app.join("Contents/MacOS")).unwrap();
+            std::fs::write(app.join("Contents/MacOS/chenocr"), marker).unwrap();
+            app
+        };
+        let installed = fake_app(&root.join("Applications"), "old");
+        let src = root.join("src");
+        fake_app(&src, "new");
+        let archive = root.join("DATO-OCR_9.9.9_macos-arm64.app.tar.gz");
+        let ok = std::process::Command::new("/usr/bin/tar")
+            .env("COPYFILE_DISABLE", "1")
+            .arg("-czf")
+            .arg(&archive)
+            .arg("-C")
+            .arg(&src)
+            .arg("DATO OCR.app")
+            .status()
+            .unwrap();
+        assert!(ok.success());
+
+        let work = root.join("work");
+        std::fs::create_dir_all(&work).unwrap();
+        let new_app = mac::extract(&archive, &work).unwrap();
+        mac::replace(&installed, &new_app).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(installed.join("Contents/MacOS/chenocr")).unwrap(),
+            "new"
+        );
+        let left: Vec<_> = std::fs::read_dir(root.join("Applications"))
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().to_string())
+            .collect();
+        assert_eq!(left, vec!["DATO OCR.app"]);
+
+        // 包里不是正好一个 .app 的不认
+        let empty = root.join("empty");
+        std::fs::create_dir_all(empty.join("x")).unwrap();
+        let bad = root.join("bad.tar.gz");
+        std::process::Command::new("/usr/bin/tar")
+            .arg("-czf")
+            .arg(&bad)
+            .arg("-C")
+            .arg(&empty)
+            .arg("x")
+            .status()
+            .unwrap();
+        let work2 = root.join("work2");
+        std::fs::create_dir_all(&work2).unwrap();
+        assert!(mac::extract(&bad, &work2).is_err());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// 文件夹没有写权限时不动原来的应用，报一个能看懂的错
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn mac_replace_without_permission_keeps_old() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = scratch("perm");
+        let apps = root.join("Applications");
+        let installed = apps.join("DATO OCR.app");
+        std::fs::create_dir_all(&installed).unwrap();
+        let new_app = root.join("new/DATO OCR.app");
+        std::fs::create_dir_all(&new_app).unwrap();
+        std::fs::set_permissions(&apps, std::fs::Permissions::from_mode(0o555)).unwrap();
+        let err = mac::replace(&installed, &new_app).unwrap_err();
+        std::fs::set_permissions(&apps, std::fs::Permissions::from_mode(0o755)).unwrap();
+        assert!(err.to_string().contains("没有权限"), "{err}");
+        assert!(installed.exists());
+        let _ = std::fs::remove_dir_all(&root);
     }
 }

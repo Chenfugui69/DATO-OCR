@@ -132,6 +132,7 @@ const zhCN = {
     downloadingNoSize: '正在下载…',
     verifying: '正在检查安装包是否完整、安全…',
     installing: '正在打开安装程序，装好后 DATO OCR 会自动重新打开',
+    installingMac: '正在换成新版本，DATO OCR 会自动重新打开',
     ready: '安装包已下载并校验通过（测试模式，不安装）',
     current: '当前版本 {{version}}',
     found: '有新版本 {{version}}',

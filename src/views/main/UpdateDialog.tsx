@@ -8,6 +8,7 @@ import { useTranslation } from 'react-i18next';
 import { useEvent } from '@/lib/events';
 import { formatBytes } from '@/lib/format';
 import { update } from '@/lib/ipc';
+import { isMac } from '@/lib/platform';
 import { useSettings } from '@/lib/settings';
 import type { UpdateChanges, UpdateStatus } from '@/lib/types';
 import { Button } from '@/ui/controls';
@@ -113,7 +114,7 @@ export function UpdateDialog({ status, open, onClose }: { status: UpdateStatus; 
               <div className={status.error && !busy ? 'update-progress__text is-error' : 'update-progress__text'}>
                 {status.stage === 'downloading' && (percent != null ? t('update.downloading', { percent }) : t('update.downloadingNoSize'))}
                 {status.stage === 'verifying' && t('update.verifying')}
-                {status.stage === 'installing' && t('update.installing')}
+                {status.stage === 'installing' && t(isMac ? 'update.installingMac' : 'update.installing')}
                 {status.stage === 'ready' && t('update.ready')}
                 {!busy && status.stage !== 'ready' && status.error}
               </div>
