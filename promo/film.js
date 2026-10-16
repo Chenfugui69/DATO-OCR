@@ -457,7 +457,8 @@
     grain.style.backgroundImage = `url(${c.toDataURL()})`;
   }
   function drawGrain(t) {
-    const f = Math.floor(t * FPS);
+    // 颗粒每秒换 15 次而不是每帧都换：看着一样"活"，编码器却省下大半码率（逐帧随机噪声几乎压不动）
+    const f = Math.floor(t * 15);
     const r = rng(f * 7919 + 13);
     grain.style.transform = `translate(${(r() * 64 - 32).toFixed(0)}px,${(r() * 64 - 32).toFixed(0)}px)`;
   }
