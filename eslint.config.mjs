@@ -9,7 +9,8 @@ import globals from 'globals';
 // - exhaustive-deps：effect 漏依赖导致窗口状态不同步
 export default [
   // `._*`：macOS 在 exFAT / 网络盘上给每个文件生成的伴生文件，不是源码
-  { ignores: ['dist/**', 'node_modules/**', 'src-tauri/**', '.pnpm-store/**', 'scripts/**', '**/._*'] },
+  // promo/：宣传片（独立的小项目，自己的依赖，不属于应用源码）
+  { ignores: ['dist/**', 'node_modules/**', 'src-tauri/**', '.pnpm-store/**', 'scripts/**', 'promo/**', '**/._*'] },
   js.configs.recommended,
   {
     files: ['src/**/*.{ts,tsx}'],
