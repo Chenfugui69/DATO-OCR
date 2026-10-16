@@ -75,7 +75,7 @@ const RESIZE_EDGES = [
 ] as const;
 
 const ANIM_MS = 340;
-/** 面板弹出 / 收起的时长（Windows，见 appear / hide） */
+/** 面板弹出 / 收起的时长（见 appear / hide） */
 const APPEAR_MS = 300;
 const LEAVE_MS = 140;
 
@@ -243,16 +243,15 @@ export default function TranslatePopup() {
   }, []);
   // 设置页里的预览：点外面、失焦都不收起（用户正在主窗口里调设置），由设置页来收
   const previewRef = useRef(false);
-  // 出场 / 收起（Windows）：面板是同一个窗口藏了又显示，CSS 的入场动画只在页面第一次挂上时播一遍，
-  // 之后每次都是"啪"地一下出现。所以每次弹出手动播：面板从略小、透明放大淡入，毛玻璃背板（窗口底下
-  // 原生的一层，页面带不动）同一时刻、同一条曲线一起走。收起时先淡出再藏窗口：藏起来时最后一帧是空的，
-  // 下次显示不会先闪一下上次的内容。macOS 的出场交给系统
+  // 出场 / 收起：面板是同一个窗口藏了又显示，CSS 的入场动画只在页面第一次挂上时播一遍，
+  // 之后每次都是"啪"地一下出现（macOS 上浮层也关了系统的出场动画）。所以每次弹出手动播：面板从略小、
+  // 透明放大淡入，毛玻璃背板（窗口底下原生的一层，页面带不动）同一时刻、同一条曲线一起走。收起时先淡出
+  // 再藏窗口：藏起来时最后一帧是空的，下次显示不会先闪一下上次的内容
   const blurRef = useRef(blur);
   blurRef.current = blur;
   const shownRef = useRef(false);
   const leaving = useRef<{ anim: Animation; timer: number } | null>(null);
   const appear = useCallback(() => {
-    if (isMac) return;
     const wasLeaving = leaving.current;
     if (wasLeaving) {
       window.clearTimeout(wasLeaving.timer);
@@ -293,7 +292,7 @@ export default function TranslatePopup() {
       return;
     }
     const shell = shellRef.current;
-    if (isMac || !shell) {
+    if (!shell) {
       void getCurrentWindow().hide();
       return;
     }

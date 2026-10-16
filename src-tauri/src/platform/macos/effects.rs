@@ -21,8 +21,11 @@ use objc2_app_kit::{
     NSVisualEffectState, NSVisualEffectView, NSWindow, NSWindowAnimationBehavior,
     NSWindowCollectionBehavior, NSWindowOrderingMode, NSWindowSharingType, NSWindowStyleMask,
 };
-use objc2_foundation::{NSObjectProtocol, NSString, NSTimer};
-use objc2_quartz_core::CAMediaTimingFunction;
+use objc2_foundation::{NSNumber, NSObjectProtocol, NSString, NSTimer, NSValue};
+use objc2_quartz_core::{
+    CABasicAnimation, CAMediaTiming, CAMediaTimingFunction, CATransform3D,
+    NSValueCATransform3DAdditions,
+};
 use tauri::utils::config::WindowEffectsConfig;
 use tauri::window::{Effect, EffectState, EffectsBuilder};
 use tauri::{
@@ -514,8 +517,86 @@ pub fn resize_backdrop(_window: &WebviewWindow) -> bool {
     true
 }
 
-/// 背板出场 / 收起的淡入淡出：macOS 的面板出场交给系统，不做。
-pub fn fade_backdrop(_window: &WebviewWindow, _visible: bool, _ms: u32) {}
+/// 背板整体淡入（略放大）/ 淡出（略缩小，停在透明），和页面的出场 / 收起动画同一时刻、同一条曲线。
+/// 浮层窗口关掉了系统的出场动画（`NSWindowAnimationBehavior::None`），背板又是窗口里的原生视图、
+/// 页面带不动，不做的话页面在淡入、背板却"啪"地一下整块出来。
+///
+/// 透明度落到 `alphaValue` 上（收起后停在透明，下次出场从透明开始）；缩放只是动画，终点都是原大小
+/// （收起的终点已经透明了，看不出来）。
+pub fn fade_backdrop(window: &WebviewWindow, visible: bool, ms: u32) {
+    with_window(window, move |ns, _| {
+        let Some(content) = ns.contentView() else {
+            return;
+        };
+        let Some(view) = find_backdrop(&content) else {
+            return;
+        };
+        view.setWantsLayer(true);
+        let Some(layer) = view.layer() else {
+            return;
+        };
+        let opacity_key = NSString::from_str("opacity");
+        let transform_key = NSString::from_str("transform");
+        // 从屏幕上现在的样子接着走（出场还没走完就收起的时候）
+        // SAFETY: 只读当前显示的那一份图层的透明度。
+        let shown = unsafe { layer.presentationLayer() }.map_or(layer.opacity(), |p| p.opacity());
+        layer.removeAnimationForKey(&opacity_key);
+        layer.removeAnimationForKey(&transform_key);
+        let (from, to): ((f32, f64), (f32, f64)) = if visible {
+            ((0.0, 0.96), (1.0, 1.0))
+        } else {
+            ((shown, 1.0), (0.0, 0.98))
+        };
+        view.setAlphaValue(f64::from(to.0));
+        if ms == 0 {
+            return;
+        }
+        // 绕背板中心缩放：图层的变换绕锚点（AppKit 的视图一般在左下角），差多少挪回来多少
+        let size = view.bounds().size;
+        let anchor = layer.anchorPoint();
+        let (dx, dy) = (
+            (0.5 - anchor.x) * size.width,
+            (0.5 - anchor.y) * size.height,
+        );
+        let scaled = |k: f64| {
+            CATransform3D::new_scale(k, k, 1.0).concat(CATransform3D::new_translation(
+                (1.0 - k) * dx,
+                (1.0 - k) * dy,
+                0.0,
+            ))
+        };
+        // 出场：cubic-bezier(0.22, 1, 0.36, 1)，快起慢收；收起：cubic-bezier(0.4, 0, 1, 1)，干脆利落
+        let ease = if visible {
+            CAMediaTimingFunction::functionWithControlPoints(0.22, 1.0, 0.36, 1.0)
+        } else {
+            CAMediaTimingFunction::functionWithControlPoints(0.4, 0.0, 1.0, 1.0)
+        };
+        let duration = f64::from(ms) / 1000.0;
+        let fade = CABasicAnimation::animationWithKeyPath(Some(&opacity_key));
+        let grow = CABasicAnimation::animationWithKeyPath(Some(&transform_key));
+        let (fade_from, fade_to) = (NSNumber::new_f32(from.0), NSNumber::new_f32(to.0));
+        // SAFETY: valueWithCATransform3D 只是把结构体装进 NSValue。
+        let (grow_from, grow_to) = unsafe {
+            (
+                NSValue::valueWithCATransform3D(scaled(from.1)),
+                NSValue::valueWithCATransform3D(scaled(to.1)),
+            )
+        };
+        let values: [(&CABasicAnimation, &AnyObject, &AnyObject); 2] =
+            [(&fade, &fade_from, &fade_to), (&grow, &grow_from, &grow_to)];
+        for (anim, from, to) in values {
+            // SAFETY: opacity 配 NSNumber、transform 配装着 CATransform3D 的 NSValue，类型和键对得上。
+            unsafe {
+                anim.setFromValue(Some(from));
+                anim.setToValue(Some(to));
+            }
+            anim.setDuration(duration);
+            anim.setTimingFunction(Some(&ease));
+        }
+        layer.addAnimation_forKey(&fade, Some(&opacity_key));
+        layer.addAnimation_forKey(&grow, Some(&transform_key));
+    });
+}
 
 /// 背板只铺在窗口里的一块（物理像素 x, y, w, h，原点在窗口左上角），`ms` > 0 时用和页面一样的
 /// 缓动曲线动画过去；`None` = 恢复铺满整个窗口。
