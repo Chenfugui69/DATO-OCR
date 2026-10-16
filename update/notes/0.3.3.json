@@ -10,9 +10,19 @@
     "AI 对话可以加图片：点加号、拖进来或直接粘贴；鼠标移到小图上看大图",
     "录好的 GIF 会出现在截图库里",
     "截图工具条可以选磨砂玻璃样式",
-    "设置里调划词翻译面板的外观时，可以在旁边看到真实大小的预览"
+    "设置里调划词翻译面板的外观时，可以在旁边看到真实大小的预览",
+    "截图翻译：可以指定用哪个翻译服务（包括自己添加的）",
+    "截图翻译完，译文和原文都可以直接用鼠标选字、Ctrl+C 复制；挪动译文改成右上角的「移动」开关"
   ],
   "improved": [
+    "截图翻译的动画重新设计：要翻的那几行先变成占位条、一道光扫过，翻完后译文从上往下一行行浮现",
+    "截图翻译默认翻成界面语言；中英混排时各翻各的，本来就是目标语言的部分不再重画",
+    "划词翻译面板每次弹出、收起都有过渡动画，毛玻璃背景跟着一起淡入淡出（Windows）",
+    "某个翻译服务被限流或超时后，接下来五分钟自动先用别的，不用每次都干等",
+    "开着 TUN 等虚拟网卡、局域网里搜不到对方时，自动扫一遍本机网段把主机找出来",
+    "AI 设置里的接口地址少写了 /v1 之类会自动补齐",
+    "剪贴板面板右上角「⋯」菜单、卡片按钮的提示换成和应用一致的样式；图片预览的缩放比例只在缩放时显示",
+    "Windows 主窗口加了圆角",
     "AI 回答一段段淡入，带跟随的光标，页面平滑跟到底部；思考过程默认收起",
     "划词小圆点跟着松开鼠标的位置出现，不再跑到很远的角上；选中网址、文件路径、代码时不再弹出",
     "划词小圆点的液态玻璃有了真实的折射效果，图标在密集文字上也看得清",
@@ -23,6 +33,13 @@
     "Mac 高刷新率屏幕上拖动截图选区更跟手"
   ],
   "fixed": [
+    "Gmail 等邮箱点「测试连接」报「后台任务失败…assertion failed」，后台也收不到验证码",
+    "截图翻译有时点了还是原文，或者译文位置错开",
+    "截图翻译把按钮图标认成「口」之类的字混进译文",
+    "划词翻译面板偶尔出现一圈白边",
+    "在设置里调过划词面板的样式后，点划词小圆点偶尔弹不出面板",
+    "剪贴板图片预览窗口拖不动，关掉再打开没有图片",
+    "截图之后主窗口发白；设置页的面板预览一直跳、关不掉（Windows）",
     "手机上复制的带格式文字在 Mac 的剪贴板里被当成文件",
     "划词小圆点的投影被切成一条直线，连续选字时珠子里套着上一颗圆点的影子",
     "划词翻译面板不开毛玻璃时，背后的字会透到翻译结果上",
@@ -42,9 +59,19 @@
       "Add images to AI chat with the plus button, by dragging them in, or by pasting; hover a thumbnail for a large view",
       "Recorded GIFs now appear in the screenshot library",
       "Optional frosted-glass style for the capture toolbar",
-      "A real-size preview next to Settings while adjusting the translation popup's appearance"
+      "A real-size preview next to Settings while adjusting the translation popup's appearance",
+      "Screenshot translation: choose which translation service to use (including your own)",
+      "After translating a screenshot, select and copy both the translation and the original with the mouse; moving the translated labels is now a Move toggle at the top right"
     ],
     "improved": [
+      "Redesigned screenshot translation animation: the lines being translated turn into shimmering placeholders, then the translation fades in line by line from the top",
+      "Screenshot translation goes into your interface language by default; mixed Chinese and English lines are translated separately, and text already in the target language is left as is",
+      "The translation popup now animates every time it opens and closes, with the frosted-glass background fading along (Windows)",
+      "A translation service that is rate-limited or times out is tried last for the next five minutes, so you don't wait on it every time",
+      "When devices can't find each other on the local network (for example with a TUN virtual adapter on), the app scans your subnet to find the host",
+      "The API address in AI settings is completed automatically (for example a missing /v1)",
+      "The clipboard panel's \"⋯\" menu and card button tips now match the app's style; the zoom level in image preview only shows while zooming",
+      "Rounded corners on the main window on Windows",
       "AI answers fade in piece by piece with a trailing cursor and smooth scrolling; the thought process is collapsed by default",
       "The selection dot appears where you release the mouse instead of a far corner, and no longer shows for links, file paths or code",
       "The liquid-glass selection dot now refracts what is behind it, and its icon stays readable over dense text",
@@ -55,6 +82,13 @@
       "Dragging the capture selection keeps up better on high-refresh-rate Mac displays"
     ],
     "fixed": [
+      "\"Test connection\" for Gmail and some other mailboxes failed with \"assertion failed\", and codes weren't picked up in the background",
+      "Screenshot translation sometimes left the original text or put the translation in the wrong place",
+      "Screenshot translation read button icons as characters and mixed them into the translation",
+      "A white ring occasionally appeared around the translation popup",
+      "After adjusting the popup's style in Settings, clicking the selection dot sometimes didn't open the popup",
+      "The clipboard image preview couldn't be dragged and was empty when reopened",
+      "The main window turned white after a screenshot, and the popup preview in Settings kept jumping and couldn't be closed (Windows)",
       "Formatted text copied on a phone showed up as a file in the Mac clipboard",
       "The selection dot's shadow was cut into a straight line, and repeated selections showed the previous dot inside the new one",
       "Text behind the translation popup showed through the results with frosted glass off",
