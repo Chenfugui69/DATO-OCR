@@ -165,6 +165,36 @@ html[data-view='editor'][data-glass='off'] body {
 .viewer:active {
   cursor: grabbing;
 }
+/* 右下角的缩放按钮 */
+.viewer__zoom {
+  position: absolute;
+  right: 10px;
+  bottom: 10px;
+  display: flex;
+  align-items: center;
+  gap: 1px;
+  padding: 3px;
+  border-radius: 9px;
+  cursor: default;
+  box-shadow:
+    0 2px 10px rgba(0, 0, 0, 0.14),
+    0 0 0 0.5px rgba(0, 0, 0, 0.18);
+}
+.viewer__zoom button {
+  display: grid;
+  place-items: center;
+  min-width: 26px;
+  height: 24px;
+  border-radius: 6px;
+  color: var(--cn-label);
+}
+.viewer__zoom button:hover {
+  background: var(--cn-bg-hover);
+}
+.viewer__percent {
+  min-width: 44px !important;
+  font: 500 11.5px/24px var(--cn-font-sans);
+}
 .viewer__stage {
   position: absolute;
   left: 0;

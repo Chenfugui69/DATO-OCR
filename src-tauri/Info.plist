@@ -5,6 +5,11 @@
 	<!-- 局域网同步要在本地网络里广播 / 查找设备（mDNS）、和其他设备直连，系统第一次会弹窗问用户 -->
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>DATO OCR 的局域网同步需要在本地网络中查找并连接你的其他设备。</string>
+	<!-- 录视频时录麦克风、叠摄像头画面（设置 → 录制里打开才用），第一次用系统会弹窗问用户 -->
+	<key>NSMicrophoneUsageDescription</key>
+	<string>DATO OCR 录视频时会录下麦克风的声音（在设置的"录制"里打开后才会用到）。</string>
+	<key>NSCameraUsageDescription</key>
+	<string>DATO OCR 录视频时会把摄像头画面叠在画面角落（在设置的"录制"里打开后才会用到）。</string>
 	<key>NSBonjourServices</key>
 	<array>
 		<string>_datocor._tcp</string>

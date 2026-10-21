@@ -133,6 +133,12 @@ pub async fn clipboard_delete(app: AppHandle, ids: Vec<i64>) -> AppResult<()> {
     blocking(move || clipboard::delete(&app, &ids)).await
 }
 
+/// 把一条图片记录贴到屏幕上
+#[tauri::command]
+pub async fn clipboard_pin_image(app: AppHandle, id: i64) -> AppResult<()> {
+    blocking(move || crate::pin::pin_clip_item(&app, id)).await
+}
+
 #[tauri::command]
 pub async fn clipboard_set_pinned(app: AppHandle, id: i64, value: bool) -> AppResult<()> {
     state(&app)

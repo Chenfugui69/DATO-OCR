@@ -1104,6 +1104,51 @@ html:not([data-platform='mac'])[data-theme='dark'] .panel-root--blur .panel {
   -webkit-mask-image: linear-gradient(180deg, #000 calc(100% - 70px), transparent calc(100% - 12px));
   mask-image: linear-gradient(180deg, #000 calc(100% - 70px), transparent calc(100% - 12px));
 }
+/* 复制的表格：小表格，超出卡片的部分和文字一样渐隐 */
+.clip-card__table {
+  padding: 0 12px;
+  height: 100%;
+  overflow: hidden;
+  -webkit-mask-image: linear-gradient(180deg, #000 72%, transparent);
+  mask-image: linear-gradient(180deg, #000 72%, transparent);
+}
+.clip-card--card .clip-card__table {
+  padding: 12px 14px 0;
+  -webkit-mask-image: linear-gradient(180deg, #000 calc(100% - 70px), transparent calc(100% - 12px));
+  mask-image: linear-gradient(180deg, #000 calc(100% - 70px), transparent calc(100% - 12px));
+}
+.clip-card__table table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: auto;
+  font: 400 11.5px/15px var(--cn-font-sans);
+  color: color-mix(in srgb, var(--cn-label) 88%, transparent);
+}
+.clip-card__table th,
+.clip-card__table td {
+  padding: 3px 5px;
+  border: 0.5px solid color-mix(in srgb, var(--cn-label) 16%, transparent);
+  text-align: left;
+  vertical-align: top;
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.clip-card__table th {
+  font-weight: 600;
+  color: var(--cn-label);
+  background: color-mix(in srgb, var(--cn-label) 6%, transparent);
+}
+.clip-card__table td.is-num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.clip-card--row .clip-card__table {
+  height: auto;
+  max-height: 64px;
+  padding: 8px 12px 0;
+}
 .clip-card__text--paras {
   white-space: normal;
 }

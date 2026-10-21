@@ -129,7 +129,7 @@ export function LibraryPage() {
                     >
                       <div className="shot__thumb">
                         {/* GIF 平时是第一帧的缩略图，鼠标移上去才播（一页动图一起播太吵，也费电） */}
-                        <img src={assetUrl(playing === s.id ? s.filePath : (s.thumbPath ?? s.filePath))} alt="" loading="lazy" draggable={false} />
+                        <img src={assetUrl(playing === s.id ? s.filePath : (s.thumbPath ?? s.filePath))} alt="" loading="lazy" decoding="async" draggable={false} />
                       </div>
                       <div className="shot__meta">
                         <span>{s.sourceApp ?? formatDateTime(s.createdAt).slice(11)}</span>

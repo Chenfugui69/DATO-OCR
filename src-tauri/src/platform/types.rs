@@ -233,6 +233,41 @@ pub enum Permission {
     FullDiskAccess,
 }
 
+/// 录视频时要用的设备
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum MediaKind {
+    Microphone,
+    Camera,
+}
+
+/// 麦克风 / 摄像头的授权状态
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum MediaAccess {
+    Granted,
+    Denied,
+    /// 还没问过用户（第一次用时系统会弹框）
+    NotDetermined,
+    /// 这个平台不支持
+    Unsupported,
+}
+
+/// 录视频时除了画面还录什么
+#[derive(Clone, Copy, Debug, Default)]
+pub struct VideoOptions {
+    pub system_audio: bool,
+    pub microphone: bool,
+}
+
+/// 录好的视频剪一下：只要 `[start_ms, end_ms)` 这一段，按 `speed` 倍速
+#[derive(Clone, Copy, Debug)]
+pub struct VideoEdit {
+    pub start_ms: u64,
+    pub end_ms: u64,
+    pub speed: f64,
+}
+
 /// 要用户手动授予的系统权限。`None` = 这个平台没有这项权限、不用管。
 #[derive(Clone, Copy, Debug, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -255,6 +290,19 @@ pub struct SmsMessage {
     pub at_ms: i64,
     /// 短信应用本身，用作剪贴板历史里的来源图标
     pub app_path: Option<std::path::PathBuf>,
+}
+
+/// 识别出来的一个二维码 / 条码。位置是物理像素，相对输入图像。
+#[derive(Clone, Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ScannedCode {
+    /// 码的种类：QR、EAN-13、Code 128…
+    pub kind: String,
+    pub text: String,
+    pub x: f64,
+    pub y: f64,
+    pub width: f64,
+    pub height: f64,
 }
 
 /// 系统自带 OCR 的一行结果（物理像素，相对输入图像）。

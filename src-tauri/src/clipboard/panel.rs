@@ -95,15 +95,23 @@ pub fn apply_material(app: &AppHandle) {
 pub fn toggle(app: &AppHandle) {
     let app = app.clone();
     let _ = app.clone().run_on_main_thread(move || {
-        let Some(window) = app.get_webview_window(LABEL) else {
-            prewarm(&app);
-            return;
-        };
-        if window.is_visible().unwrap_or(false) {
+        if app
+            .get_webview_window(LABEL)
+            .is_some_and(|w| w.is_visible().unwrap_or(false))
+        {
             dismiss(&app);
-        } else if let Err(err) = show(&app) {
-            tracing::error!("打开剪贴板面板失败：{err}");
+            return;
         }
+        let started = std::time::Instant::now();
+        let cold = app.get_webview_window(LABEL).is_none();
+        // 面板启动时就预建好、常驻（现建要两三百毫秒，快捷键按下去会顿一下）；万一不在了再现建
+        crate::lifecycle::when_ready(&app, LABEL, prewarm, move |app, _| {
+            if let Err(err) = show(app) {
+                tracing::error!("打开剪贴板面板失败：{err}");
+            }
+            let elapsed_ms = started.elapsed().as_millis() as u64;
+            tracing::info!(elapsed_ms, cold, "剪贴板面板可见");
+        });
     });
 }
 

@@ -289,6 +289,18 @@ pub async fn show_main(app: AppHandle, page: Option<String>) -> AppResult<()> {
     Ok(())
 }
 
+/// 前端要在截图遮罩关掉之后再提示一句（遮罩里的提示随遮罩一起没了）：走右下角的 toast。
+#[tauri::command]
+pub async fn toast_show(app: AppHandle, kind: String, message: String) -> AppResult<()> {
+    let kind = match kind.as_str() {
+        "error" => "error",
+        "info" => "info",
+        _ => "success",
+    };
+    wm::toast(&app, kind, message);
+    Ok(())
+}
+
 /// toast 全部消失后由前端调用：藏窗口（诊断模式下顺带恢复抓屏排除）。
 /// 显示时走的是原生"显示但不激活"，隐藏也要走原生的，只调 Tauri 的 `hide()` 窗口会一直挂着。
 #[tauri::command]
@@ -384,7 +396,11 @@ pub async fn window_backdrop(
 
 /// 毛玻璃背板整体淡入 / 淡出（面板出场、收起时和页面的动画一起走）。没挂背板什么都不做。
 #[tauri::command]
-pub async fn window_backdrop_fade(window: tauri::WebviewWindow, visible: bool, ms: u32) -> AppResult<()> {
+pub async fn window_backdrop_fade(
+    window: tauri::WebviewWindow,
+    visible: bool,
+    ms: u32,
+) -> AppResult<()> {
     let w = window.clone();
     window.run_on_main_thread(move || crate::platform::fade_backdrop(&w, visible, ms))?;
     Ok(())
@@ -413,6 +429,12 @@ pub async fn window_start_resize(
         (min_width, min_height),
         top_inset,
     ))
+}
+
+/// 页面加载好了（`src/main.tsx` 渲染完调一次）：按需创建的窗口等到这一下才显示，见 lifecycle.rs。
+#[tauri::command]
+pub fn window_ready(window: tauri::WebviewWindow) {
+    crate::lifecycle::mark_ready(window.label());
 }
 
 /// 界面实际用的语言（设置是「跟随系统」时由这里按系统语言定，前后端用同一个结果）。

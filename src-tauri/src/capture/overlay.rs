@@ -28,6 +28,15 @@ pub fn prewarm(app: &AppHandle) {
             return;
         }
     };
+    // 拔掉的显示器的遮罩一起清掉：它还按那块屏的大小留着页面和画布（5K 屏的一个就占 190MB），
+    // 以前要等到下一次截图才清
+    for (label, window) in app.webview_windows() {
+        if label.starts_with(LABEL_PREFIX) && !monitors.iter().any(|m| label_for(m.id) == label) {
+            let _ = window.destroy();
+        }
+    }
+    let ids: Vec<MonitorId> = monitors.iter().map(|m| m.id).collect();
+    platform::backdrop::retain(&ids);
     for info in &monitors {
         if let Err(err) = ensure_one(app, info) {
             tracing::warn!(monitor = %info.id, "预建遮罩窗口失败：{err}");
@@ -36,6 +45,12 @@ pub fn prewarm(app: &AppHandle) {
             tracing::warn!(monitor = %info.id, "预建底图窗口失败：{err}");
         }
     }
+    // 预建的遮罩先缩起来，截图时 `place` 再铺满（见 `platform::park_overlay`）
+    for_each(app, |w| {
+        if !w.is_visible().unwrap_or(false) {
+            platform::park_overlay(w);
+        }
+    });
     tracing::info!(
         monitors = monitors.len(),
         elapsed_ms = started.elapsed().as_millis() as u64,
@@ -96,8 +111,6 @@ fn ensure_one(app: &AppHandle, info: &MonitorInfo) -> AppResult<WebviewWindow> {
         // 焦点在 show 时再抢。预建阶段抢焦点会把用户正在打字的窗口顶掉
         .focused(false);
     let window = platform::build_floating(overlay, FloatingKind::Overlay)?;
-    // 拖选、拖选区框要跟得上高刷屏上的鼠标
-    platform::unlock_frame_rate(&window);
     place(&window, info)?;
     platform::set_exclude_from_capture(&window, true);
     Ok(window)
@@ -154,7 +167,7 @@ pub fn hide_all(app: &AppHandle) {
         let _ = w.set_ignore_cursor_events(false);
         // 先排除再藏（见 `platform::set_overlay_capturable`）
         platform::set_overlay_capturable(w, false);
-        let _ = w.hide();
+        platform::park_overlay(w);
     });
     platform::backdrop::release_all();
 }

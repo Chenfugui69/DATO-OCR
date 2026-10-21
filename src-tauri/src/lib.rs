@@ -24,6 +24,7 @@ mod i18n_en;
 mod image_store;
 mod imaging;
 mod library;
+mod lifecycle;
 mod logging;
 mod longshot;
 mod maintenance;
@@ -33,6 +34,7 @@ mod ocr;
 mod otp;
 mod paths;
 mod pin;
+mod record_edit;
 mod platform;
 mod settings;
 mod state;
@@ -84,6 +86,19 @@ pub fn run() {
                 if cfg!(debug_assertions) {
                     if let Some(spec) = args.iter().find_map(|a| a.strip_prefix("--eval=")) {
                         debug_eval(app, spec);
+                        return;
+                    }
+                    // `--demo=ocr:图片路径`：拿一张图片文件开一个识字任务（表格 / 公式识别的自动化测试用）
+                    #[cfg(debug_assertions)]
+                    if let Some(path) = args.iter().find_map(|a| a.strip_prefix("--demo=ocr:")) {
+                        match imaging::load(std::path::Path::new(path)) {
+                            Ok(image) => {
+                                if let Err(err) = ocr::open_job(app, image, None, false) {
+                                    tracing::warn!("--demo=ocr 打开失败：{err}");
+                                }
+                            }
+                            Err(err) => tracing::warn!("--demo=ocr 读图失败：{err}"),
+                        }
                         return;
                     }
                     // `--demo=popup:x,y`（屏幕物理像素）：在指定位置弹出划词面板
@@ -146,6 +161,15 @@ pub fn run() {
         .register_asynchronous_uri_scheme_protocol(image_store::SCHEME, image_store::handle)
         .setup(setup)
         .on_window_event(on_window_event)
+        // 每个窗口的页面都按屏幕刷新率刷新（截图库滚动、拖贴图、划词面板，不止截图遮罩）。
+        // 放在这里统一做，新加的窗口也不会漏
+        .on_page_load(|webview, payload| {
+            if payload.event() == tauri::webview::PageLoadEvent::Started {
+                if let Some(window) = webview.get_webview_window(webview.label()) {
+                    platform::unlock_frame_rate(&window);
+                }
+            }
+        })
         .invoke_handler(tauri::generate_handler![
             commands::capture::capture_start,
             commands::capture::capture_session_info,
@@ -161,6 +185,11 @@ pub fn run() {
             commands::capture::gif_set_regions,
             commands::capture::gif_finish,
             commands::capture::gif_cancel,
+            commands::capture::record_edit_info,
+            commands::capture::record_edit_save,
+            commands::capture::record_edit_discard,
+            commands::capture::media_access,
+            commands::capture::media_request,
             commands::capture::longshot_undo,
             commands::capture::pin_info,
             commands::capture::pin_ready,
@@ -169,6 +198,18 @@ pub fn run() {
             commands::capture::pin_copy,
             commands::capture::pin_save,
             commands::capture::pin_ocr,
+            commands::capture::pin_text,
+            commands::capture::pin_scan_codes,
+            commands::capture::pin_transform,
+            commands::capture::pin_edit,
+            commands::capture::pin_restore_last,
+            commands::library::ocr_structure,
+            commands::library::ocr_export_xlsx,
+            commands::capture::clipboard_write_rich,
+            commands::clipboard::clipboard_pin_image,
+            commands::capture::capture_scan_codes,
+            commands::capture::capture_structure,
+            commands::capture::capture_pin_color,
             commands::capture::editor_current,
             commands::capture::editor_finish,
             commands::capture::editor_close,
@@ -271,6 +312,7 @@ pub fn run() {
             commands::system::pick_directory,
             commands::system::show_main,
             commands::system::toast_hide,
+            commands::system::toast_show,
             commands::system::mcp_status,
             commands::system::mcp_regenerate_token,
             commands::system::window_set_bounds,
@@ -280,6 +322,7 @@ pub fn run() {
             commands::system::window_set_region,
             commands::system::permissions_status,
             commands::system::ui_language,
+            commands::system::window_ready,
             commands::system::window_placement,
             commands::system::window_start_resize,
             commands::system::permission_request,
@@ -384,10 +427,11 @@ fn on_ready(app: &AppHandle) {
             });
         });
     }
+    // 预建按下快捷键 / 选中文字就要立刻出来的：截图遮罩、剪贴板面板（划词小圆点在
+    // `reconfigure` 里按设置建）。别的窗口用到才建、闲置一阵就释放，见 lifecycle.rs
     capture::overlay::prewarm(app);
-    wm::prewarm_toast(app);
     clipboard::panel::prewarm(app);
-    translate::selection::prewarm(app);
+    lifecycle::start(app);
     translate::selection::reconfigure(app);
     clipboard::start(app);
     sync::start(app);
@@ -402,16 +446,12 @@ fn on_ready(app: &AppHandle) {
     std::thread::spawn(move || after_rename(&ui));
 
     platform::apply_theme(app, &state(app).settings.read().appearance.theme);
-    if let Some(main) = app.get_webview_window(wm::MAIN) {
-        wm::apply_window_effects(app, &main);
-        // 开机自启时安静地待在托盘里；手动启动时显示主窗口
-        let silent = std::env::args().any(|a| a == "--autostart" || a == "--hidden");
-        if silent {
-            platform::after_silent_start();
-        } else {
-            let _ = main.show();
-            let _ = main.set_focus();
-        }
+    // 开机自启时安静地待在托盘里（主窗口不建，用到才建）；手动启动时显示主窗口
+    let silent = std::env::args().any(|a| a == "--autostart" || a == "--hidden");
+    if silent {
+        platform::after_silent_start();
+    } else {
+        wm::show_main(app, None);
     }
 }
 
@@ -493,6 +533,7 @@ fn on_window_event(window: &tauri::Window, event: &WindowEvent) {
         }
     }
     if let WindowEvent::Destroyed = event {
+        lifecycle::forget(label);
         if label.starts_with(pin::LABEL_PREFIX) {
             pin::close(window.app_handle(), label);
         }

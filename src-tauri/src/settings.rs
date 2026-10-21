@@ -30,8 +30,73 @@ pub struct Settings {
     pub network: NetworkSettings,
     pub ai: AiSettings,
     pub mcp: McpSettings,
+    pub record: RecordSettings,
     #[serde(flatten)]
     pub extra: Map<String, Value>,
+}
+
+/// 录制视频（MP4）。GIF 的帧率、录不录鼠标还在 `capture` 里（老设置），设置页一起放在"录制"下面。
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase", default)]
+pub struct RecordSettings {
+    /// 分辨率上限：original = 按屏幕的物理像素（最长边最多 3840）| 1080p | 720p（装进 1920×1080 / 1280×720）
+    pub resolution: String,
+    /// 视频帧率：15 / 24 / 30 / 60
+    pub fps: u32,
+    /// 录系统声音（电脑里正在放的声音）
+    pub system_audio: bool,
+    /// 录麦克风
+    pub microphone: bool,
+    /// 摄像头画面叠在角落里（圆形）
+    pub camera: bool,
+    /// 摄像头画面放在哪个角：top-left | top-right | bottom-left | bottom-right
+    pub camera_position: String,
+    /// 摄像头画面的直径占录制区域短边的比例：small | medium | large
+    pub camera_size: String,
+    /// 视频最长录多少秒
+    pub max_seconds: u32,
+    /// 录完先打开剪辑窗口（掐头去尾、改速度），再保存。GIF 和视频都管
+    pub edit_before_save: bool,
+    #[serde(flatten)]
+    pub extra: Map<String, Value>,
+}
+
+impl Default for RecordSettings {
+    fn default() -> Self {
+        Self {
+            resolution: "original".into(),
+            fps: 30,
+            system_audio: false,
+            microphone: false,
+            camera: false,
+            camera_position: "bottom-right".into(),
+            camera_size: "medium".into(),
+            max_seconds: 300,
+            edit_before_save: false,
+            extra: Map::new(),
+        }
+    }
+}
+
+impl RecordSettings {
+    fn sanitize(&mut self) {
+        if !matches!(self.resolution.as_str(), "original" | "1080p" | "720p") {
+            self.resolution = "original".into();
+        }
+        if !matches!(self.fps, 15 | 24 | 30 | 60) {
+            self.fps = 30;
+        }
+        if !matches!(
+            self.camera_position.as_str(),
+            "top-left" | "top-right" | "bottom-left" | "bottom-right"
+        ) {
+            self.camera_position = "bottom-right".into();
+        }
+        if !matches!(self.camera_size.as_str(), "small" | "medium" | "large") {
+            self.camera_size = "medium".into();
+        }
+        self.max_seconds = self.max_seconds.clamp(10, 3600);
+    }
 }
 
 /// 给 AI 工具用的 MCP 服务（Claude、Cursor 之类接上后能搜剪贴板、整理分组、查识字记录）。只在本机。
@@ -74,6 +139,7 @@ impl Default for Settings {
             network: Default::default(),
             ai: Default::default(),
             mcp: Default::default(),
+            record: Default::default(),
             extra: Map::new(),
         }
     }
@@ -157,6 +223,8 @@ pub struct HotkeySettings {
     pub instant: String,
     /// 打开 AI 对话窗口（默认不设）
     pub ai: String,
+    /// 把剪贴板里的图贴到屏幕上（默认不设）
+    pub pin_clipboard: String,
     #[serde(flatten)]
     pub extra: Map<String, Value>,
 }
@@ -173,6 +241,7 @@ impl Default for HotkeySettings {
             translate: keys.translate.into(),
             instant: keys.instant.into(),
             ai: String::new(),
+            pin_clipboard: String::new(),
             extra: Map::new(),
         }
     }
@@ -215,6 +284,8 @@ pub struct CaptureSettings {
     pub toolbar_actions: Vec<String>,
     /// 最右边那一组
     pub toolbar_order: Vec<String>,
+    /// 工具条上隐藏的按钮（设置里点图标切换；完成、取消不能藏）
+    pub toolbar_hidden: Vec<String>,
     /// 截图工具条的样子：glass = 半透明的玻璃条（默认）| frosted = 磨砂玻璃（像剪贴板面板，模糊底下的画面）
     pub toolbar_style: String,
     /// copy | copyAndSave
@@ -246,6 +317,7 @@ impl Default for CaptureSettings {
                 width: 3.0,
                 style: "corners".into(),
                 radius: 24,
+                ..FrameStyle::default()
             },
             show_magnifier: true,
             color_format: "hex".into(),
@@ -256,6 +328,7 @@ impl Default for CaptureSettings {
             toolbar_tools: owned(&TOOLBAR_TOOLS),
             toolbar_actions: owned(&TOOLBAR_ACTIONS),
             toolbar_order: owned(&TOOLBAR_ORDER),
+            toolbar_hidden: Vec::new(),
             toolbar_style: "glass".into(),
             finish_action: "copy".into(),
             save_to_library: true,
@@ -269,23 +342,48 @@ impl Default for CaptureSettings {
 }
 
 /// 截图工具条三组按钮的默认顺序：绘制工具、识字翻译那一组、最右边那一组。
-pub const TOOLBAR_TOOLS: [&str; 6] = ["rect", "ellipse", "arrow", "pen", "mosaic", "text"];
-pub const TOOLBAR_ACTIONS: [&str; 5] = ["ocr", "translate", "ai", "longshot", "gif"];
+pub const TOOLBAR_TOOLS: [&str; 12] = [
+    "rect",
+    "ellipse",
+    "arrow",
+    "pen",
+    "highlight",
+    "counter",
+    "mosaic",
+    "text",
+    "measure",
+    "watermark",
+    "template",
+    "eraser",
+];
+pub const TOOLBAR_ACTIONS: [&str; 9] = [
+    "ocr", "translate", "qr", "table", "formula", "ai", "longshot", "gif", "video",
+];
 pub const TOOLBAR_ORDER: [&str; 5] = ["undo", "save", "pin", "cancel", "done"];
 
 fn owned(ids: &[&str]) -> Vec<String> {
     ids.iter().map(|s| (*s).into()).collect()
 }
 
-/// 顺序必须正好是那一组按钮各出现一次，不是就恢复默认。
+/// 顺序里每个按钮正好出现一次：不认识的、重复的去掉，缺的（新版本加的按钮）插到默认顺序里排在它
+/// 后面、用户这边也有的那个按钮前面，后面没有就放最后。用户自己排过的顺序保留，不因为加了新按钮就整个恢复默认。
 fn fix_order(order: &mut Vec<String>, all: &[&str]) {
-    let mut have = order.clone();
-    have.sort();
-    let mut want = owned(all);
-    want.sort();
-    if have != want {
-        *order = owned(all);
+    let mut kept: Vec<String> = Vec::with_capacity(all.len());
+    for id in order.iter() {
+        if all.contains(&id.as_str()) && !kept.contains(id) {
+            kept.push(id.clone());
+        }
     }
+    for (i, id) in all.iter().enumerate().rev() {
+        if kept.iter().any(|k| k == id) {
+            continue;
+        }
+        let before = all[i + 1..]
+            .iter()
+            .find_map(|next| kept.iter().position(|k| k == next));
+        kept.insert(before.unwrap_or(kept.len()), (*id).to_string());
+    }
+    *order = kept;
 }
 
 /// 截图选区框的样式。
@@ -300,6 +398,8 @@ pub struct FrameStyle {
     pub style: String,
     /// 圆角（逻辑像素）。只影响框的样子，截下来的图仍是矩形
     pub radius: u32,
+    /// 四条边中间的拖柄：bar = 小圆条，dot = 小圆点（四个角一直是圆点）
+    pub handles: String,
 }
 
 impl Default for FrameStyle {
@@ -309,6 +409,7 @@ impl Default for FrameStyle {
             width: 3.0,
             style: "solid".into(),
             radius: 0,
+            handles: "bar".into(),
         }
     }
 }
@@ -322,6 +423,9 @@ impl FrameStyle {
             "solid" | "dashed" | "dotted" | "corners"
         ) {
             self.style = "solid".into();
+        }
+        if !matches!(self.handles.as_str(), "bar" | "dot") {
+            self.handles = "bar".into();
         }
         let hex = self.color.strip_prefix('#').unwrap_or("");
         let valid_hex = hex.len() == 6 && hex.chars().all(|c| c.is_ascii_hexdigit());
@@ -928,6 +1032,7 @@ impl Settings {
 
     /// 把越界值拉回合法范围（用户手改配置时可能写出任何东西）。
     pub fn sanitized(mut self) -> Self {
+        self.record.sanitize();
         let c = &mut self.capture;
         // 品牌改名：还是旧默认值的跟着换成新名字，用户自己改过的不动
         if matches!(
@@ -962,6 +1067,14 @@ impl Settings {
         fix_order(&mut c.toolbar_tools, &TOOLBAR_TOOLS);
         fix_order(&mut c.toolbar_actions, &TOOLBAR_ACTIONS);
         fix_order(&mut c.toolbar_order, &TOOLBAR_ORDER);
+        c.toolbar_hidden.retain(|id| {
+            (TOOLBAR_TOOLS.contains(&id.as_str())
+                || TOOLBAR_ACTIONS.contains(&id.as_str())
+                || TOOLBAR_ORDER.contains(&id.as_str()))
+                && id != "done"
+                && id != "cancel"
+        });
+        c.toolbar_hidden.dedup();
         if !matches!(c.toolbar_style.as_str(), "glass" | "frosted") {
             c.toolbar_style = "glass".into();
         }
@@ -1163,6 +1276,35 @@ fn migrate_translate_providers(tr: &mut TranslateSettings) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn fix_order_keeps_custom_order_and_adds_new_buttons() {
+        // 老版本只有 6 个工具、用户把文字挪到了最前面；新版本加了荧光笔、序号、橡皮擦
+        let mut order: Vec<String> = [
+            "text", "rect", "ellipse", "arrow", "pen", "mosaic", "bogus", "rect",
+        ]
+        .iter()
+        .map(|s| (*s).to_string())
+        .collect();
+        fix_order(&mut order, &TOOLBAR_TOOLS);
+        assert_eq!(
+            order,
+            [
+                "text",
+                "rect",
+                "ellipse",
+                "arrow",
+                "pen",
+                "highlight",
+                "counter",
+                "mosaic",
+                "measure",
+                "watermark",
+                "template",
+                "eraser"
+            ]
+        );
+    }
 
     #[test]
     fn untouched_ai_defaults_follow_the_language() {

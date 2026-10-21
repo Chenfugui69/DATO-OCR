@@ -119,6 +119,25 @@ pub fn capture_monitor(id: MonitorId) -> AppResult<RgbaImage> {
 /// 连续录一块屏里的一个区域（GIF 用）。`start(显示器, 区域)`：区域是这块屏内的物理像素；
 /// `next` 取这个区域的新画面（不透明 RGBA），没有新画面时等到超时返回 None；drop 时停止。
 pub use sys::capture::ScreenRecorder;
+/// 录视频（MP4）的写入器：`create` → `start`（第 0 毫秒）→ 每帧 `push` → `finish`。只在一个线程上用
+pub use sys::VideoWriter;
+/// 摄像头画面（录视频时叠在角落）：`start(边长)` 之后 `latest` 随时取最新一帧（正方形、已镜像）
+pub use sys::Camera;
+
+/// 剪辑录好的视频：取一段、变速，几条音轨混成一条
+pub fn export_video(src: &std::path::Path, dst: &std::path::Path, edit: VideoEdit) -> AppResult<()> {
+    sys::export_video(src, dst, edit)
+}
+
+/// 麦克风 / 摄像头的授权状态
+pub fn media_access(kind: MediaKind) -> MediaAccess {
+    sys::media_access(kind)
+}
+
+/// 还没问过就弹系统授权框，等用户点完；返回结果
+pub fn request_media_access(kind: MediaKind) -> MediaAccess {
+    sys::request_media_access(kind)
+}
 
 /// 屏幕上这一块（屏幕物理像素）现在的画面。拿不到（没权限、平台没做）返回 None。
 /// 划词按钮是一颗玻璃珠：按底下画面的明暗用浅色或深色玻璃，并把这块画面放进珠子里做出透镜 / 磨砂的效果。
@@ -263,8 +282,14 @@ pub fn set_overlay_capturable(window: &WebviewWindow, visible: bool) {
     sys::effects::set_overlay_capturable(window, visible)
 }
 
+/// 收起截图遮罩。macOS 上还会缩到最小：藏着的透明窗口仍按整块屏的大小留着画面缓冲（5K 屏一个
+/// 将近 190MB）。下次截图摆窗口时（`place_window`）会铺回整屏。
+pub fn park_overlay(window: &WebviewWindow) {
+    sys::effects::park_overlay(window)
+}
+
 /// 让这个窗口里的页面按屏幕的刷新率刷新（macOS 上网页默认压在 60 帧上下，高刷屏上拖动不跟手）。
-/// 只能在 UI 线程调用。Windows 上的网页本来就跟着屏幕刷新率，不用做事。
+/// 每个窗口的页面开始加载时调（`lib.rs` 的 `on_page_load`）。Windows 上的网页本来就跟着屏幕刷新率，不用做事。
 pub fn unlock_frame_rate(window: &WebviewWindow) {
     sys::effects::unlock_frame_rate(window);
 }
@@ -555,4 +580,9 @@ pub fn paddle_ocr_supported() -> bool {
 
 pub fn system_ocr(image: &RgbaImage) -> AppResult<Vec<SysOcrLine>> {
     sys::ocr::recognize(image)
+}
+
+/// 识别图里的二维码 / 条码。macOS 用系统的 Vision（二维码和各种条码都认），Windows 只认二维码。
+pub fn scan_codes(image: &RgbaImage) -> AppResult<Vec<ScannedCode>> {
+    sys::scan_codes(image)
 }

@@ -87,6 +87,41 @@ pub fn encode_for_webview(img: &RgbaImage) -> AppResult<(Vec<u8>, &'static str)>
     }
 }
 
+/// 自由选区：多边形（相对图片左上角的物理像素，首尾自动相连）以外的像素变成白色、完全透明。
+/// 存成 PNG 是透明的，存成 JPG 是白底（JPG 没有透明，只设透明的话原来的画面会露出来）。
+/// 按扫描线做奇偶填充：每一行算出和多边形各边的交点，成对的交点之间算在形状里。
+pub fn mask_polygon(image: &mut RgbaImage, points: &[[f64; 2]]) {
+    if points.len() < 3 {
+        return;
+    }
+    let (w, h) = image.dimensions();
+    let mut xs: Vec<f64> = Vec::with_capacity(16);
+    for y in 0..h {
+        // 取像素中心那条线
+        let cy = f64::from(y) + 0.5;
+        xs.clear();
+        for i in 0..points.len() {
+            let [x1, y1] = points[i];
+            let [x2, y2] = points[(i + 1) % points.len()];
+            if (y1 <= cy && cy < y2) || (y2 <= cy && cy < y1) {
+                xs.push(x1 + (cy - y1) / (y2 - y1) * (x2 - x1));
+            }
+        }
+        xs.sort_by(|a, b| a.total_cmp(b));
+        let mut inside_spans = xs.chunks_exact(2).map(|p| (p[0], p[1])).peekable();
+        for x in 0..w {
+            let cx = f64::from(x) + 0.5;
+            while inside_spans.peek().is_some_and(|&(_, end)| end < cx) {
+                inside_spans.next();
+            }
+            let inside = inside_spans.peek().is_some_and(|&(start, end)| start <= cx && cx <= end);
+            if !inside {
+                image.put_pixel(x, y, image::Rgba([255, 255, 255, 0]));
+            }
+        }
+    }
+}
+
 pub fn crop(img: &RgbaImage, rect: PhysicalRect) -> AppResult<RgbaImage> {
     let bounds = PhysicalRect::new(0, 0, img.width(), img.height());
     let r = rect
@@ -343,5 +378,40 @@ mod card_thumb_tests {
         assert_eq!(card_thumbnail(&img, 400, 1600).dimensions(), (711, 400));
         let small = RgbaImage::new(300, 200);
         assert_eq!(card_thumbnail(&small, 400, 1600).dimensions(), (300, 200));
+    }
+}
+
+#[cfg(test)]
+mod polygon_tests {
+    use super::*;
+
+    #[test]
+    fn masks_outside_a_triangle() {
+        let mut img = RgbaImage::from_pixel(10, 10, image::Rgba([10, 20, 30, 255]));
+        // 左上角的直角三角形：(0,0) (10,0) (0,10)
+        mask_polygon(&mut img, &[[0.0, 0.0], [10.0, 0.0], [0.0, 10.0]]);
+        assert_eq!(img.get_pixel(1, 1).0, [10, 20, 30, 255]);
+        assert_eq!(img.get_pixel(8, 8).0, [255, 255, 255, 0]);
+        assert_eq!(img.get_pixel(9, 0).0, [10, 20, 30, 255]);
+        assert_eq!(img.get_pixel(9, 9).0, [255, 255, 255, 0]);
+    }
+
+    #[test]
+    fn concave_shape_keeps_both_lobes() {
+        // U 形：中间那一列凹进去
+        let mut img = RgbaImage::from_pixel(9, 9, image::Rgba([0, 0, 0, 255]));
+        let u = [[0.0, 0.0], [3.0, 0.0], [3.0, 6.0], [6.0, 6.0], [6.0, 0.0], [9.0, 0.0], [9.0, 9.0], [0.0, 9.0]];
+        mask_polygon(&mut img, &u);
+        assert_eq!(img.get_pixel(1, 1).0[3], 255);
+        assert_eq!(img.get_pixel(7, 1).0[3], 255);
+        assert_eq!(img.get_pixel(4, 2).0[3], 0);
+        assert_eq!(img.get_pixel(4, 8).0[3], 255);
+    }
+
+    #[test]
+    fn fewer_than_three_points_is_a_noop() {
+        let mut img = RgbaImage::from_pixel(4, 4, image::Rgba([1, 2, 3, 255]));
+        mask_polygon(&mut img, &[[0.0, 0.0], [4.0, 4.0]]);
+        assert!(img.pixels().all(|p| p.0[3] == 255));
     }
 }

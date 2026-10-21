@@ -92,6 +92,47 @@ export function resizeByHandle(orig: Rect, handle: Handle, p: Point): Rect {
   return fromPoints({ x: x1, y: y1 }, { x: x2, y: y2 });
 }
 
+/**
+ * 锁定宽高比（宽 / 高）时拖控制点：拖角按变化大的那一边定大小、对角不动；拖左右边按宽算高、
+ * 拖上下边按高算宽，另一个方向以原来的中线为准对称伸缩。
+ */
+export function resizeWithRatio(orig: Rect, handle: Handle, p: Point, ratio: number): Rect {
+  const raw = resizeByHandle(orig, handle, p);
+  const corner = handle.length === 2;
+  let { width, height } = raw;
+  if (corner) {
+    if (width / ratio >= height) height = Math.max(1, Math.round(width / ratio));
+    else width = Math.max(1, Math.round(height * ratio));
+    // 固定的是对角：往哪边拖，矩形就从对角往哪边长
+    const ax = handle.includes('w') ? right(orig) : orig.x;
+    const ay = handle.includes('n') ? bottom(orig) : orig.y;
+    const x = p.x < ax ? ax - width : ax;
+    const y = p.y < ay ? ay - height : ay;
+    return { x, y, width, height };
+  }
+  if (handle === 'e' || handle === 'w') {
+    height = Math.max(1, Math.round(width / ratio));
+    return { x: raw.x, y: Math.round(orig.y + orig.height / 2 - height / 2), width, height };
+  }
+  width = Math.max(1, Math.round(height * ratio));
+  return { x: Math.round(orig.x + orig.width / 2 - width / 2), y: raw.y, width, height };
+}
+
+/** 把选区改成某个宽高比：宽不变、按中心调高；调完超出边界再整体缩小 */
+export function applyRatio(r: Rect, ratio: number, bounds: Rect): Rect {
+  let width = r.width;
+  let height = Math.max(1, Math.round(width / ratio));
+  if (height > bounds.height) {
+    height = bounds.height;
+    width = Math.max(1, Math.round(height * ratio));
+  }
+  if (width > bounds.width) {
+    width = bounds.width;
+    height = Math.max(1, Math.round(width / ratio));
+  }
+  return clampMove({ x: Math.round(r.x + r.width / 2 - width / 2), y: Math.round(r.y + r.height / 2 - height / 2), width, height }, bounds);
+}
+
 export function handlePoint(r: Rect, h: Handle): Point {
   const cx = r.x + r.width / 2;
   const cy = r.y + r.height / 2;

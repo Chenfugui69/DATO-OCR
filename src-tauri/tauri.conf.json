@@ -15,6 +15,7 @@
     "windows": [
       {
         "label": "main",
+        "create": false,
         "title": "DATO OCR",
         "url": "index.html",
         "width": 1120,

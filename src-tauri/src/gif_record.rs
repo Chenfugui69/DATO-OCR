@@ -12,6 +12,14 @@
 //!   透明（上一帧的内容留着），文件小、量化也快。编码跟不上时录制那边丢帧，不会越积越多
 //!
 //! 录完存到截图保存目录，并把文件放进剪贴板（能直接粘贴到聊天软件里）。
+//!
+//! 同一套流程也录视频（MP4，工具条上的"录制视频"）：录制线程完全一样，编码线程换成
+//! `platform::VideoWriter`（macOS 是系统的硬件 H.264 编码）。视频的分辨率、帧率、最长时长、
+//! 系统声音 / 麦克风、摄像头画面（圆形叠在角落）按设置里的"录制"来。
+//!
+//! 两个编码线程都顺手存一串小缩略图（每 250ms 一张），录完要剪辑时剪辑窗口拿来当时间轴。
+//! 录完：设置里开了"录完先剪辑"就交给 `record_edit`（打开剪辑窗口），否则直接保存；
+//! 视频有两条音轨（系统声音 + 麦克风）时先混成一条再保存。
 
 use std::fs::File;
 use std::io::{BufWriter, Write};
@@ -32,12 +40,34 @@ use crate::platform::{self, ClipboardPayload, MonitorInfo, PhysicalRect, ScreenR
 use crate::state::state;
 use crate::{events, imaging, wm};
 
-/// 最长录多久，到点自动结束
+/// GIF 最长录多久，到点自动结束（视频的按设置）
 pub const MAX_SECONDS: u64 = 60;
 /// GIF 的最长边（物理像素）。选区更大就等比缩小，GIF 太大哪儿都发不出去
 const MAX_SIDE: u32 = 1600;
 /// 编码队列长度。编码跟不上时多出来的帧直接丢掉
 const QUEUE: usize = 6;
+/// 视频的最长边（"原始"分辨率时再大的选区也等比缩到这么大）
+const VIDEO_MAX_SIDE: u32 = 3840;
+/// 缩略图（剪辑窗口的时间轴和预览）：多久存一张、最长边
+const THUMB_EVERY_MS: u64 = 250;
+const THUMB_SIDE: u32 = 360;
+
+/// 录成什么
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum RecordFormat {
+    Gif,
+    Mp4,
+}
+
+impl RecordFormat {
+    pub fn ext(self) -> &'static str {
+        match self {
+            Self::Gif => "gif",
+            Self::Mp4 => "mp4",
+        }
+    }
+}
 
 const RUNNING: u8 = 0;
 const FINISH: u8 = 1;
@@ -75,17 +105,61 @@ struct Progress {
 }
 
 enum Msg {
+    /// 开始计时的那一刻（第 0 毫秒）。视频拿它对齐声音
+    Origin(Instant),
     /// 一帧画面和它的时间（从开始录起的毫秒数）
     Frame(RgbaImage, u64),
     /// 录完了，把最后一帧写完（结束时间在这之前用一个 0×0 的空帧带过来）
     End,
 }
 
-struct Stats {
-    frames: u32,
-    duration_ms: u64,
-    width: u32,
-    height: u32,
+/// 剪辑窗口的一张缩略图：JPEG
+#[derive(Clone)]
+pub struct Thumb {
+    pub ms: u64,
+    pub jpeg: Vec<u8>,
+}
+
+#[derive(Clone, Default)]
+pub struct Stats {
+    pub frames: u32,
+    pub duration_ms: u64,
+    pub width: u32,
+    pub height: u32,
+    /// 视频里的音轨数（两条要混成一条）
+    pub audio_tracks: usize,
+    /// 没开成的声音（没权限之类）
+    pub warnings: Vec<String>,
+    pub thumbs: Vec<Thumb>,
+}
+
+/// 每 THUMB_EVERY_MS 存一张小缩略图
+#[derive(Default)]
+struct Thumbs {
+    list: Vec<Thumb>,
+    next_ms: u64,
+}
+
+impl Thumbs {
+    fn offer(&mut self, img: &RgbaImage, ms: u64) {
+        if ms < self.next_ms && !self.list.is_empty() {
+            return;
+        }
+        self.next_ms = ms + THUMB_EVERY_MS;
+        let (w, h) = img.dimensions();
+        let k = (f64::from(THUMB_SIDE) / f64::from(w.max(h))).min(1.0);
+        let (tw, th) = (
+            ((f64::from(w) * k).round() as u32).max(1),
+            ((f64::from(h) * k).round() as u32).max(1),
+        );
+        let small = image::imageops::thumbnail(img, tw, th);
+        let rgb = image::DynamicImage::ImageRgba8(small).to_rgb8();
+        let mut jpeg = Vec::new();
+        let enc = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut jpeg, 72);
+        if rgb.write_with_encoder(enc).is_ok() {
+            self.list.push(Thumb { ms, jpeg });
+        }
+    }
 }
 
 pub fn start(
@@ -93,6 +167,7 @@ pub fn start(
     session: Arc<Session>,
     monitor: MonitorInfo,
     global: PhysicalRect,
+    format: RecordFormat,
 ) -> AppResult<()> {
     if is_active() {
         return Err(AppError::msg("已经在录制 GIF 了"));
@@ -108,6 +183,7 @@ pub fn start(
     }
     let st = state(app);
     let settings = st.settings.read().capture.clone();
+    let rec = st.settings.read().record.clone();
     let stop = Arc::new(AtomicU8::new(RUNNING));
     *ACTIVE.lock() = Some(Active {
         monitor: monitor.clone(),
@@ -115,12 +191,7 @@ pub fn start(
         interactive: false,
         stop: stop.clone(),
     });
-    tracing::info!(
-        session = session.id,
-        ?local,
-        fps = settings.gif_fps,
-        "开始录制 GIF"
-    );
+    tracing::info!(session = session.id, ?local, ?format, "开始录制");
 
     let ui_app = app.clone();
     let event = GifStateEvent {
@@ -147,25 +218,56 @@ pub fn start(
         }
     })?;
 
-    // 输出尺寸：太大就等比缩小
-    let k = (f64::from(MAX_SIDE) / f64::from(local.width.max(local.height))).min(1.0);
-    let out = (
+    // 输出尺寸：太大就等比缩小；视频的宽高还得是偶数
+    let k = output_scale(format, &rec.resolution, local.width, local.height);
+    let mut out = (
         ((f64::from(local.width) * k).round() as u32).max(1),
         ((f64::from(local.height) * k).round() as u32).max(1),
     );
-    let tmp = st.paths.temp().join(format!("gif-{}.gif", session.id));
+    if format == RecordFormat::Mp4 {
+        out = ((out.0 & !1).max(2), (out.1 & !1).max(2));
+    }
+    let tmp = st
+        .paths
+        .temp()
+        .join(format!("rec-{}.{}", session.id, format.ext()));
     let (tx, rx) = sync_channel::<Msg>(QUEUE);
     let enc_path = tmp.clone();
+    let video_fps = rec.fps.clamp(5, 60);
+    let options = platform::VideoOptions {
+        system_audio: rec.system_audio,
+        microphone: rec.microphone,
+    };
     let encoder = std::thread::Builder::new()
-        .name("gif-encode".into())
-        .spawn(move || encode(rx, &enc_path, out))?;
+        .name("rec-encode".into())
+        .spawn(move || match format {
+            RecordFormat::Gif => encode(rx, &enc_path, out),
+            RecordFormat::Mp4 => encode_video(rx, &enc_path, out, video_fps, options),
+        })?;
+    // 摄像头画面：直径是录制区域短边的一个比例（物理像素）
+    let camera = (format == RecordFormat::Mp4 && rec.camera).then(|| CameraOverlay {
+        diameter: camera_diameter(&rec.camera_size, local.width, local.height),
+        position: rec.camera_position.clone(),
+    });
 
     let ctx = RecordCtx {
         app: app.clone(),
         monitor,
         local,
         global,
-        fps: settings.gif_fps.clamp(5, 30),
+        fps: if format == RecordFormat::Gif {
+            settings.gif_fps.clamp(5, 30)
+        } else {
+            video_fps
+        },
+        max: Duration::from_secs(if format == RecordFormat::Gif {
+            MAX_SECONDS
+        } else {
+            u64::from(rec.max_seconds.clamp(10, 3600))
+        }),
+        camera,
+        edit: rec.edit_before_save,
+        format,
         cursor: settings.gif_cursor,
         stop,
         tx,
@@ -215,6 +317,84 @@ struct RecordCtx {
     tx: SyncSender<Msg>,
     tmp: PathBuf,
     session_id: u64,
+    format: RecordFormat,
+    max: Duration,
+    camera: Option<CameraOverlay>,
+    /// 录完先打开剪辑窗口
+    edit: bool,
+}
+
+struct CameraOverlay {
+    /// 圆的直径（录制区域的物理像素）
+    diameter: u32,
+    position: String,
+}
+
+/// 输出比例：GIF 最长边 1600；视频"原始"最长边 3840，1080p / 720p 装进 1920×1080 / 1280×720
+/// （竖着的区域就装进 1080×1920）
+fn output_scale(format: RecordFormat, resolution: &str, w: u32, h: u32) -> f64 {
+    let (long, short) = (f64::from(w.max(h)), f64::from(w.min(h).max(1)));
+    let k = match (format, resolution) {
+        (RecordFormat::Gif, _) => f64::from(MAX_SIDE) / long,
+        (RecordFormat::Mp4, "1080p") => (1920.0 / long).min(1080.0 / short),
+        (RecordFormat::Mp4, "720p") => (1280.0 / long).min(720.0 / short),
+        (RecordFormat::Mp4, _) => f64::from(VIDEO_MAX_SIDE) / long,
+    };
+    k.min(1.0)
+}
+
+fn camera_diameter(size: &str, w: u32, h: u32) -> u32 {
+    let ratio = match size {
+        "small" => 0.2,
+        "large" => 0.38,
+        _ => 0.28,
+    };
+    ((f64::from(w.min(h)) * ratio).round() as u32).clamp(48, 720)
+}
+
+/// 摄像头画面画成圆形贴在角落里，一圈白边
+fn draw_camera(frame: &mut RgbaImage, cam: &RgbaImage, position: &str) {
+    let d = cam.width().min(cam.height()) as i64;
+    let (fw, fh) = (i64::from(frame.width()), i64::from(frame.height()));
+    if d < 8 || d + 16 > fw.min(fh) {
+        return;
+    }
+    let margin = (d / 10).clamp(8, 32);
+    let x0 = if position.ends_with("left") {
+        margin
+    } else {
+        fw - margin - d
+    };
+    let y0 = if position.starts_with("top") {
+        margin
+    } else {
+        fh - margin - d
+    };
+    let r = d as f64 / 2.0;
+    let border = (r * 0.04).clamp(2.0, 5.0);
+    for y in 0..d {
+        for x in 0..d {
+            let dx = x as f64 + 0.5 - r;
+            let dy = y as f64 + 0.5 - r;
+            let dist = (dx * dx + dy * dy).sqrt();
+            if dist > r {
+                continue;
+            }
+            // 边缘一像素做抗锯齿
+            let alpha = (r - dist).min(1.0);
+            let src = if dist > r - border {
+                [255u8, 255, 255]
+            } else {
+                let p = cam.get_pixel(x as u32, y as u32);
+                [p[0], p[1], p[2]]
+            };
+            let dst = frame.get_pixel_mut((x0 + x) as u32, (y0 + y) as u32);
+            for c in 0..3 {
+                dst[c] =
+                    (f64::from(src[c]) * alpha + f64::from(dst[c]) * (1.0 - alpha)).round() as u8;
+            }
+        }
+    }
 }
 
 fn record(ctx: RecordCtx, encoder: std::thread::JoinHandle<AppResult<Stats>>) {
@@ -259,9 +439,13 @@ fn record(ctx: RecordCtx, encoder: std::thread::JoinHandle<AppResult<Stats>>) {
     }
     match result {
         Ok(Ok(stats)) => {
-            if let Err(err) = save(&app, &ctx.tmp, &stats) {
-                tracing::error!("保存 GIF 失败：{err}");
-                wm::toast(&app, "error", format!("保存 GIF 失败：{err}"));
+            for w in &stats.warnings {
+                wm::toast(&app, "error", format!("这次没录到声音：{w}"));
+            }
+            if ctx.edit {
+                crate::record_edit::open(&app, ctx.tmp.clone(), ctx.format, stats);
+            } else {
+                crate::record_edit::finalize(&app, &ctx.tmp, ctx.format, &stats, None);
             }
         }
         Ok(Err(err)) => {
@@ -278,9 +462,20 @@ fn record(ctx: RecordCtx, encoder: std::thread::JoinHandle<AppResult<Stats>>) {
 
 /// 录制循环：按帧率取最新画面，有变化才出帧。
 fn run(ctx: &RecordCtx, recorder: &ScreenRecorder) {
-    let interval = Duration::from_millis(u64::from(1000 / ctx.fps));
-    let max = Duration::from_secs(MAX_SECONDS);
+    let interval = Duration::from_micros(1_000_000 / u64::from(ctx.fps));
+    let max = ctx.max;
+    let camera = ctx
+        .camera
+        .as_ref()
+        .and_then(|c| match platform::Camera::start(c.diameter) {
+            Ok(cam) => Some((cam, c)),
+            Err(err) => {
+                wm::toast(&ctx.app, "error", format!("这次没录摄像头：{err}"));
+                None
+            }
+        });
     let started = Instant::now();
+    let _ = ctx.tx.send(Msg::Origin(started));
     let mut next_tick = started;
     let mut clean: Option<RgbaImage> = None;
     let mut changed = false;
@@ -324,10 +519,16 @@ fn run(ctx: &RecordCtx, recorder: &ScreenRecorder) {
         let cursor = platform::cursor_position();
         update_interactive(&ctx.app, cursor);
         let Some(base) = clean.as_ref() else { continue };
-        if changed || (ctx.cursor && cursor != last_cursor) {
+        // 有摄像头画面时每一拍都出帧（人一直在动）
+        if changed || camera.is_some() || (ctx.cursor && cursor != last_cursor) {
             let mut frame = base.clone();
             if ctx.cursor {
                 platform::draw_cursor(&mut frame, (ctx.global.x, ctx.global.y));
+            }
+            if let Some((cam, overlay)) = camera.as_ref() {
+                if let Some(img) = cam.latest() {
+                    draw_camera(&mut frame, &img, &overlay.position);
+                }
             }
             let t = started.elapsed().as_millis() as u64;
             match ctx.tx.try_send(Msg::Frame(frame, t)) {
@@ -351,7 +552,7 @@ fn run(ctx: &RecordCtx, recorder: &ScreenRecorder) {
             );
         }
     }
-    tracing::info!(frames, dropped, fps = ctx.fps, "GIF 录制结束");
+    tracing::info!(frames, dropped, fps = ctx.fps, format = ?ctx.format, "录制结束");
     // 最后一帧持续到按下"完成"的那一刻
     let _ = ctx.tx.send(Msg::Frame(
         RgbaImage::new(0, 0),
@@ -390,8 +591,10 @@ fn encode(rx: Receiver<Msg>, path: &Path, (w, h): (u32, u32)) -> AppResult<Stats
     let mut written = 0u32;
     let mut end_ms = 0u64;
     let mut done = false;
+    let mut thumbs = Thumbs::default();
     for msg in rx {
         match msg {
+            Msg::Origin(_) => {}
             Msg::Frame(img, t) if img.width() == 0 => end_ms = t,
             Msg::Frame(img, t) => {
                 let img = if img.dimensions() == (w, h) {
@@ -405,6 +608,7 @@ fn encode(rx: Receiver<Msg>, path: &Path, (w, h): (u32, u32)) -> AppResult<Stats
                 };
                 // 和上一帧一模一样：不出新帧，上一帧自然拉长
                 let Some(frame) = frame else { continue };
+                thumbs.offer(&img, t);
                 if let Some((f, t0)) = pending.take() {
                     write_frame(&mut enc, f, t.saturating_sub(t0))?;
                     written += 1;
@@ -433,6 +637,8 @@ fn encode(rx: Receiver<Msg>, path: &Path, (w, h): (u32, u32)) -> AppResult<Stats
         duration_ms: end_ms,
         width: w,
         height: h,
+        thumbs: thumbs.list,
+        ..Default::default()
     })
 }
 
@@ -517,9 +723,154 @@ fn delta_frame(prev: &RgbaImage, cur: &RgbaImage) -> Option<gif::Frame<'static>>
     Some(f)
 }
 
+/// 视频编码线程：帧缩到输出尺寸（视频要偶数宽高，多半只是裁掉一个像素），交给 VideoWriter。
+/// 和 GIF 一样：空帧（0×0）带结束时间，End 才算写完；没收到 End 就断开 = 取消。
+fn encode_video(
+    rx: Receiver<Msg>,
+    path: &Path,
+    (w, h): (u32, u32),
+    fps: u32,
+    options: platform::VideoOptions,
+) -> AppResult<Stats> {
+    let mut writer = platform::VideoWriter::create(path, w, h, fps, options)?;
+    let warnings = writer.warnings().to_vec();
+    let mut frames = 0u32;
+    let mut end_ms = 0u64;
+    let mut thumbs = Thumbs::default();
+    loop {
+        match rx.recv() {
+            Ok(Msg::Origin(at)) => writer.start(at),
+            Ok(Msg::Frame(img, t)) => {
+                if img.width() == 0 {
+                    end_ms = t;
+                    continue;
+                }
+                // 只差一两个像素（凑偶数）就直接裁，否则等比缩
+                let fitted;
+                let frame = if img.width() < w + 2 && img.height() < h + 2 {
+                    &img
+                } else {
+                    fitted =
+                        image::imageops::resize(&img, w, h, image::imageops::FilterType::Triangle);
+                    &fitted
+                };
+                writer.push(frame, t)?;
+                thumbs.offer(frame, t);
+                frames += 1;
+                end_ms = end_ms.max(t);
+            }
+            Ok(Msg::End) => break,
+            // 取消：文件不要了
+            Err(_) => {
+                drop(writer);
+                let _ = std::fs::remove_file(path);
+                return Err(AppError::msg("已取消"));
+            }
+        }
+    }
+    let audio_tracks = writer.finish(end_ms)?;
+    Ok(Stats {
+        frames,
+        duration_ms: end_ms,
+        width: w,
+        height: h,
+        audio_tracks,
+        warnings,
+        thumbs: thumbs.list,
+    })
+}
+
+// ───────────────────────── 剪辑 GIF ─────────────────────────
+
+/// 剪辑录好的 GIF：只留 `[start, end)` 一段、按倍速，重新编码到 `dst`（还是只编码变了的块）。
+/// 帧间隔变得比 20ms 还短的帧合并掉（GIF 再短浏览器就当成 100ms 了）。
+pub fn edit_gif(src: &Path, dst: &Path, edit: platform::VideoEdit) -> AppResult<Stats> {
+    let mut opts = gif::DecodeOptions::new();
+    opts.set_color_output(gif::ColorOutput::RGBA);
+    let mut dec = opts
+        .read_info(std::io::BufReader::new(File::open(src)?))
+        .map_err(gif_err)?;
+    let (w, h) = (u32::from(dec.width()), u32::from(dec.height()));
+    let speed = edit.speed.clamp(0.25, 4.0);
+    let (tx, rx) = sync_channel::<Msg>(QUEUE);
+    let out = dst.to_path_buf();
+    let encoder = std::thread::Builder::new()
+        .name("gif-edit".into())
+        .spawn(move || encode(rx, &out, (w, h)))?;
+    let mut canvas = RgbaImage::new(w, h);
+    let mut t = 0u64;
+    let mut last_sent: Option<u64> = None;
+    let mut pending: Option<RgbaImage> = None;
+    let out_ms = |ms: u64| ((ms.saturating_sub(edit.start_ms)) as f64 / speed).round() as u64;
+    while let Some(frame) = dec.read_next_frame().map_err(gif_err)? {
+        let (fx, fy) = (u32::from(frame.left), u32::from(frame.top));
+        let restore = (frame.dispose == gif::DisposalMethod::Previous).then(|| canvas.clone());
+        // 透明像素保留底下的内容（我们自己录的 GIF 每块都是这样叠的）
+        for (i, px) in frame.buffer.chunks_exact(4).enumerate() {
+            let x = fx + i as u32 % u32::from(frame.width);
+            let y = fy + i as u32 / u32::from(frame.width);
+            if px[3] != 0 && x < w && y < h {
+                canvas.put_pixel(x, y, image::Rgba([px[0], px[1], px[2], 255]));
+            }
+        }
+        let delay = u64::from(frame.delay) * 10;
+        let shown = canvas.clone();
+        match frame.dispose {
+            gif::DisposalMethod::Background => {
+                for y in fy..(fy + u32::from(frame.height)).min(h) {
+                    for x in fx..(fx + u32::from(frame.width)).min(w) {
+                        canvas.put_pixel(x, y, image::Rgba([0, 0, 0, 0]));
+                    }
+                }
+            }
+            gif::DisposalMethod::Previous => {
+                if let Some(prev) = restore {
+                    canvas = prev;
+                }
+            }
+            _ => {}
+        }
+        let (t0, t1) = (t, t + delay);
+        t = t1;
+        if t1 <= edit.start_ms {
+            // 开头之前的最后一帧：剪辑的第一帧要从它开始显示
+            pending = Some(shown);
+            continue;
+        }
+        if t0 >= edit.end_ms {
+            break;
+        }
+        if let Some(first) = pending.take() {
+            if t0 > edit.start_ms {
+                let _ = tx.send(Msg::Frame(first, 0));
+                last_sent = Some(0);
+            }
+        }
+        let at = out_ms(t0.max(edit.start_ms));
+        if last_sent.is_some_and(|l| at < l + 20) {
+            continue;
+        }
+        if tx.send(Msg::Frame(shown, at)).is_err() {
+            break;
+        }
+        last_sent = Some(at);
+    }
+    if let Some(first) = pending.take() {
+        let _ = tx.send(Msg::Frame(first, 0));
+    }
+    let end = out_ms(edit.end_ms.min(t));
+    let _ = tx.send(Msg::Frame(RgbaImage::new(0, 0), end));
+    let _ = tx.send(Msg::End);
+    drop(tx);
+    encoder
+        .join()
+        .map_err(|_| AppError::msg("GIF 编码线程异常退出"))?
+}
+
 // ───────────────────────── 保存 ─────────────────────────
 
-fn save(app: &AppHandle, tmp: &Path, stats: &Stats) -> AppResult<()> {
+/// 存到截图保存目录、放进剪贴板、提示一句。`tmp` 会被挪走
+pub fn save(app: &AppHandle, tmp: &Path, stats: &Stats, format: RecordFormat) -> AppResult<()> {
     let settings = state(app).settings.read().capture.clone();
     let dir = capture::save_directory(&settings);
     std::fs::create_dir_all(&dir)?;
@@ -527,10 +878,11 @@ fn save(app: &AppHandle, tmp: &Path, stats: &Stats) -> AppResult<()> {
         .file_stem()
         .map(|s| s.to_string_lossy().into_owned())
         .unwrap_or_else(|| "DATO OCR".into());
-    let mut path = dir.join(format!("{stem}.gif"));
+    let ext = format.ext();
+    let mut path = dir.join(format!("{stem}.{ext}"));
     let mut n = 1;
     while path.exists() {
-        path = dir.join(format!("{stem}_{n}.gif"));
+        path = dir.join(format!("{stem}_{n}.{ext}"));
         n += 1;
     }
     // 临时目录可能和保存目录不在一个盘上，改名不行就复制
@@ -545,10 +897,14 @@ fn save(app: &AppHandle, tmp: &Path, stats: &Stats) -> AppResult<()> {
         width = stats.width,
         height = stats.height,
         size,
-        "GIF 已保存"
+        ?format,
+        "录制已保存"
     );
-    if let Err(err) = crate::library::add_gif(app, &path) {
-        tracing::warn!("GIF 存进截图库失败：{err}");
+    // 截图库只认图片（GIF 也是图）；视频不进库
+    if format == RecordFormat::Gif {
+        if let Err(err) = crate::library::add_gif(app, &path) {
+            tracing::warn!("GIF 存进截图库失败：{err}");
+        }
     }
     // 诊断开关：自动化测试时不碰剪贴板（测试机的远程控制软件会把剪贴板同步到别的电脑）
     let skip_clipboard = std::env::var("CHENOCR_TEST_NO_CLIPBOARD").is_ok_and(|v| v == "1");
@@ -565,10 +921,15 @@ fn save(app: &AppHandle, tmp: &Path, stats: &Stats) -> AppResult<()> {
     } else {
         "已保存"
     };
+    let kind = if format == RecordFormat::Gif {
+        "GIF"
+    } else {
+        "视频"
+    };
     wm::toast(
         app,
         "success",
-        format!("GIF {what}（{secs:.1} 秒，{size}）"),
+        format!("{kind}{what}（{secs:.1} 秒，{size}）"),
     );
     Ok(())
 }
@@ -627,6 +988,100 @@ mod tests {
         }
         assert_eq!(delays, vec![20, 30]);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 录一段 GIF：每 100ms 一帧，第 i 帧左上角那个像素的红色是 i
+    fn sample_gif(path: &Path, frames: u8) {
+        let (tx, rx) = sync_channel(64);
+        let p = path.to_path_buf();
+        let h = std::thread::spawn(move || encode(rx, &p, (20, 10)));
+        for i in 0..frames {
+            let mut img = solid(20, 10, [0, 0, 0, 255]);
+            img.put_pixel(0, 0, image::Rgba([i * 10, 0, 0, 255]));
+            tx.send(Msg::Frame(img, u64::from(i) * 100)).unwrap();
+        }
+        tx.send(Msg::Frame(RgbaImage::new(0, 0), u64::from(frames) * 100))
+            .unwrap();
+        tx.send(Msg::End).unwrap();
+        h.join().unwrap().unwrap();
+    }
+
+    fn delays_and_reds(path: &Path) -> Vec<(u16, u8)> {
+        let mut opts = gif::DecodeOptions::new();
+        opts.set_color_output(gif::ColorOutput::RGBA);
+        let mut dec = opts.read_info(File::open(path).unwrap()).unwrap();
+        let mut out = Vec::new();
+        let mut red = 0;
+        while let Some(f) = dec.read_next_frame().unwrap() {
+            // 左上角像素在这一块里、不透明时才是新值
+            if f.left == 0 && f.top == 0 && f.buffer[3] != 0 {
+                red = f.buffer[0];
+            }
+            out.push((f.delay, red));
+        }
+        out
+    }
+
+    #[test]
+    fn edit_gif_trims_and_speeds_up() {
+        let dir = std::env::temp_dir().join(format!("dato-gif-edit-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let (src, dst) = (dir.join("a.gif"), dir.join("b.gif"));
+        sample_gif(&src, 10);
+        // 只要 250ms..650ms（第 2 帧后半到第 6 帧前半），2 倍速
+        let stats = edit_gif(
+            &src,
+            &dst,
+            platform::VideoEdit {
+                start_ms: 250,
+                end_ms: 650,
+                speed: 2.0,
+            },
+        )
+        .unwrap();
+        assert_eq!(stats.duration_ms, 200);
+        let got = delays_and_reds(&dst);
+        // 第 2 帧剩 50ms → 25ms，第 3~5 帧各 100ms → 50ms；最后一帧编码器至少给 100ms（循环播放时别一闪而过）
+        assert_eq!(
+            got.iter().map(|g| g.1).collect::<Vec<_>>(),
+            vec![20, 30, 40, 50, 60]
+        );
+        assert_eq!(
+            got.iter().map(|g| g.0).collect::<Vec<_>>(),
+            vec![3, 5, 5, 5, 10]
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn output_scale_fits_the_resolution_box() {
+        // 2560×1440 的区域：1080p → 1920×1080，720p → 1280×720，原始不缩
+        assert!((output_scale(RecordFormat::Mp4, "1080p", 2560, 1440) - 0.75).abs() < 1e-9);
+        assert!((output_scale(RecordFormat::Mp4, "720p", 2560, 1440) - 0.5).abs() < 1e-9);
+        assert_eq!(output_scale(RecordFormat::Mp4, "original", 2560, 1440), 1.0);
+        // 竖着的区域装进 1080×1920
+        assert!((output_scale(RecordFormat::Mp4, "1080p", 1440, 2560) - 0.75).abs() < 1e-9);
+        // 比上限小的不放大
+        assert_eq!(output_scale(RecordFormat::Mp4, "720p", 800, 600), 1.0);
+        assert!((output_scale(RecordFormat::Gif, "original", 3200, 1000) - 0.5).abs() < 1e-9);
+    }
+
+    #[test]
+    fn camera_is_a_circle_in_the_corner() {
+        let mut frame = solid(400, 300, [0, 0, 255, 255]);
+        let cam = solid(100, 100, [255, 0, 0, 255]);
+        draw_camera(&mut frame, &cam, "bottom-right");
+        // 圆心是摄像头的颜色，圆外的角还是原画面，左上角不动
+        let margin = 10;
+        let (cx, cy) = (400 - margin - 50, 300 - margin - 50);
+        assert_eq!(frame.get_pixel(cx, cy).0, [255, 0, 0, 255]);
+        assert_eq!(
+            frame.get_pixel(400 - margin - 99, 300 - margin - 99).0,
+            [0, 0, 255, 255]
+        );
+        assert_eq!(frame.get_pixel(5, 5).0, [0, 0, 255, 255]);
+        // 边上一圈白边
+        assert_eq!(frame.get_pixel(cx + 48, cy).0, [255, 255, 255, 255]);
     }
 
     #[test]

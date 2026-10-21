@@ -1,0 +1,98 @@
+/* 识别成表格 / 公式（AI）：识字窗口和截图界面共用 */
+.ocr-struct {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+.ocr-struct__head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 0 8px;
+}
+.ocr-struct__title {
+  font: 600 13px/1 var(--cn-font-sans);
+  color: var(--cn-label);
+}
+.ocr-struct__loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  flex: 1;
+  color: var(--cn-label-secondary);
+}
+.ocr-struct__body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+.ocr-struct__actions {
+  display: flex;
+  gap: 8px;
+  padding-top: 10px;
+}
+.ocr-struct__hint {
+  color: var(--cn-label-secondary);
+  font-size: 12px;
+}
+.ocr-table {
+  border-collapse: collapse;
+  font: 400 13px/1.45 var(--cn-font-sans);
+  color: var(--cn-label);
+}
+.ocr-table th,
+.ocr-table td {
+  border: 0.5px solid var(--cn-separator, rgba(128, 128, 128, 0.4));
+  padding: 4px 8px;
+  vertical-align: top;
+  text-align: left;
+}
+.ocr-table th {
+  background: var(--cn-fill-tertiary);
+  font-weight: 600;
+}
+.ocr-formula {
+  padding: 16px 8px;
+  font-size: 20px;
+  color: var(--cn-label);
+  overflow-x: auto;
+}
+.ocr-latex {
+  width: 100%;
+  min-height: 90px;
+  margin-top: 8px;
+  padding: 8px;
+  border-radius: 8px;
+  border: 0.5px solid var(--cn-separator, rgba(128, 128, 128, 0.35));
+  background: var(--cn-fill-tertiary);
+  color: var(--cn-label);
+  font: 400 12.5px/1.5 ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+  resize: vertical;
+}
+
+/* 和本地识字对不上的数字：黄底提醒核对 */
+.ocr-table .ocr-cell--check {
+  background: color-mix(in srgb, #ffcc00 32%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, #ff9500 70%, transparent);
+}
+.ocr-struct__warn {
+  margin: 0 0 8px;
+  padding: 6px 10px;
+  border-radius: 8px;
+  background: color-mix(in srgb, #ffcc00 18%, transparent);
+  color: var(--cn-label);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+/* 单元格可以直接改 */
+.ocr-table [contenteditable='true'] {
+  outline: none;
+  cursor: text;
+}
+.ocr-table [contenteditable='true']:focus {
+  box-shadow: inset 0 0 0 1.5px var(--cn-accent);
+  background: var(--cn-bg-elevated);
+}

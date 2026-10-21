@@ -36,6 +36,7 @@ pub fn build(app: &AppHandle) -> AppResult<()> {
         true,
         None::<&str>,
     )?;
+    let delayed = MenuItem::with_id(app, "capture-delayed", tr("延时 3 秒截图"), true, None::<&str>)?;
     let ocr = MenuItem::with_id(app, "ocr", label(&tr("识字"), &hk.ocr), true, None::<&str>)?;
     let clip = MenuItem::with_id(
         app,
@@ -45,6 +46,22 @@ pub fn build(app: &AppHandle) -> AppResult<()> {
         None::<&str>,
     )?;
     let ai = MenuItem::with_id(app, "ai", label(&tr("AI 对话"), &hk.ai), true, None::<&str>)?;
+    let pin_clip = MenuItem::with_id(
+        app,
+        "pin-clipboard",
+        label(&tr("贴出剪贴板图片"), &hk.pin_clipboard),
+        true,
+        None::<&str>,
+    )?;
+    let restore_pin = MenuItem::with_id(app, "restore-pin", tr("恢复刚关闭的贴图"), true, None::<&str>)?;
+    let release_pins = MenuItem::with_id(
+        app,
+        "release-pins",
+        tr("取消贴图的鼠标穿透"),
+        true,
+        None::<&str>,
+    )?;
+    let sep_pins = PredefinedMenuItem::separator(app)?;
     let show = MenuItem::with_id(app, "show", tr("打开主窗口"), true, None::<&str>)?;
     let settings = MenuItem::with_id(app, "settings", tr("设置…"), true, None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit", tr("退出 DATO OCR"), true, None::<&str>)?;
@@ -53,7 +70,22 @@ pub fn build(app: &AppHandle) -> AppResult<()> {
     let menu = Menu::with_items(
         app,
         &[
-            &capture, &instant, &longshot, &ocr, &clip, &ai, &sep1, &show, &settings, &sep2, &quit,
+            &capture,
+            &delayed,
+            &instant,
+            &longshot,
+            &ocr,
+            &clip,
+            &ai,
+            &sep_pins,
+            &pin_clip,
+            &restore_pin,
+            &release_pins,
+            &sep1,
+            &show,
+            &settings,
+            &sep2,
+            &quit,
         ],
     )?;
 
@@ -63,11 +95,26 @@ pub fn build(app: &AppHandle) -> AppResult<()> {
         .show_menu_on_left_click(platform::tray_menu_on_left_click())
         .on_menu_event(|app, event| match event.id.as_ref() {
             "capture" => hotkeys::dispatch(app, HotkeyAction::Capture),
+            // 延时截图：先去把菜单、悬停提示之类点出来，3 秒后再冻结画面
+            "capture-delayed" => {
+                let app = app.clone();
+                std::thread::spawn(move || {
+                    std::thread::sleep(std::time::Duration::from_secs(3));
+                    hotkeys::dispatch(&app, HotkeyAction::Capture);
+                });
+            }
             "instant" => hotkeys::dispatch(app, HotkeyAction::Instant),
             "longshot" => hotkeys::dispatch(app, HotkeyAction::Longshot),
             "ocr" => hotkeys::dispatch(app, HotkeyAction::Ocr),
             "clipboard" => hotkeys::dispatch(app, HotkeyAction::Clipboard),
             "ai" => hotkeys::dispatch(app, HotkeyAction::Ai),
+            "pin-clipboard" => hotkeys::pin_clipboard(app),
+            "restore-pin" => {
+                if !matches!(crate::pin::restore_last(app), Ok(true)) {
+                    wm::toast(app, "info", "没有刚关闭的贴图");
+                }
+            }
+            "release-pins" => crate::pin::release_click_through(app),
             "show" => wm::show_main(app, None),
             "settings" => wm::show_main(app, Some("settings")),
             "quit" => crate::quit(app),

@@ -15,10 +15,13 @@ import { Button } from '@/ui/controls';
 import { ACTION_ICONS, TOOL_ICONS, type ActionId } from '@/views/annotate/Toolbar';
 import type { Tool } from '@/views/annotate/model';
 
-type Order = Pick<CaptureSettings, 'toolbarTools' | 'toolbarActions' | 'toolbarOrder'>;
+type Order = Pick<CaptureSettings, 'toolbarTools' | 'toolbarActions' | 'toolbarOrder' | 'toolbarHidden'>;
 type GroupKey = keyof Order;
-const GROUPS: GroupKey[] = ['toolbarTools', 'toolbarActions', 'toolbarOrder'];
-const DEFAULTS: Order = { toolbarTools: TOOL_ORDER, toolbarActions: MID_ACTIONS, toolbarOrder: TAIL_ACTIONS };
+type GroupKey2 = Exclude<GroupKey, 'toolbarHidden'>;
+const GROUPS: GroupKey2[] = ['toolbarTools', 'toolbarActions', 'toolbarOrder'];
+/** 这两个不能藏：没有它们就完不成 / 退不出截图 */
+const ALWAYS_SHOWN = ['done', 'cancel'];
+const DEFAULTS = { toolbarTools: TOOL_ORDER, toolbarActions: MID_ACTIONS, toolbarOrder: TAIL_ACTIONS };
 
 export function ToolbarOrder({ value, onChange }: { value: Order; onChange: (next: Order) => void }) {
   const { t } = useTranslation();
@@ -29,11 +32,13 @@ export function ToolbarOrder({ value, onChange }: { value: Order; onChange: (nex
     toolbarTools: o.toolbarTools?.length ? o.toolbarTools : TOOL_ORDER,
     toolbarActions: o.toolbarActions?.length ? o.toolbarActions : MID_ACTIONS,
     toolbarOrder: o.toolbarOrder?.length ? o.toolbarOrder : TAIL_ACTIONS,
+    toolbarHidden: o.toolbarHidden ?? [],
   });
+  const hidden = (draft ?? value).toolbarHidden ?? [];
   const order = filled(draft ?? value);
-  const isDefault = GROUPS.every((g) => (order[g] as string[]).every((id, i) => id === DEFAULTS[g][i]));
+  const isDefault = hidden.length === 0 && GROUPS.every((g) => (order[g] as string[]).every((id, i) => id === DEFAULTS[g][i]));
 
-  const onPointerDown = (e: React.PointerEvent<HTMLButtonElement>, group: GroupKey, id: string) => {
+  const onPointerDown = (e: React.PointerEvent<HTMLButtonElement>, group: GroupKey2, id: string) => {
     if (e.button !== 0) return;
     e.preventDefault();
     e.currentTarget.setPointerCapture(e.pointerId);
@@ -64,6 +69,10 @@ export function ToolbarOrder({ value, onChange }: { value: Order; onChange: (nex
       setDragging(null);
       setDraft(null);
       if (moved) onChange(current);
+      // 没拖、只是点了一下：切换这个按钮藏不藏
+      else if (!ALWAYS_SHOWN.includes(id)) {
+        onChange({ ...current, toolbarHidden: hidden.includes(id) ? hidden.filter((x) => x !== id) : [...hidden, id] });
+      }
     };
     window.addEventListener('pointermove', move);
     window.addEventListener('pointerup', up);
@@ -84,6 +93,7 @@ export function ToolbarOrder({ value, onChange }: { value: Order; onChange: (nex
                   type="button"
                   data-group={group}
                   data-dragging={dragging === id || undefined}
+                  data-hidden={hidden.includes(id) || undefined}
                   className={`an-btn tb-order__item${id === 'done' ? ' an-btn--primary' : ''}`}
                   title={label}
                   aria-label={label}
@@ -96,7 +106,7 @@ export function ToolbarOrder({ value, onChange }: { value: Order; onChange: (nex
           </Fragment>
         ))}
       </div>
-      <Button size="sm" variant="ghost" icon={RotateCcw} disabled={isDefault} onClick={() => onChange({ toolbarTools: [...TOOL_ORDER], toolbarActions: [...MID_ACTIONS], toolbarOrder: [...TAIL_ACTIONS] })}>
+      <Button size="sm" variant="ghost" icon={RotateCcw} disabled={isDefault} onClick={() => onChange({ toolbarTools: [...TOOL_ORDER], toolbarActions: [...MID_ACTIONS], toolbarOrder: [...TAIL_ACTIONS], toolbarHidden: [] })}>
         {t('settings.capture.toolbarOrderReset')}
       </Button>
     </div>

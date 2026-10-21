@@ -58,6 +58,16 @@ export function FrameStyleRows({ name, value, onChange }: { name: string; value:
           onChange={(v) => patch({ style: v })}
         />
       </Row>
+      <Row title={t('settings.frame.handles', { name })}>
+        <Segmented
+          value={value.handles ?? 'bar'}
+          options={[
+            { value: 'bar', label: t('settings.frame.handleBar') },
+            { value: 'dot', label: t('settings.frame.handleDot') },
+          ]}
+          onChange={(v) => patch({ handles: v })}
+        />
+      </Row>
       <Row title={t('settings.frame.radius', { name })}>
         <span className="set-row__value cn-numeric">{value.radius}px</span>
         <Slider value={value.radius} min={0} max={24} onChange={(v) => patch({ radius: v })} />

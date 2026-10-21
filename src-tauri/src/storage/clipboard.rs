@@ -236,6 +236,17 @@ pub fn insert(conn: &mut Connection, item: &NewClip) -> AppResult<i64> {
     Ok(id)
 }
 
+/// 最近用过的一条（不管是不是置顶）：(id, 类型)
+pub fn latest_kind(conn: &Connection) -> AppResult<Option<(i64, String)>> {
+    Ok(conn
+        .query_row(
+            "SELECT id, type FROM clipboard_items ORDER BY last_used_at DESC, id DESC LIMIT 1",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .optional()?)
+}
+
 pub fn get_item(conn: &Connection, id: i64) -> AppResult<ClipItem> {
     conn.query_row(
         &format!("SELECT {ITEM_COLUMNS} FROM clipboard_items WHERE id = ?1"),

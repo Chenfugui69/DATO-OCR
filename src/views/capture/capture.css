@@ -191,6 +191,258 @@ html[data-view='capture'] #root {
   will-change: transform;
 }
 
+/* 编辑态的尺寸标签能点：打开选区面板 */
+.cap-size--interactive {
+  pointer-events: auto;
+  cursor: pointer;
+}
+.cap-size--interactive:hover {
+  background: rgba(0, 0, 0, 0.45);
+  color: #fff;
+}
+.cap-size__lock {
+  margin-right: 3px;
+  vertical-align: -0.5px;
+}
+.cap-panel-anchor {
+  position: absolute;
+  left: 0;
+  top: calc(100% + 6px);
+  cursor: default;
+}
+.cap-panel-anchor--above {
+  top: auto;
+  bottom: calc(100% + 6px);
+}
+.cap-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  border-radius: 12px;
+  font: 400 12px/1.2 var(--cn-font-sans);
+  color: var(--cn-label);
+  letter-spacing: 0;
+  white-space: nowrap;
+  box-shadow:
+    0 10px 30px rgba(0, 0, 0, 0.25),
+    0 0 0 0.5px rgba(0, 0, 0, 0.25);
+}
+.cap-panel__row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.cap-panel__field {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--cn-label-secondary);
+}
+.cap-panel__field input {
+  width: 64px;
+  height: 24px;
+  padding: 0 6px;
+  border-radius: 6px;
+  border: 0.5px solid var(--cn-separator, rgba(128, 128, 128, 0.35));
+  background: var(--cn-fill-tertiary);
+  color: var(--cn-label);
+  font: 400 12px/24px var(--cn-font-sans);
+  font-variant-numeric: tabular-nums;
+  outline: none;
+  -moz-appearance: textfield;
+}
+.cap-panel__field input::-webkit-inner-spin-button,
+.cap-panel__field input::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+.cap-panel__field input:focus {
+  border-color: var(--cn-accent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--cn-accent) 30%, transparent);
+}
+.cap-panel__ratios {
+  gap: 4px;
+}
+.cap-panel__lock {
+  color: var(--cn-accent);
+  margin-right: 2px;
+}
+.cap-panel__chip {
+  height: 22px;
+  padding: 0 8px;
+  border-radius: 6px;
+  color: var(--cn-label);
+  background: var(--cn-fill-tertiary);
+  font: 500 11.5px/22px var(--cn-font-sans);
+}
+.cap-panel__chip:hover {
+  background: var(--cn-bg-hover);
+}
+.cap-panel__chip--active,
+.cap-panel__chip--active:hover {
+  background: var(--cn-accent-subtle);
+  color: var(--cn-accent);
+}
+.cap-panel__last {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 26px;
+  padding: 0 8px;
+  border-radius: 7px;
+  color: var(--cn-label);
+  font: 400 12px/26px var(--cn-font-sans);
+}
+.cap-panel__last:hover:not(:disabled) {
+  background: var(--cn-bg-hover);
+}
+.cap-panel__last:disabled {
+  opacity: 0.45;
+}
+.cap-panel__last span {
+  margin-left: auto;
+  color: var(--cn-label-secondary);
+}
+
+/* 识别出来的二维码 / 条码：码上一个框，旁边一张结果卡片 */
+.cap-code-box {
+  position: absolute;
+  border: 2px solid var(--cn-accent);
+  border-radius: 6px;
+  box-shadow: 0 0 12px color-mix(in srgb, var(--cn-accent) 60%, transparent);
+  pointer-events: none;
+}
+.cap-struct {
+  position: absolute;
+  left: 0;
+  top: 0;
+  display: flex;
+  flex-direction: column;
+  min-height: 220px;
+  padding: 8px 10px 10px;
+  border-radius: 12px;
+  font: 400 12px/1.4 var(--cn-font-sans);
+  color: var(--cn-label);
+  box-shadow:
+    0 10px 30px rgba(0, 0, 0, 0.25),
+    0 0 0 0.5px rgba(0, 0, 0, 0.25);
+  transition: opacity 120ms;
+}
+/* 按住眼睛：卡片几乎透明，看得见下面的原图 */
+.cap-struct[data-peek] {
+  opacity: 0.08;
+}
+.cap-struct__head {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 0 0 6px 2px;
+}
+.cap-struct__title {
+  flex: 1;
+  font: 600 12px/1 var(--cn-font-sans);
+  color: var(--cn-label-secondary);
+}
+.cap-struct__content {
+  flex: 1;
+  min-height: 0;
+}
+.cap-struct .ocr-table {
+  user-select: text;
+  -webkit-user-select: text;
+}
+.cap-codes {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 300px;
+  max-height: 60vh;
+  overflow: auto;
+  padding: 8px;
+  border-radius: 12px;
+  font: 400 12px/1.4 var(--cn-font-sans);
+  color: var(--cn-label);
+  box-shadow:
+    0 10px 30px rgba(0, 0, 0, 0.25),
+    0 0 0 0.5px rgba(0, 0, 0, 0.25);
+}
+.cap-codes__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 2px 6px 4px;
+  color: var(--cn-label-secondary);
+  font-weight: 500;
+}
+.cap-codes__icon {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  color: var(--cn-label-secondary);
+}
+.cap-codes__icon:hover {
+  background: var(--cn-bg-hover);
+}
+.cap-codes__item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px;
+  border-radius: 8px;
+  background: var(--cn-fill-tertiary);
+}
+.cap-codes__item + .cap-codes__item {
+  margin-top: 6px;
+}
+.cap-codes__kind {
+  font: 600 10.5px/1 var(--cn-font-sans);
+  color: var(--cn-accent);
+  letter-spacing: 0.02em;
+}
+.cap-codes__text {
+  word-break: break-all;
+  user-select: text;
+  -webkit-user-select: text;
+  display: -webkit-box;
+  -webkit-line-clamp: 4;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.cap-codes__actions {
+  display: flex;
+  gap: 4px;
+}
+.cap-codes__btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 24px;
+  padding: 0 8px;
+  border-radius: 6px;
+  color: var(--cn-label);
+  font: 500 11.5px/24px var(--cn-font-sans);
+}
+.cap-codes__btn:hover {
+  background: var(--cn-bg-hover);
+}
+
+/* 自由选区：外接矩形里轮廓外的压暗 + 轮廓线 */
+.cap-shape {
+  position: absolute;
+  overflow: visible;
+  pointer-events: none;
+}
+.cap-shape__line {
+  fill: none;
+  stroke: var(--cap-frame-color);
+  stroke-width: var(--cap-frame-width);
+  stroke-linejoin: round;
+  filter: drop-shadow(0 0 0.5px rgba(0, 0, 0, 0.6));
+}
+
 .cap-text-layer {
   position: absolute;
   inset: 0;
@@ -274,6 +526,10 @@ html[data-view='capture'] #root {
   display: flex;
   align-items: center;
   gap: 6px;
+}
+.cap-magnifier__keys {
+  font-size: 10px;
+  color: rgba(255, 255, 255, 0.6);
 }
 .cap-magnifier__color span {
   width: 12px;

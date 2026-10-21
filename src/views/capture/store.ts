@@ -11,11 +11,12 @@
 
 import { create } from 'zustand';
 
-import type { GifProgress, LongshotProgress, SessionInfo } from '@/lib/types';
+import type { GifProgress, LongshotProgress, ScannedCode, SessionInfo } from '@/lib/types';
 import { defaultToolOptions, type Tool, type ToolOptions } from '@/views/annotate/model';
 
 import type { Point, Rect } from './geometry';
 import type { TranslatedBlock } from '@/views/annotate/translateLayer';
+import type { StructuredState } from '@/views/ocr/StructuredResult';
 
 export type Phase = 'idle' | 'detect' | 'pressing' | 'selecting' | 'editing' | 'passive' | 'longshot' | 'longshot-other' | 'gif' | 'gif-other';
 
@@ -47,6 +48,17 @@ export interface OverlayState {
   /** 原位翻译的加载动画：翻的是哪块选区、识别出来要翻的每一行（识别完才有，之前是空的）；
    *  done：翻完了，正在做收尾（占位条化开），收尾完清空 */
   trLoading: { rect: Rect; lines: LoadingLine[]; done: boolean } | null;
+  /** 锁定的宽高比（宽 / 高），拖控制点时保持；null = 自由 */
+  ratio: number | null;
+  /** 点开了尺寸标签上的选区面板（输入坐标 / 宽高、宽高比、上一次选区） */
+  sizePanel: boolean;
+  /** 自由选区的轮廓（本屏局部物理坐标），`selection` 是它的外接矩形；null = 普通矩形选区 */
+  shape: Point[] | null;
+  /** 识别出来的二维码 / 条码（显示结果卡片）；null = 没在看 */
+  codes: ScannedCode[] | null;
+  scanning: boolean;
+  /** 选区识别成表格 / 公式（AI）的结果卡片；null = 没开 */
+  structured: StructuredState | null;
 }
 
 /** 正在翻译的一行（物理像素）。bg / fg：这一行原图上的底色和字色，占位条按它配色；取不到色时为空 */
@@ -81,6 +93,12 @@ export const initialOverlay = (): Omit<OverlayState, 'options'> => ({
   translatedBlocks: [],
   moveLabels: false,
   trLoading: null,
+  ratio: null,
+  sizePanel: false,
+  shape: null,
+  codes: null,
+  scanning: false,
+  structured: null,
 });
 
 // 工具的线宽/颜色在一次运行期间记忆（规格 02 §3.7.4）—— 不随会话重置

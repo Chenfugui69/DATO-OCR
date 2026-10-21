@@ -82,7 +82,7 @@ export function OcrHistoryPage() {
                 ]}
               >
                 <div className="ocr-item" onClick={() => void ocr.openRecord(r.id).catch(notify.error)}>
-                  <div className="ocr-item__thumb">{r.imagePath && <img src={assetUrl(r.imagePath)} alt="" loading="lazy" />}</div>
+                  <div className="ocr-item__thumb">{r.imagePath && <img src={assetUrl(r.imagePath)} alt="" loading="lazy" decoding="async" />}</div>
                   <div className="ocr-item__main">
                     <div className="ocr-item__text">{r.preview || t('ocr.nothing')}</div>
                     <div className="ocr-item__meta">

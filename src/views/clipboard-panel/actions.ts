@@ -77,6 +77,7 @@ export function clipMenu(
   }
   if (item.type === 'image') {
     items.push({ label: t('clip.ocr'), onSelect: () => run(ocr.fromClip(item.id)) });
+    items.push({ label: t('clip.pinToScreen'), onSelect: () => run(clipboard.pinImage(item.id)) });
     items.push({ label: t('clip.reveal'), onSelect: () => run(clipboard.open(item.id)) });
   }
   if (item.type === 'files') items.push({ label: t('clip.reveal'), onSelect: () => run(clipboard.open(item.id)) });

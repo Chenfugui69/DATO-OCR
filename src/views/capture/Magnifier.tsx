@@ -1,7 +1,8 @@
 // 放大镜（规格 02 §3.4）：120×120、6 倍（显示鼠标周围 20×20 物理像素），像素化显示，
-// 中心十字线 + 中心像素描边；下方两行显示物理坐标和颜色值。原始像素到位前不渲染。
+// 中心十字线 + 中心像素描边；下方显示物理坐标、颜色值和取色快捷键。原始像素到位前不渲染。
 
 import { useLayoutEffect, useRef } from 'react';
+import { useTranslation } from 'react-i18next';
 
 import { formatColor } from '@/lib/format';
 import { CONTENT_INTERVAL, useThrottled } from '@/lib/hooks';
@@ -11,7 +12,7 @@ import { placeMagnifier, type Point } from './geometry';
 
 const SAMPLE = 20;
 const BOX = 120;
-const INFO_H = 46;
+const INFO_H = 62;
 
 export function Magnifier({
   pixels,
@@ -30,6 +31,7 @@ export function Magnifier({
   viewport: { width: number; height: number };
   format: 'hex' | 'rgb' | 'hsl';
 }) {
+  const { t } = useTranslation();
   const canvasRef = useRef<HTMLCanvasElement>(null);
   // 放大镜的位置每帧跟着鼠标走（只挪图层，不重画）；里面的画面、坐标、颜色隔一会儿才换
   const sample = useThrottled(cursor, CONTENT_INTERVAL);
@@ -78,6 +80,7 @@ export function Magnifier({
           <span style={{ background: `rgb(${color[0]},${color[1]},${color[2]})` }} />
           {formatColor(color, format)}
         </div>
+        <div className="cap-magnifier__keys">{t('capture.colorKeys')}</div>
       </div>
     </div>
   );

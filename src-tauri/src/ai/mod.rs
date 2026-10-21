@@ -47,6 +47,24 @@ pub fn key_of(app: &AppHandle, provider_id: &str) -> Option<String> {
         .filter(|k| !k.trim().is_empty())
 }
 
+/// 发请求用的密钥。存过密钥却解不开（钥匙串授权被拒绝、换了电脑或用户）时直接报错：
+/// 不带密钥发出去只会得到一个"密钥无效（401）"，让人以为是密钥本身坏了。
+fn request_key(app: &AppHandle, provider_id: &str) -> AppResult<Option<String>> {
+    if let Some(key) = key_of(app, provider_id) {
+        return Ok(Some(key));
+    }
+    let stored = state(app)
+        .db
+        .with(|c| secrets::exists(c, &secret_key(provider_id)))
+        .unwrap_or(false);
+    if stored {
+        return Err(AppError::msg(
+            "读不到 AI 密钥：钥匙串授权被拒绝，或换了电脑 / 用户。请重试并在系统弹窗里点\"允许\"，或在设置里重新填写密钥",
+        ));
+    }
+    Ok(None)
+}
+
 pub fn set_key(app: &AppHandle, provider_id: &str, key: Option<&str>) -> AppResult<()> {
     let key = key.map(str::trim).filter(|k| !k.is_empty());
     state(app)
@@ -268,7 +286,7 @@ pub async fn list_models(app: &AppHandle, provider_id: &str) -> AppResult<Vec<St
     if p.base_url.is_empty() {
         return Err(AppError::msg("先填写接口地址"));
     }
-    let key = key_of(app, &p.id);
+    let key = request_key(app, &p.id)?;
     let client = net::client(app, Purpose::Ai);
     match p.kind.as_str() {
         "anthropic" => anthropic::list_models(&client, &p.base_url, key.as_deref()).await,
@@ -373,7 +391,7 @@ pub async fn chat(app: AppHandle, req: ChatRequest, channel: Channel<ChatEvent>)
     let prepared = tauri::async_runtime::spawn_blocking(move || prepare(&prep_app, &messages))
         .await
         .map_err(|e| AppError::msg(e.to_string()))??;
-    let key = key_of(&app, &provider.id);
+    let key = request_key(&app, &provider.id)?;
     let client = net::client(&app, Purpose::Ai);
     let thinking = req
         .thinking
@@ -463,11 +481,34 @@ pub async fn complete(
     user: &str,
     max_tokens: u32,
 ) -> AppResult<String> {
+    complete_inner(app, model, system, user, Vec::new(), max_tokens).await
+}
+
+/// 同 `complete`，带一张图（表格、公式识别用）。模型得能看图，不能的话服务商会报错。
+pub async fn complete_with_image(
+    app: &AppHandle,
+    system: &str,
+    user: &str,
+    image: &RgbaImage,
+    max_tokens: u32,
+) -> AppResult<String> {
+    let encoded = encode_image(image)?;
+    complete_inner(app, None, system, user, vec![encoded], max_tokens).await
+}
+
+async fn complete_inner(
+    app: &AppHandle,
+    model: Option<&str>,
+    system: &str,
+    user: &str,
+    images: Vec<String>,
+    max_tokens: u32,
+) -> AppResult<String> {
     if state(app).settings.read().general.offline_mode {
         return Err(AppError::msg("已开启离线模式，AI 对话不可用"));
     }
     let (provider, model) = resolve(app, model)?;
-    let key = key_of(app, &provider.id);
+    let key = request_key(app, &provider.id)?;
     let client = net::client(app, Purpose::Ai);
     let params = Params {
         model,
@@ -479,7 +520,7 @@ pub async fn complete(
     let messages = [Prepared {
         role: "user".into(),
         text: user.to_string(),
-        images: Vec::new(),
+        images,
     }];
     let mut out = String::new();
     let collect = |piece: Piece| {

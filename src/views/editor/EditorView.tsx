@@ -19,7 +19,8 @@ import { Spinner } from '@/ui/controls';
 import { notify } from '@/ui/overlays';
 import { TitleBar } from '@/ui/TitleBar';
 import { AnnotationEngine, toolOf } from '@/views/annotate/engine';
-import { BRUSH_RANGE, defaultToolOptions, PEN_RANGE, type Tool, type ToolOptions } from '@/views/annotate/model';
+import { BRUSH_RANGE, defaultToolOptions, PEN_RANGE, watermarkOf, type Tool, type ToolOptions } from '@/views/annotate/model';
+import { saveTemplate } from '@/views/annotate/templates';
 import { bitmapSource } from '@/views/annotate/pixels';
 import { canPick, handleCursor, SelectionOverlay, toolCursor } from '@/views/annotate/SelectionOverlay';
 import { TextEditor, useEngineVersion } from '@/views/annotate/TextEditor';
@@ -36,6 +37,10 @@ export default function EditorView() {
   const [doc, setDoc] = useState<EditorDoc | null>(null);
   const [tool, setTool] = useState<Tool | null>(null);
   const [options, setOptions] = useState<ToolOptions>(defaultToolOptions);
+  // 水印跟着选项走，画在标注层上一起导出
+  useEffect(() => {
+    engine.setWatermark(watermarkOf(options.watermark, engine.scale));
+  }, [options.watermark]);
   const [ready, setReady] = useState(false);
   const [shown, setShown] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -167,17 +172,27 @@ export default function EditorView() {
   const onAction = (id: ActionId) => {
     if (id === 'cancel') void getCurrentWindow().close();
     else if (id === 'done') void done();
-    else if (id !== 'longshot' && id !== 'gif' && id !== 'undo') void finish(id);
+    else if (id !== 'longshot' && id !== 'gif' && id !== 'video' && id !== 'undo' && id !== 'qr' && id !== 'table' && id !== 'formula') void finish(id);
   };
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (engine.text) return;
+      // 水印文字之类的输入框里打字：不当快捷键
+      if ((e.target as Element | null)?.closest?.('input, textarea')) return;
+      if (e.key === 'Escape' && engine.waitingSecondClick) return void (e.preventDefault(), engine.cancelDraft());
       const ctrl = e.ctrlKey || e.metaKey;
       const k = e.key.toLowerCase();
       if ((e.key === 'Delete' || e.key === 'Backspace') && engine.selected) return void (e.preventDefault(), engine.deleteSelected());
       if (e.key === 'Escape' && engine.selected) return void (e.preventDefault(), engine.select(null));
       if (ctrl && k === 'z') return void (e.preventDefault(), engine.undo());
+      // 选中的标注调图层：⌘] 上移、⌘[ 下移，加 Shift 直接到最上 / 最下
+      if (ctrl && engine.selected && (e.code === 'BracketRight' || e.code === 'BracketLeft')) {
+        e.preventDefault();
+        const up = e.code === 'BracketRight';
+        engine.reorderSelected(e.shiftKey ? (up ? 'top' : 'bottom') : up ? 'up' : 'down');
+        return;
+      }
       if (e.key === 'Enter') return void (e.preventDefault(), done());
       if (ctrl && k === 'c') return void (e.preventDefault(), finish('copy'));
       if (ctrl && k === 's') return void (e.preventDefault(), finish('save'));
@@ -301,6 +316,15 @@ export default function EditorView() {
             className="ed-sub"
             tool={(pickedTool ?? tool)!}
             options={picked && pickedTool ? engine.optionsOf(picked, options) : options}
+            onSaveTemplate={() => {
+              const saved = saveTemplate(engine.annotations, engine.scale);
+              if (!saved) notify.info(t('tools.templateNothing'));
+              else {
+                setOptions((o) => ({ ...o, template: { selected: saved.id } }));
+                notify.success(t('tools.templateSaved'));
+              }
+              return !!saved;
+            }}
             onChange={(o) => {
               if (picked && pickedTool) engine.applyOptions(o);
               setOptions(o);
@@ -320,7 +344,8 @@ export default function EditorView() {
           onUndo={() => engine.undo()}
           // 顺序跟截图工具条用同一份设置；这里没有长截图和 GIF
           tools={cfg?.toolbarTools}
-          actions={[(cfg?.toolbarActions?.length ? cfg.toolbarActions : MID_ACTIONS).filter((a) => a !== 'longshot' && a !== 'gif'), cfg?.toolbarOrder?.length ? cfg.toolbarOrder : TAIL_ACTIONS]}
+          hidden={cfg?.toolbarHidden}
+          actions={[(cfg?.toolbarActions?.length ? cfg.toolbarActions : MID_ACTIONS).filter((a) => a !== 'longshot' && a !== 'gif' && a !== 'video' && a !== 'qr' && a !== 'table' && a !== 'formula'), cfg?.toolbarOrder?.length ? cfg.toolbarOrder : TAIL_ACTIONS]}
           onAction={onAction}
           disabledTools={{ mosaic: !ready }}
           disabledActions={{ done: busy, save: busy }}

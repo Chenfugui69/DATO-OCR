@@ -41,9 +41,11 @@ if (!existsSync(app)) {
 }
 
 const id = conf.identifier;
+// 重签会把 tauri 打包时写进去的权限声明（麦克风、摄像头）冲掉，这里再带上
+const entitlements = join(root, 'src-tauri', 'Entitlements.plist');
 execFileSync(
   'codesign',
-  ['--force', '--deep', '--sign', '-', '--options', 'runtime', '--identifier', id, `-r=designated => identifier "${id}"`, app],
+  ['--force', '--deep', '--sign', '-', '--options', 'runtime', '--entitlements', entitlements, '--identifier', id, `-r=designated => identifier "${id}"`, app],
   { stdio: 'inherit' },
 );
 execFileSync('codesign', ['--verify', '--deep', '--strict', app], { stdio: 'inherit' });

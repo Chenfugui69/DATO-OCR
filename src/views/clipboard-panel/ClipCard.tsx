@@ -19,6 +19,7 @@ import { highlightCode, looksLikeCode } from './codeText';
 import { CLIP_DRAG_TYPE } from './BoardTabs';
 import { DeviceIcon, isDeviceKind } from './DeviceIcon';
 import { OtpBody } from './OtpBody';
+import { tableOf } from './tablePreview';
 
 /** 复制的是单个 GIF 文件：卡片按图片显示（标题、图标都是 GIF） */
 export function isGifItem(item: ClipItem): boolean {
@@ -144,6 +145,31 @@ function FileArt({ path }: { path: string }) {
 }
 
 /** 卡片上悬停出来的快捷操作 */
+/** 复制的表格：第一行当表头 */
+function TableBody({ rows }: { rows: string[][] }) {
+  return (
+    <div className="clip-card__table">
+      <table>
+        <tbody>
+          {rows.map((r, i) => (
+            <tr key={i}>
+              {r.map((c, j) =>
+                i === 0 ? (
+                  <th key={j}>{c}</th>
+                ) : (
+                  <td key={j} className={/^[-+(]?[\d,.%()]+$/.test(c) ? 'is-num' : undefined}>
+                    {c}
+                  </td>
+                ),
+              )}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 export type CardAction = 'preview' | 'translate' | 'ocr' | 'ai';
 
 /** 这类卡片有哪些快捷操作：图片能识字，文字能翻译，都能问 AI、放大预览（验证码、文件、颜色没有） */
@@ -215,7 +241,7 @@ export const ClipCard = memo(function ClipCard({
     case 'image':
       body = (
         <div className="clip-card__image">
-          <img src={assetUrl(item.thumbPath ?? item.filePath)} alt="" loading="lazy" draggable={false} />
+          <img src={assetUrl(item.thumbPath ?? item.filePath)} alt="" loading="lazy" decoding="async" draggable={false} />
         </div>
       );
       if (item.width && item.height) detail = `${item.width} × ${item.height}`;
@@ -273,9 +299,18 @@ export const ClipCard = memo(function ClipCard({
         </div>
       );
       break;
-    default:
-      body = code ? <pre className="clip-card__code cn-mono">{highlightCode(text)}</pre> : <TextBody text={text} layout={layout} />;
+    default: {
+      // 复制的表格（制表符分隔的几行）画成小表格
+      const table = code ? null : tableOf(text, (item.charCount ?? 0) > text.length);
+      body = code ? (
+        <pre className="clip-card__code cn-mono">{highlightCode(text)}</pre>
+      ) : table ? (
+        <TableBody rows={table} />
+      ) : (
+        <TextBody text={text} layout={layout} />
+      );
       if (item.charCount != null) detail = t('clip.chars', { count: item.charCount });
+    }
   }
 
   const app = (

@@ -36,15 +36,37 @@ pub fn framed_builder<'a>(
 }
 
 pub fn show_main(app: &AppHandle, page: Option<&str>) {
-    let Some(window) = app.get_webview_window(MAIN) else {
-        tracing::error!("主窗口不存在");
+    let page = page.map(str::to_string);
+    let ui = app.clone();
+    // 主窗口不预建（藏着也要一百多 MB），用到才建；藏起来一阵后释放，见 lifecycle.rs
+    let _ = app.run_on_main_thread(move || {
+        crate::lifecycle::when_ready(&ui, MAIN, create_main, move |app, window| {
+            let _ = window.unminimize();
+            let _ = window.show();
+            let _ = window.set_focus();
+            if let Some(page) = page {
+                let _ = app.emit_to(MAIN, events::NAVIGATE, page);
+            }
+        });
+    });
+}
+
+/// 按配置文件里的样子建主窗口（`tauri.conf.json` 里 `create: false`，不让它启动时自己建）。
+fn create_main(app: &AppHandle) {
+    let Some(config) = app
+        .config()
+        .app
+        .windows
+        .iter()
+        .find(|w| w.label == MAIN)
+        .cloned()
+    else {
+        tracing::error!("配置里没有主窗口");
         return;
     };
-    let _ = window.unminimize();
-    let _ = window.show();
-    let _ = window.set_focus();
-    if let Some(page) = page {
-        let _ = app.emit_to(MAIN, events::NAVIGATE, page);
+    match WebviewWindowBuilder::from_config(app, &config).and_then(|b| b.build()) {
+        Ok(window) => apply_window_effects(app, &window),
+        Err(err) => tracing::error!("创建主窗口失败：{err}"),
     }
 }
 
@@ -308,7 +330,7 @@ pub struct ToastPayload {
     pub message: String,
 }
 
-pub fn prewarm_toast(app: &AppHandle) {
+fn create_toast(app: &AppHandle) {
     if app.get_webview_window(TOAST).is_some() {
         return;
     }
@@ -333,17 +355,17 @@ pub fn prewarm_toast(app: &AppHandle) {
 pub fn toast(app: &AppHandle, kind: &'static str, message: impl Into<String>) {
     let message = crate::i18n::text(message.into());
     let app = app.clone();
-    let _ = app.clone().run_on_main_thread(move || {
-        let Some(window) = app.get_webview_window(TOAST) else {
-            return;
-        };
-        if let Some(monitor) = monitor_under_cursor() {
-            let _ = place_on_monitor(&window, &monitor, 360.0, 220.0, Anchor::BottomRight);
-        }
-        let _ = app.emit_to(TOAST, events::TOAST, ToastPayload { kind, message });
-        if let Err(err) = platform::show_without_activate(&window) {
-            tracing::debug!("显示 toast 失败：{err}");
-        }
-        reveal_floating(&app, &window);
+    let ui = app.clone();
+    let _ = app.run_on_main_thread(move || {
+        crate::lifecycle::when_ready(&ui, TOAST, create_toast, move |app, window| {
+            if let Some(monitor) = monitor_under_cursor() {
+                let _ = place_on_monitor(&window, &monitor, 360.0, 220.0, Anchor::BottomRight);
+            }
+            let _ = app.emit_to(TOAST, events::TOAST, ToastPayload { kind, message });
+            if let Err(err) = platform::show_without_activate(&window) {
+                tracing::debug!("显示 toast 失败：{err}");
+            }
+            reveal_floating(app, &window);
+        });
     });
 }

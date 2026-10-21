@@ -547,6 +547,16 @@ html[data-view='main'][data-glass='off'] body {
   font: var(--cn-text-large-title);
   letter-spacing: -0.4px;
 }
+.settings-side__search {
+  margin: 0 4px 10px;
+}
+.settings-side__item[data-dim='true'] {
+  opacity: 0.4;
+}
+/* 搜索时对不上的行 / 分组 */
+.settings .set-miss {
+  display: none;
+}
 .settings-side__list {
   display: flex;
   flex-direction: column;
@@ -802,6 +812,9 @@ html[data-view='main'][data-glass='off'] body {
 }
 .tb-order__item:active:not(:disabled) {
   transform: none;
+}
+.tb-order__item[data-hidden] {
+  opacity: 0.3;
 }
 .tb-order__item[data-dragging] {
   cursor: grabbing;

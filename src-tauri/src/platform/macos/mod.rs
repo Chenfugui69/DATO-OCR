@@ -22,7 +22,14 @@ pub mod system_events;
 pub mod system_info;
 pub mod window_enum;
 
+mod alloc;
+mod codes;
 mod ffi;
+mod media;
+mod video;
+
+pub use media::{media_access, request_media_access, Camera};
+pub use video::{export as export_video, VideoWriter};
 mod geometry;
 mod util;
 
@@ -124,6 +131,17 @@ pub fn init_process() {
 
 /// 静默启动（开机自启）时不显示任何窗口，但 macOS 照样会把新启动的应用切到前台，
 /// 用户正在用的程序就丢了焦点。把前台还给启动前的那个应用。
+/// 见 `platform::scan_codes`。Vision 没认出来（很少见，比如码很小、很糊）再用 rqrr 试一遍。
+pub fn scan_codes(
+    image: &image::RgbaImage,
+) -> crate::error::AppResult<Vec<super::types::ScannedCode>> {
+    let found = codes::scan(image)?;
+    if found.is_empty() {
+        return super::generic::scan_codes(image);
+    }
+    Ok(found)
+}
+
 pub fn after_silent_start() {
     let pid = LAUNCHED_OVER.load(std::sync::atomic::Ordering::SeqCst);
     if pid == 0 || pid == std::process::id() as i32 {

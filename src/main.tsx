@@ -4,8 +4,9 @@ import '@/styles/base.css';
 import '@/ui/ui.css';
 
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { Component, StrictMode, type ComponentType, type ErrorInfo, type ReactNode } from 'react';
+import { Component, StrictMode, useEffect, type ComponentType, type ErrorInfo, type ReactNode } from 'react';
 import { createRoot } from 'react-dom/client';
+import { invoke } from '@tauri-apps/api/core';
 
 import { setLanguage } from '@/i18n';
 import { reportError } from '@/lib/ipc';
@@ -18,12 +19,14 @@ type ViewModule = { default: ComponentType };
 
 const views: [match: (label: string) => boolean, name: string, load: () => Promise<ViewModule>][] = [
   [(l) => l.startsWith('capture-'), 'capture', () => import('@/views/capture/CaptureView')],
+  [(l) => l.startsWith('pin-color-'), 'color-pin', () => import('@/views/color-pin/ColorPinView')],
   [(l) => l.startsWith('pin-'), 'pin', () => import('@/views/pin/PinView')],
   [(l) => l === 'clipboard', 'clipboard', () => import('@/views/clipboard-panel/PanelView')],
   [(l) => l === 'preview', 'preview', () => import('@/views/clipboard-panel/PreviewView')],
   [(l) => l === 'toast', 'toast', () => import('@/views/toast/ToastView')],
   [(l) => l === 'ocr', 'ocr', () => import('@/views/ocr/OcrView')],
   [(l) => l === 'editor', 'editor', () => import('@/views/editor/EditorView')],
+  [(l) => l === 'recedit', 'recedit', () => import('@/views/record-edit/RecordEditView')],
   [(l) => l === 'translate', 'translate', () => import('@/views/translate/TranslatePopup')],
   [(l) => l === 'selbtn', 'selbtn', () => import('@/views/translate/SelectionButton')],
   [(l) => l === 'ai', 'ai', () => import('@/views/ai/AiView')],
@@ -48,6 +51,19 @@ class ErrorBoundary extends Component<{ children: ReactNode }, { error: Error | 
     }
     return this.props.children;
   }
+}
+
+/**
+ * 页面渲染完了告诉后端：窗口是用到才建的（lifecycle.rs），后端等到这一下才显示窗口、发事件，
+ * 不然页面还没开始听，事件就丢了。放在视图后面：它的 effect 在视图的 effect（订阅事件）之后跑；
+ * 订阅本身要走一趟 IPC，再稍等一下。
+ */
+function ReadySignal() {
+  useEffect(() => {
+    const timer = window.setTimeout(() => void invoke('window_ready').catch(() => undefined), 30);
+    return () => window.clearTimeout(timer);
+  }, []);
+  return null;
 }
 
 /** 桌面应用里屏蔽浏览器默认行为：刷新、打印、查找、右键菜单。 */
@@ -102,6 +118,7 @@ async function boot() {
       <QueryClientProvider client={queryClient}>
         <TooltipProvider>
           <View />
+          <ReadySignal />
           <DialogHost />
           <Toaster />
         </TooltipProvider>

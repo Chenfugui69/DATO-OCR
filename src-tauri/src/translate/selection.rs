@@ -292,82 +292,81 @@ fn open_popup(app: &AppHandle, text: String, at: Option<(i32, i32)>, preview: bo
         *CURRENT.lock() = Some(text.clone());
     }
     let (w, h) = popup_size(app);
-    let app = app.clone();
-    let _ = app.clone().run_on_main_thread(move || {
-        prewarm(&app);
-        let Some(window) = app.get_webview_window(WINDOW) else {
-            return;
-        };
-        if preview {
-            // 材质、圆角按最新的设置来（平时是改设置时另外应用的，这里顺手对齐一次）。
-            // 只在毛玻璃、圆角真的变了时重设：重设要先拆掉背板和圆角再挂上，拖宽高滑块时每一下都重来，面板一直闪
-            let popup = state(&app).settings.read().translate.popup.clone();
-            let material = (popup.blur, popup.radius);
-            let mut last = PREVIEW_MATERIAL.lock();
-            if !refresh_only || *last != Some(material) {
-                *last = Some(material);
-                apply_popup_material(&app);
+    let ui = app.clone();
+    let _ = app.run_on_main_thread(move || {
+        // 面板不预建，用到才建（等页面加载完再显示），闲置一阵后释放，见 lifecycle.rs
+        crate::lifecycle::when_ready(&ui, WINDOW, prewarm, move |app, window| {
+            if preview {
+                // 材质、圆角按最新的设置来（平时是改设置时另外应用的，这里顺手对齐一次）。
+                // 只在毛玻璃、圆角真的变了时重设：重设要先拆掉背板和圆角再挂上，拖宽高滑块时每一下都重来，面板一直闪
+                let popup = state(app).settings.read().translate.popup.clone();
+                let material = (popup.blur, popup.radius);
+                let mut last = PREVIEW_MATERIAL.lock();
+                if !refresh_only || *last != Some(material) {
+                    *last = Some(material);
+                    apply_popup_material(app);
+                }
             }
-        }
-        let at = if preview { preview_anchor(&app, w) } else { at };
-        let (anchor, monitor) = match at {
-            Some((x, y)) => (wm::Anchor::Point(x, y), wm::monitor_at(x, y)),
-            None => (wm::Anchor::Cursor, wm::monitor_under_cursor()),
-        };
-        let mut reserve = 0.0;
-        if let Some(monitor) = monitor {
-            let placed = wm::rect_on_monitor(&monitor, w, h, anchor);
-            if preview && cfg!(windows) {
-                // Windows 的预览不给"问 AI"抽屉往上预留：预留要先摆好、再把窗口往上扩、再裁掉扩出来的那截，
-                // 拖滑块时每一下都走一遍，中间那几帧面板忽高忽低；`place_window` 自己也要挪、改大小、再挪三步。
-                // 这里一步摆到位。真要展开抽屉，页面会自己挪窗口
-                platform::set_rect_region(&window, None);
-                platform::set_backdrop_rect(&window, None, 0);
-                let _ = platform::set_bounds(
-                    &window,
-                    placed.x,
-                    placed.y,
-                    placed.width,
-                    placed.height,
-                );
-                // 背板 / 圆角立刻按新大小裁，别等 Resized 事件
-                wm::refit_glass(&window);
-            } else {
-                let _ = platform::place_window(
-                    &window,
-                    placed.x,
-                    placed.y,
-                    placed.width,
-                    placed.height,
-                );
-                reserve = reserve_above(&app, &window, &monitor, placed, h);
+            let at = if preview { preview_anchor(app, w) } else { at };
+            let (anchor, monitor) = match at {
+                Some((x, y)) => (wm::Anchor::Point(x, y), wm::monitor_at(x, y)),
+                None => (wm::Anchor::Cursor, wm::monitor_under_cursor()),
+            };
+            let mut reserve = 0.0;
+            if let Some(monitor) = monitor {
+                let placed = wm::rect_on_monitor(&monitor, w, h, anchor);
+                if preview && cfg!(windows) {
+                    // Windows 的预览不给"问 AI"抽屉往上预留：预留要先摆好、再把窗口往上扩、再裁掉扩出来的那截，
+                    // 拖滑块时每一下都走一遍，中间那几帧面板忽高忽低；`place_window` 自己也要挪、改大小、再挪三步。
+                    // 这里一步摆到位。真要展开抽屉，页面会自己挪窗口
+                    platform::set_rect_region(&window, None);
+                    platform::set_backdrop_rect(&window, None, 0);
+                    let _ = platform::set_bounds(
+                        &window,
+                        placed.x,
+                        placed.y,
+                        placed.width,
+                        placed.height,
+                    );
+                    // 背板 / 圆角立刻按新大小裁，别等 Resized 事件
+                    wm::refit_glass(&window);
+                } else {
+                    let _ = platform::place_window(
+                        &window,
+                        placed.x,
+                        placed.y,
+                        placed.width,
+                        placed.height,
+                    );
+                    reserve = reserve_above(app, &window, &monitor, placed, h);
+                }
             }
-        }
-        *RESERVE.lock() = reserve;
-        if refresh_only && window.is_visible().unwrap_or(false) {
-            return;
-        }
-        let _ = app.emit_to(
-            WINDOW,
-            events::TRANSLATE_REQUEST,
-            TranslatePopup {
-                text,
-                reserve,
-                preview,
-            },
-        );
-        if preview {
-            // 用户正在主窗口里拖滑块，不能把焦点抢走
-            let _ = platform::show_without_activate(&window);
-            return;
-        }
-        // Tauri 的 show() 只在它记的状态从"藏"变"显示"时才真的显示。窗口被原生调用藏过的话，
-        // 它可能还记着"显示中"，先对齐一下
-        if !window.is_visible().unwrap_or(false) {
-            let _ = window.hide();
-        }
-        let _ = window.show();
-        let _ = platform::take_focus(&window);
+            *RESERVE.lock() = reserve;
+            if refresh_only && window.is_visible().unwrap_or(false) {
+                return;
+            }
+            let _ = app.emit_to(
+                WINDOW,
+                events::TRANSLATE_REQUEST,
+                TranslatePopup {
+                    text,
+                    reserve,
+                    preview,
+                },
+            );
+            if preview {
+                // 用户正在主窗口里拖滑块，不能把焦点抢走
+                let _ = platform::show_without_activate(&window);
+                return;
+            }
+            // Tauri 的 show() 只在它记的状态从"藏"变"显示"时才真的显示。窗口被原生调用藏过的话，
+            // 它可能还记着"显示中"，先对齐一下
+            if !window.is_visible().unwrap_or(false) {
+                let _ = window.hide();
+            }
+            let _ = window.show();
+            let _ = platform::take_focus(&window);
+        });
     });
 }
 
@@ -452,12 +451,18 @@ pub fn reconfigure(app: &AppHandle) {
         tracing::info!("划词监听已关闭");
     }
     drop(watch);
+    let ui = app.clone();
     if sel.show_button {
-        let ui = app.clone();
+        // 小圆点常驻：选中文字后它得马上出来，等现建窗口、加载页面要两三百毫秒
         let _ = app.run_on_main_thread(move || prewarm_button(&ui));
-    }
-    if !sel.show_button {
+    } else {
         hide_button(app);
+        // 关掉了就不用留着它占内存
+        let _ = app.run_on_main_thread(move || {
+            if let Some(window) = ui.get_webview_window(BUTTON_WINDOW) {
+                let _ = window.destroy();
+            }
+        });
     }
 }
 
@@ -619,23 +624,26 @@ fn show_button(
 
     let ui = app.clone();
     let _ = app.run_on_main_thread(move || {
-        prewarm_button(&ui);
-        let Some(window) = ui.get_webview_window(BUTTON_WINDOW) else {
-            return;
-        };
-        let _ = platform::place_window(&window, rect.x, rect.y, rect.width, rect.height);
-        let _ = ui.emit_to(
-            BUTTON_WINDOW,
-            events::SELECTION_BUTTON_SHOW,
-            ButtonShow {
-                generation,
-                dark,
-                backdrop,
-            },
-        );
-        let _ = platform::show_without_activate(&window);
-        BUTTON_ON_SCREEN.store(true, Ordering::SeqCst);
-        wm::reveal_floating(&ui, &window);
+        // 按钮不预建，第一次选字时才建（之后常驻一阵，闲置后释放，见 lifecycle.rs）
+        crate::lifecycle::when_ready(&ui, BUTTON_WINDOW, prewarm_button, move |ui, window| {
+            // 第一次要等窗口建好，这期间又选了别的、或者按钮已经被收起了：这一颗作废
+            if BUTTON_GEN.load(Ordering::SeqCst) != generation {
+                return;
+            }
+            let _ = platform::place_window(&window, rect.x, rect.y, rect.width, rect.height);
+            let _ = ui.emit_to(
+                BUTTON_WINDOW,
+                events::SELECTION_BUTTON_SHOW,
+                ButtonShow {
+                    generation,
+                    dark,
+                    backdrop,
+                },
+            );
+            let _ = platform::show_without_activate(&window);
+            BUTTON_ON_SCREEN.store(true, Ordering::SeqCst);
+            wm::reveal_floating(ui, &window);
+        });
     });
 
     // 没人理它就自己收起；鼠标停在按钮上时不收

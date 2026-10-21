@@ -2,7 +2,7 @@
 
 import { Channel, invoke } from '@tauri-apps/api/core';
 
-import type { AiContext, AppInfo, CaptureIntent, ChatEvent, ChatRequest, ClipDetail, ClipGroup, ClipPage, ClipQuery, ClipStats, DavDevice, EditorAction, EditorDoc, EngineStatus, FinishAction, HotkeyStatus, MailCodeSettings, MailCodesStatus, McpStatus, OcrJob, SmartSuggestion, OcrPage, Permissions, PhysicalRect, PinInfo, ProviderInfo, RegionTranslation, SecretsStatus, SessionInfo, Settings, ShotPage, SyncStatus, UpdateStatus, ShotQuery, TranslateRequest, TranslateResult, VisualCapabilities } from './types';
+import type { AiContext, AppInfo, CaptureIntent, ChatEvent, ChatRequest, ClipDetail, ClipGroup, ClipPage, ClipQuery, ClipStats, DavDevice, EditorAction, EditorDoc, EngineStatus, FinishAction, HotkeyStatus, MailCodeSettings, MailCodesStatus, McpStatus, MediaAccess, MediaKind, RecordEditInfo, OcrJob, SmartSuggestion, OcrPage, Permissions, PhysicalRect, PinInfo, PinText, ScannedCode, ProviderInfo, RegionTranslation, SecretsStatus, SessionInfo, Settings, ShotPage, SyncStatus, UpdateStatus, ShotQuery, TranslateRequest, TranslateResult, VisualCapabilities } from './types';
 
 /** Rust 侧 AppError 的结构化形态。 */
 export class AppError extends Error {
@@ -61,6 +61,8 @@ export const capture = {
       rect: PhysicalRect;
       action: FinishAction;
       annotationAt: [number, number] | null;
+      /** 自由选区的轮廓（本屏局部物理坐标），普通矩形选区为 null */
+      shape?: [number, number][] | null;
     },
     annotationPng: Uint8Array,
   ) => callRaw<void>('capture_finish', meta, annotationPng),
@@ -75,12 +77,34 @@ export const capture = {
     return call<RegionTranslation>('capture_translate', { request, onLines: channel });
   },
   writeText: (text: string) => call<void>('clipboard_write_text', { text }),
+  /** 同时写纯文本和 HTML（表格粘贴到 Excel / Word 时保留合并单元格） */
+  writeRich: (text: string, html: string) => call<void>('clipboard_write_rich', { text, html }),
+  /** 识别选区里的二维码 / 条码 */
+  scanCodes: (sessionId: number, monitorId: number, rect: PhysicalRect) => call<ScannedCode[]>('capture_scan_codes', { sessionId, monitorId, rect }),
+  /** 鼠标下的颜色贴到屏幕上（本屏局部物理坐标），截图随之结束 */
+  pinColor: (sessionId: number, monitorId: number, x: number, y: number, rgb: [number, number, number]) =>
+    call<void>('capture_pin_color', { sessionId, monitorId, x, y, rgb }),
+  /** 选区识别成表格 / 公式（AI） */
+  structure: (sessionId: number, monitorId: number, rect: PhysicalRect, kind: 'table' | 'formula') =>
+    call<string>('capture_structure', { sessionId, monitorId, rect, kind }),
 };
 
 export const gif = {
   setRegions: (regions: PhysicalRect[]) => call<void>('gif_set_regions', { regions }),
   finish: () => call<void>('gif_finish'),
   cancel: () => call<void>('gif_cancel'),
+};
+
+export const record = {
+  /** 待剪辑的那段录制 */
+  editInfo: () => call<RecordEditInfo>('record_edit_info'),
+  /** 按剪辑保存（导出要一会儿） */
+  editSave: (id: number, startMs: number, endMs: number, speed: number) => call<void>('record_edit_save', { id, startMs, endMs, speed }),
+  editDiscard: (id: number) => call<void>('record_edit_discard', { id }),
+  /** 麦克风 / 摄像头的授权状态 */
+  mediaAccess: (kind: MediaKind) => call<MediaAccess>('media_access', { kind }),
+  /** 还没问过就弹系统授权框，等用户点完 */
+  mediaRequest: (kind: MediaKind) => call<MediaAccess>('media_request', { kind }),
 };
 
 export const longshot = {
@@ -95,6 +119,12 @@ export const pin = {
   /** 图画好了，可以显示窗口了 */
   ready: (label: string) => call<void>('pin_ready', { label }),
   close: (label: string) => call<void>('pin_close', { label }),
+  /** 贴图里的文字和位置（第一次要时才识别） */
+  text: (label: string) => call<PinText[]>('pin_text', { label }),
+  scanCodes: (label: string) => call<ScannedCode[]>('pin_scan_codes', { label }),
+  /** 旋转 / 翻转，返回新的尺寸 */
+  transform: (label: string, op: 'rotateCw' | 'rotateCcw' | 'flipH' | 'flipV') => call<PinInfo>('pin_transform', { label, op }),
+  edit: (label: string) => call<void>('pin_edit', { label }),
   closeAll: () => call<void>('pin_close_all'),
   copy: (label: string) => call<void>('pin_copy', { label }),
   save: (label: string) => call<void>('pin_save', { label }),
@@ -112,6 +142,8 @@ export const editor = {
 // ───────────────────────── 剪贴板 ─────────────────────────
 
 export const clipboard = {
+  /** 把一条图片记录贴到屏幕上 */
+  pinImage: (id: number) => call<void>('clipboard_pin_image', { id }),
   /** GIF 卡片预览：数据目录里那份副本的相对路径（早先的记录现在补一份） */
   gifPreview: (id: number) => call<string | null>('clipboard_gif_preview', { id }),
   /** 来源应用图标的主色：{图标路径: '#rrggbb'}，算不出的没有 */
@@ -193,6 +225,10 @@ export const library = {
 };
 
 export const ocr = {
+  /** 用 AI 把识字的图识别成表格（HTML）/ 公式（LaTeX + MathML） */
+  structure: (jobId: string, kind: 'table' | 'formula') => call<string>('ocr_structure', { jobId, kind }),
+  /** 表格导出成 .xlsx（先问存哪），返回存好的路径；取消返回 null */
+  exportXlsx: (rows: { text: string; header: boolean; rowSpan: number; colSpan: number }[][]) => call<string | null>('ocr_export_xlsx', { rows }),
   currentJob: () => call<OcrJob | null>('ocr_current_job'),
   rerun: (jobId: string, engine: string | null, upscale: boolean) =>
     call<void>('ocr_rerun', { jobId, engine, upscale }),
@@ -270,6 +306,8 @@ export const system = {
   mcpRegenerateToken: () => call<McpStatus>('mcp_regenerate_token'),
   quit: () => call<void>('quit_app'),
   hideToast: () => call<void>('toast_hide'),
+  /** 右下角的 toast（截图遮罩关掉之后还要提示一句时用） */
+  toast: (kind: 'success' | 'info' | 'error', message: string) => call<void>('toast_show', { kind, message }),
   /** 要用户手动授予的系统权限（macOS）；别的平台两项都是 null */
   permissions: () => call<Permissions>('permissions_status'),
   /** 弹系统的授权引导并打开对应的系统设置页 */

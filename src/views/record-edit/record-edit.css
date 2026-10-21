@@ -1,0 +1,137 @@
+/* 剪辑录制窗口。有毛玻璃时窗口底透明，没有时用不透明窗口底色 */
+html[data-view='recedit'][data-glass='off'] body {
+  background: var(--cn-bg-window);
+}
+.re-root {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  user-select: none;
+  -webkit-user-select: none;
+}
+.re-preview {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  background: repeating-conic-gradient(var(--cn-fill-quaternary) 0% 25%, transparent 0% 50%) 50% / 16px 16px;
+  box-shadow: inset 0 0.5px 0 var(--cn-separator), inset 0 -0.5px 0 var(--cn-separator);
+}
+.re-preview video,
+.re-preview img {
+  max-width: 100%;
+  max-height: 100%;
+  min-height: 0;
+  object-fit: contain;
+  border-radius: 6px;
+  box-shadow: 0 2px 16px rgba(0, 0, 0, 0.2), 0 0 0 0.5px var(--cn-separator);
+  background: #000;
+}
+.re-saving {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  background: color-mix(in srgb, var(--cn-bg-window) 70%, transparent);
+  font: var(--cn-text-body);
+  color: var(--cn-label);
+}
+.re-timeline {
+  padding: 14px 18px 6px;
+}
+.re-strip {
+  position: relative;
+  height: 56px;
+  border-radius: 8px;
+  overflow: visible;
+  cursor: pointer;
+}
+.re-tiles {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--cn-fill-tertiary);
+}
+.re-tiles img {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  object-fit: cover;
+}
+.re-dim {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.55);
+  pointer-events: none;
+}
+.re-dim:first-of-type {
+  border-radius: 8px 0 0 8px;
+}
+.re-sel {
+  position: absolute;
+  top: -2px;
+  bottom: -2px;
+  border: 2px solid #ffcc00;
+  border-left-width: 0;
+  border-right-width: 0;
+  pointer-events: none;
+}
+.re-handle {
+  position: absolute;
+  top: -2px;
+  bottom: -2px;
+  width: 12px;
+  background: #ffcc00;
+  pointer-events: auto;
+  cursor: ew-resize;
+}
+.re-handle::after {
+  content: '';
+  position: absolute;
+  left: 5px;
+  top: 35%;
+  bottom: 35%;
+  width: 2px;
+  border-radius: 1px;
+  background: rgba(0, 0, 0, 0.45);
+}
+.re-handle--in {
+  left: -12px;
+  border-radius: 6px 0 0 6px;
+}
+.re-handle--out {
+  right: -12px;
+  border-radius: 0 6px 6px 0;
+}
+.re-head {
+  position: absolute;
+  top: -6px;
+  bottom: -6px;
+  width: 2px;
+  margin-left: -1px;
+  border-radius: 1px;
+  background: #fff;
+  box-shadow: 0 0 0 0.5px rgba(0, 0, 0, 0.4), 0 1px 4px rgba(0, 0, 0, 0.4);
+  pointer-events: none;
+}
+.re-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 18px 14px;
+  font: var(--cn-text-callout);
+  color: var(--cn-label-secondary);
+}
+.re-time {
+  color: var(--cn-label);
+}
+.re-spacer {
+  flex: 1;
+}

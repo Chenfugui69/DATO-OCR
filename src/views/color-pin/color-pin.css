@@ -1,0 +1,89 @@
+/* 颜色贴图：窗口透明，卡片四周留 12px 给阴影 */
+html[data-view='color-pin'],
+html[data-view='color-pin'] body,
+html[data-view='color-pin'] #root {
+  background: transparent !important;
+}
+.cpin {
+  position: fixed;
+  inset: 0;
+  padding: 12px;
+  cursor: default;
+  user-select: none;
+  -webkit-user-select: none;
+}
+.cpin__card {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 36px;
+  padding: 0 6px 0 8px;
+  border-radius: 10px;
+  color: var(--cn-label);
+  font: 500 12px/1 var(--cn-font-sans);
+  box-shadow:
+    0 4px 14px rgba(0, 0, 0, 0.18),
+    0 0 0 0.5px rgba(0, 0, 0, 0.2);
+}
+.cpin__card--open {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 4px;
+  height: auto;
+  padding: 8px 8px 10px 12px;
+}
+.cpin__head,
+.cpin__row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 24px;
+}
+.cpin__label,
+.cpin__key {
+  color: var(--cn-label-secondary);
+}
+.cpin__key {
+  width: 34px;
+}
+.cpin__spacer {
+  flex: 1;
+}
+.cpin__swatch {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  border-radius: 4px;
+  box-shadow: inset 0 0 0 0.5px rgba(0, 0, 0, 0.25);
+}
+.cpin__swatch--btn {
+  cursor: pointer;
+}
+.cpin__value {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cpin__icon {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  color: var(--cn-label-secondary);
+}
+.cpin__icon:hover {
+  background: var(--cn-bg-hover);
+  color: var(--cn-label);
+}
+/* 收起时的 × 平时藏着，鼠标移上卡片才出来 */
+.cpin__close {
+  opacity: 0;
+  transition: opacity var(--cn-duration-fast);
+}
+.cpin__card:hover .cpin__close {
+  opacity: 1;
+}

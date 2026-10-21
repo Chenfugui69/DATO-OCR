@@ -23,8 +23,25 @@ import {
   type Rect,
 } from '@/views/capture/geometry';
 
-import { newId, type Annotation, type Tool, type ToolOptions } from './model';
-import { annotationBounds, drawAnnotation, LABEL_REVEAL_MS, measureText, mosaicCell, type Backdrop } from './render';
+import { DEFAULT_FILL_OPACITY, newId, type Annotation, type TextStyle, type Tool, type ToolOptions, type Watermark } from './model';
+import {
+  annotationBounds,
+  drawAnnotation,
+  drawSpotlights,
+  drawWatermark,
+  LABEL_REVEAL_MS,
+  measureText,
+  mosaicCell,
+  placeMagnifier,
+  type Backdrop,
+} from './render';
+import { instantiate, listTemplates } from './templates';
+
+type Spotlight = Extract<Annotation, { kind: 'spotlight' }>;
+const isSpotlight = (a: Annotation): a is Spotlight => a.kind === 'spotlight';
+/** 有矩形范围、能拖八个控制点改大小的标注 */
+const isBoxed = (a: Annotation): a is Extract<Annotation, { rect: Rect }> =>
+  a.kind === 'rect' || a.kind === 'ellipse' || a.kind === 'mosaicRect' || a.kind === 'label' || a.kind === 'highlightRect' || a.kind === 'spotlight';
 
 export interface TextDraft {
   at: Point;
@@ -32,12 +49,13 @@ export interface TextDraft {
   color: string;
   fontSize: number;
   bold: boolean;
+  style?: TextStyle;
   /** 重新编辑已有文字时，原来那条的 id */
   editing?: string;
 }
 
-/** 选中标注上的控制点：矩形类八个方向，箭头两头 */
-export type AnnotationHandle = Handle | 'from' | 'to';
+/** 选中标注上的控制点：矩形类八个方向，箭头两头，角度标注还有顶点 */
+export type AnnotationHandle = Handle | 'from' | 'to' | 'vertex';
 
 export interface SelectionInfo {
   id: string;
@@ -48,6 +66,8 @@ export interface SelectionInfo {
 }
 
 const MAX_HISTORY = 100;
+/** 多久之内对同一个标注的连续改样式算一步撤销 */
+const RESTYLE_MERGE_MS = 800;
 /** 文字只有四个角能拖：字是按比例缩放的，拉单边没有意义 */
 const TEXT_HANDLES: Handle[] = ['nw', 'ne', 'se', 'sw'];
 
@@ -85,14 +105,24 @@ function translated(a: Annotation, dx: number, dy: number): Annotation {
     case 'ellipse':
     case 'mosaicRect':
     case 'label':
+    case 'highlightRect':
+    case 'spotlight':
       return { ...a, rect: mr(a.rect) };
     case 'arrow':
       return { ...a, from: mv(a.from), to: mv(a.to) };
     case 'pen':
+    case 'highlight':
     case 'mosaic':
       return { ...a, points: a.points.map(mv) };
     case 'text':
+    case 'counter':
       return { ...a, at: mv(a.at) };
+    case 'magnifier':
+      return { ...a, source: mr(a.source), center: mv(a.center) };
+    case 'distance':
+      return { ...a, from: mv(a.from), to: mv(a.to) };
+    case 'angle':
+      return { ...a, vertex: mv(a.vertex), a: mv(a.a), b: mv(a.b) };
   }
 }
 
@@ -104,9 +134,18 @@ export function toolOf(a: Annotation): Tool | null {
     case 'arrow':
     case 'pen':
     case 'text':
+    case 'counter':
       return a.kind;
+    case 'highlight':
+    case 'highlightRect':
+    case 'spotlight':
+    case 'magnifier':
+      return 'highlight';
     case 'mosaicRect':
       return 'mosaic';
+    case 'distance':
+    case 'angle':
+      return 'measure';
     default:
       return null;
   }
@@ -128,6 +167,8 @@ export class AnnotationEngine {
   version = 0;
   /** 选中的标注 id */
   selected: string | null = null;
+  /** 上一次改选中标注样式的时间（合并撤销用，见 `applyOptions`） */
+  private lastRestyle: { id: string; at: number } | null = null;
 
   private committed: HTMLCanvasElement | null = null;
   private drafting: HTMLCanvasElement | null = null;
@@ -138,6 +179,12 @@ export class AnnotationEngine {
   private committedDirty = false;
   private history: Annotation[][] = [];
   private transform: { handle: AnnotationHandle | 'move'; at: Point; orig: Annotation; moved: boolean } | null = null;
+  /** 水印（整张图平铺），null = 不画。不进撤销历史：改设置一样随时开关 */
+  watermark: Watermark | null = null;
+  /** 角度标注画完第一条边、松开了鼠标：在等第二条边（移鼠标定方向，再点一下完成） */
+  private anglePending = false;
+  /** 橡皮擦正按着：拖过的标注都擦掉，整次拖动算一步撤销 */
+  private erasing: { checkpointed: boolean; tolerance: number } | null = null;
 
   attach(committed: HTMLCanvasElement | null, drafting: HTMLCanvasElement | null) {
     this.committed = committed;
@@ -164,6 +211,9 @@ export class AnnotationEngine {
     this.start = null;
     this.selected = null;
     this.transform = null;
+    this.erasing = null;
+    this.anglePending = false;
+    this.watermark = null;
     this.history = [];
     this.clearCanvas(this.committed);
     this.committedEmpty = true;
@@ -176,7 +226,7 @@ export class AnnotationEngine {
     this.clip = clip;
     // 拖选区时每帧都会走到这里。没有标注时画布本来就是空的，不用再整块清一遍
     // （4K 画布清一次就要几毫秒，还得把整张画布重新上传给合成器）
-    if (this.annotations.length === 0 && this.committedEmpty) return;
+    if (this.annotations.length === 0 && !this.watermark && this.committedEmpty) return;
     this.renderCommitted();
   }
 
@@ -209,24 +259,75 @@ export class AnnotationEngine {
   // ───────────────────────── 绘制 ─────────────────────────
 
   begin(tool: Exclude<Tool, 'text'>, p: Point, opts: ToolOptions) {
+    // 角度标注的第二次点击：定下第二条边，完成
+    if (this.anglePending && this.draft?.kind === 'angle') {
+      this.anglePending = false;
+      this.draft.b = p;
+      this.end();
+      return;
+    }
     const s = this.scale;
     this.start = p;
     this.selected = null;
+    if (tool === 'template') {
+      // 模板：整组插进来，左上角放在点的位置
+      const t = listTemplates().find((x) => x.id === opts.template.selected);
+      this.start = null;
+      if (t) this.addAll(instantiate(t, p, s));
+      return;
+    }
+    if (tool === 'watermark') {
+      this.start = null;
+      return;
+    }
+    if (tool === 'eraser') {
+      this.erasing = { checkpointed: false, tolerance: 6 * s };
+      this.eraseAt(p);
+      this.changed();
+      return;
+    }
     switch (tool) {
       case 'rect':
       case 'ellipse': {
         const o = opts[tool];
-        this.draft = { kind: tool, id: newId(), rect: fromPoints(p, p), color: o.color, lineWidth: o.lineWidth * s, filled: o.filled };
+        this.draft = { kind: tool, id: newId(), rect: fromPoints(p, p), color: o.color, lineWidth: o.lineWidth * s, filled: o.filled, fillOpacity: o.fillOpacity, dash: o.dash };
         break;
       }
       case 'arrow': {
         const o = opts.arrow;
-        this.draft = { kind: 'arrow', id: newId(), from: p, to: p, color: o.color, lineWidth: o.lineWidth * s, style: o.style };
+        this.draft = { kind: 'arrow', id: newId(), from: p, to: p, color: o.color, lineWidth: o.lineWidth * s, style: o.style, dash: o.dash };
         break;
       }
       case 'pen':
         this.draft = { kind: 'pen', id: newId(), points: [p], color: opts.pen.color, lineWidth: opts.pen.lineWidth * s };
         break;
+      case 'highlight': {
+        const o = opts.highlight;
+        this.draft =
+          o.shape === 'brush'
+            ? { kind: 'highlight', id: newId(), points: [p], color: o.color, lineWidth: o.lineWidth * s }
+            : o.shape === 'rect'
+              ? { kind: 'highlightRect', id: newId(), rect: fromPoints(p, p), color: o.color }
+              : o.shape === 'magnifier'
+                ? { kind: 'magnifier', id: newId(), source: fromPoints(p, p), ...placeMagnifier(fromPoints(p, p), this.clip), color: o.color }
+                : { kind: 'spotlight', id: newId(), rect: fromPoints(p, p), dim: o.dim };
+        break;
+      }
+      case 'measure': {
+        const o = opts.measure;
+        this.draft =
+          o.shape === 'distance'
+            ? { kind: 'distance', id: newId(), from: p, to: p, color: o.color, lineWidth: o.lineWidth * s, unit: o.unit, scale: s }
+            : { kind: 'angle', id: newId(), vertex: p, a: p, b: p, color: o.color, lineWidth: o.lineWidth * s };
+        break;
+      }
+      case 'counter': {
+        const o = opts.counter;
+        // 接着现有最大的编号往下数：删掉中间某个不影响后面新加的
+        const n = this.annotations.reduce((m, a) => (a.kind === 'counter' ? Math.max(m, a.n) : m), 0) + 1;
+        this.draft = { kind: 'counter', id: newId(), at: p, n, numbering: o.numbering, color: o.color, size: o.size * s };
+        break;
+      }
       case 'mosaic': {
         const o = opts.mosaic;
         this.draft =
@@ -241,6 +342,10 @@ export class AnnotationEngine {
   }
 
   update(p: Point, shift: boolean) {
+    if (this.erasing) {
+      this.eraseAt(p);
+      return;
+    }
     const d = this.draft;
     const start = this.start;
     if (!d || !start) return;
@@ -248,12 +353,38 @@ export class AnnotationEngine {
       case 'rect':
       case 'ellipse':
       case 'mosaicRect':
+      case 'highlightRect':
+      case 'spotlight':
         d.rect = fromPoints(start, shift ? constrainSquare(start, p) : p);
         break;
+      case 'counter':
+        // 按下之后拖一拖再松手：编号跟着挪，方便摆准
+        d.at = p;
+        break;
+      case 'distance':
+        d.to = shift ? constrainAngle(start, p) : p;
+        break;
+      case 'angle':
+        // 先拖第一条边；松手后移鼠标定第二条边
+        if (this.anglePending) d.b = shift ? constrainAngle(d.vertex, p) : p;
+        else {
+          d.a = shift ? constrainAngle(start, p) : p;
+          d.b = d.a;
+        }
+        break;
+      case 'magnifier': {
+        // 框要放大的那块；圆跟着摆在旁边
+        d.source = fromPoints(start, shift ? constrainSquare(start, p) : p);
+        const placed = placeMagnifier(d.source, this.clip);
+        d.center = placed.center;
+        d.radius = placed.radius;
+        break;
+      }
       case 'arrow':
         d.to = shift ? constrainAngle(start, p) : p;
         break;
       case 'pen':
+      case 'highlight':
       case 'mosaic': {
         const last = d.points[d.points.length - 1];
         // 太密的采样点没有意义，还会让贝塞尔平滑变抖
@@ -268,16 +399,37 @@ export class AnnotationEngine {
 
   /** 画完一笔。太小的（误触）丢掉。 */
   end() {
+    if (this.erasing) {
+      this.erasing = null;
+      this.start = null;
+      this.changed();
+      return;
+    }
     const d = this.draft;
+    // 角度的第一条边拖完了：留着草稿，接着等第二条边
+    if (d?.kind === 'angle' && !this.anglePending && d.b === d.a) {
+      if (Math.hypot(d.a.x - d.vertex.x, d.a.y - d.vertex.y) < 4 * this.scale) {
+        this.cancelDraft();
+        return;
+      }
+      this.anglePending = true;
+      this.changed();
+      return;
+    }
+    this.anglePending = false;
     this.draft = null;
     this.start = null;
     this.clearCanvas(this.drafting);
     this.lastDraftBounds = null;
     if (!d) return;
     const tiny =
-      ((d.kind === 'rect' || d.kind === 'ellipse' || d.kind === 'mosaicRect') && (d.rect.width < 3 || d.rect.height < 3)) ||
-      (d.kind === 'arrow' && Math.hypot(d.to.x - d.from.x, d.to.y - d.from.y) < 4);
+      ((d.kind === 'rect' || d.kind === 'ellipse' || d.kind === 'mosaicRect' || d.kind === 'highlightRect' || d.kind === 'spotlight') &&
+        (d.rect.width < 3 || d.rect.height < 3)) ||
+      (d.kind === 'magnifier' && (d.source.width < 3 || d.source.height < 3)) ||
+      ((d.kind === 'arrow' || d.kind === 'distance') && Math.hypot(d.to.x - d.from.x, d.to.y - d.from.y) < 4);
     if (tiny) {
+      // 拖聚光灯时草稿是画在已提交那层上的，丢掉的话要把那层重画回去
+      if (d.kind === 'spotlight') this.renderCommitted();
       this.changed();
       return;
     }
@@ -288,7 +440,74 @@ export class AnnotationEngine {
   }
 
   get drawing(): boolean {
-    return this.draft !== null;
+    return this.draft !== null || this.erasing !== null;
+  }
+
+  /** 正在等角度标注的第二条边（松着鼠标也要跟着动） */
+  get waitingSecondClick(): boolean {
+    return this.anglePending;
+  }
+
+  /** 扔掉正在画的那一笔（Esc） */
+  cancelDraft() {
+    this.draft = null;
+    this.start = null;
+    this.anglePending = false;
+    this.clearCanvas(this.drafting);
+    this.lastDraftBounds = null;
+    this.changed();
+  }
+
+  /** 开关 / 修改水印 */
+  setWatermark(w: Watermark | null) {
+    if (JSON.stringify(w) === JSON.stringify(this.watermark)) return;
+    this.watermark = w;
+    this.committedDirty = true;
+    this.renderCommitted();
+    this.changed();
+  }
+
+  /** 橡皮擦：擦掉这一点碰到的标注（锁住的译文块除外） */
+  private eraseAt(p: Point) {
+    const er = this.erasing;
+    if (!er) return;
+    const doomed = this.annotations.filter((a) => this.erasable(a, p, er.tolerance));
+    if (!doomed.length) return;
+    if (!er.checkpointed) {
+      this.checkpoint();
+      er.checkpointed = true;
+    }
+    const ids = new Set(doomed.map((a) => a.id));
+    this.annotations = this.annotations.filter((a) => !ids.has(a.id));
+    if (this.selected && ids.has(this.selected)) this.selected = null;
+    this.renderCommitted();
+    this.changed();
+  }
+
+  private erasable(a: Annotation, p: Point, tol: number): boolean {
+    // 手绘马赛克平时点不中（是一片涂抹），橡皮擦要能擦：碰到任意一个笔刷点就算
+    if (a.kind === 'mosaic') return a.points.some((q) => Math.hypot(p.x - q.x, p.y - q.y) <= a.brushSize / 2 + tol);
+    // 空心框只认边，擦的时候框里面也算
+    if (a.kind === 'rect' || a.kind === 'ellipse' || a.kind === 'spotlight') return inRect(a.rect, p, tol);
+    return this.hits(a, p, tol);
+  }
+
+  // ───────────────────────── 图层顺序 ─────────────────────────
+
+  /** 选中的标注往上 / 往下挪一层，或者直接到最上 / 最下。返回是否真的动了。 */
+  reorderSelected(where: 'up' | 'down' | 'top' | 'bottom'): boolean {
+    const id = this.selected;
+    const i = this.annotations.findIndex((a) => a.id === id);
+    if (i < 0) return false;
+    const last = this.annotations.length - 1;
+    const j = where === 'up' ? Math.min(last, i + 1) : where === 'down' ? Math.max(0, i - 1) : where === 'top' ? last : 0;
+    if (j === i) return false;
+    this.checkpoint();
+    const [a] = this.annotations.splice(i, 1);
+    this.annotations.splice(j, 0, a!);
+    this.renderCommitted();
+    this.changed();
+    return true;
   }
 
   /** 一次加一批（截图原位翻译的译文块），算一步撤销。 */
@@ -409,6 +628,23 @@ export class AnnotationEngine {
       }
       case 'arrow':
         return distToSegment(p, a.from, a.to) <= (a.style === 'thick' ? a.lineWidth * 1.6 : a.lineWidth) + tol;
+      case 'highlightRect':
+        return inRect(a.rect, p, tol);
+      case 'spotlight': {
+        // 聚光灯只认边：框里正是要标注的地方，点进去要能接着画
+        const r = a.rect;
+        const t = tol + 2 * this.scale;
+        return inRect(r, p, t) && !(p.x > r.x + t && p.x < r.x + r.width - t && p.y > r.y + t && p.y < r.y + r.height - t);
+      }
+      case 'counter':
+        return Math.hypot(p.x - a.at.x, p.y - a.at.y) <= a.size / 2 + tol;
+      case 'magnifier':
+        return Math.hypot(p.x - a.center.x, p.y - a.center.y) <= a.radius + tol || inRect(a.source, p, tol);
+      case 'distance':
+        return distToSegment(p, a.from, a.to) <= a.lineWidth * 2 + tol;
+      case 'angle':
+        return distToSegment(p, a.vertex, a.a) <= a.lineWidth * 2 + tol || distToSegment(p, a.vertex, a.b) <= a.lineWidth * 2 + tol;
+      case 'highlight':
       case 'pen': {
         const lim = a.lineWidth / 2 + tol;
         if (a.points.length === 1) return Math.hypot(p.x - a.points[0]!.x, p.y - a.points[0]!.y) <= lim;
@@ -441,6 +677,8 @@ export class AnnotationEngine {
       case 'ellipse':
       case 'mosaicRect':
       case 'label':
+      case 'highlightRect':
+      case 'spotlight':
         return { id: a.id, kind: a.kind, outline: a.rect, handles: HANDLES.map((h) => ({ id: h, at: handlePoint(a.rect, h) })) };
       case 'arrow':
         return {
@@ -456,6 +694,38 @@ export class AnnotationEngine {
         const b = annotationBounds(a);
         return { id: a.id, kind: a.kind, outline: b, handles: TEXT_HANDLES.map((h) => ({ id: h, at: handlePoint(b, h) })) };
       }
+      case 'distance':
+        return {
+          id: a.id,
+          kind: a.kind,
+          outline: null,
+          handles: [
+            { id: 'from', at: a.from },
+            { id: 'to', at: a.to },
+          ],
+        };
+      case 'angle':
+        return {
+          id: a.id,
+          kind: a.kind,
+          outline: null,
+          handles: [
+            { id: 'vertex', at: a.vertex },
+            { id: 'from', at: a.a },
+            { id: 'to', at: a.b },
+          ],
+        };
+      case 'magnifier':
+        // 拖圆心单独挪圆，拖圆边改大小（也就是改放大倍数）；拖别处整体挪
+        return {
+          id: a.id,
+          kind: a.kind,
+          outline: a.source,
+          handles: [
+            { id: 'from', at: a.center },
+            { id: 'to', at: { x: a.center.x + a.radius, y: a.center.y } },
+          ],
+        };
       default:
         return { id: a.id, kind: a.kind, outline: annotationBounds(a), handles: [] };
     }
@@ -495,11 +765,17 @@ export class AnnotationEngine {
     let next: Annotation = o;
     if (tf.handle === 'move') {
       next = translated(o, dx, dy);
+    } else if (o.kind === 'distance' && (tf.handle === 'from' || tf.handle === 'to')) {
+      next = tf.handle === 'from' ? { ...o, from: shift ? constrainAngle(o.to, p) : p } : { ...o, to: shift ? constrainAngle(o.from, p) : p };
+    } else if (o.kind === 'angle' && (tf.handle === 'from' || tf.handle === 'to' || tf.handle === 'vertex')) {
+      next = tf.handle === 'vertex' ? { ...o, vertex: p } : tf.handle === 'from' ? { ...o, a: p } : { ...o, b: p };
+    } else if (o.kind === 'magnifier' && (tf.handle === 'from' || tf.handle === 'to')) {
+      next = tf.handle === 'from' ? { ...o, center: p } : { ...o, radius: Math.max(12 * this.scale, Math.hypot(p.x - o.center.x, p.y - o.center.y)) };
     } else if (o.kind === 'arrow' && (tf.handle === 'from' || tf.handle === 'to')) {
       next = tf.handle === 'from' ? { ...o, from: shift ? constrainAngle(o.to, p) : p } : { ...o, to: shift ? constrainAngle(o.from, p) : p };
-    } else if ((o.kind === 'rect' || o.kind === 'ellipse' || o.kind === 'mosaicRect' || o.kind === 'label') && tf.handle !== 'from' && tf.handle !== 'to') {
+    } else if (isBoxed(o) && tf.handle !== 'from' && tf.handle !== 'to' && tf.handle !== 'vertex') {
       next = { ...o, rect: resizeByHandle(o.rect, tf.handle, p) };
-    } else if (o.kind === 'text' && tf.handle !== 'from' && tf.handle !== 'to') {
+    } else if (o.kind === 'text' && tf.handle !== 'from' && tf.handle !== 'to' && tf.handle !== 'vertex') {
       next = scaledText(o, tf.handle, p);
     }
     this.replace(next);
@@ -542,17 +818,38 @@ export class AnnotationEngine {
       case 'rect':
       case 'ellipse': {
         const o = opts[a.kind];
-        next = { ...a, color: o.color, lineWidth: o.lineWidth * s, filled: o.filled };
+        next = { ...a, color: o.color, lineWidth: o.lineWidth * s, filled: o.filled, fillOpacity: o.fillOpacity, dash: o.dash };
         break;
       }
       case 'arrow':
-        next = { ...a, color: opts.arrow.color, lineWidth: opts.arrow.lineWidth * s, style: opts.arrow.style };
+        next = { ...a, color: opts.arrow.color, lineWidth: opts.arrow.lineWidth * s, style: opts.arrow.style, dash: opts.arrow.dash };
         break;
       case 'pen':
         next = { ...a, color: opts.pen.color, lineWidth: opts.pen.lineWidth * s };
         break;
+      case 'highlight':
+        next = { ...a, color: opts.highlight.color, lineWidth: opts.highlight.lineWidth * s };
+        break;
+      case 'highlightRect':
+        next = { ...a, color: opts.highlight.color };
+        break;
+      case 'spotlight':
+        next = { ...a, dim: opts.highlight.dim };
+        break;
+      case 'magnifier':
+        next = { ...a, color: opts.highlight.color };
+        break;
+      case 'distance':
+        next = { ...a, color: opts.measure.color, lineWidth: opts.measure.lineWidth * s, unit: opts.measure.unit };
+        break;
+      case 'angle':
+        next = { ...a, color: opts.measure.color, lineWidth: opts.measure.lineWidth * s };
+        break;
+      case 'counter':
+        next = { ...a, color: opts.counter.color, size: opts.counter.size * s, numbering: opts.counter.numbering };
+        break;
       case 'text':
-        next = { ...a, color: opts.text.color, fontSize: opts.text.fontSize * s, bold: opts.text.bold };
+        next = { ...a, color: opts.text.color, fontSize: opts.text.fontSize * s, bold: opts.text.bold, style: opts.text.style };
         break;
       case 'mosaicRect':
         next = { ...a, mode: opts.mosaic.mode, cell: mosaicCell(opts.mosaic.brushSize * s) };
@@ -561,7 +858,10 @@ export class AnnotationEngine {
         return;
     }
     if (JSON.stringify(next) === JSON.stringify(a)) return;
-    this.checkpoint();
+    // 拖透明度滑块会连着改很多次：同一个标注一小会儿之内的连续修改只记一步撤销
+    const now = performance.now();
+    if (this.lastRestyle?.id !== a.id || now - this.lastRestyle.at > RESTYLE_MERGE_MS) this.checkpoint();
+    this.lastRestyle = { id: a.id, at: now };
     this.replace(next);
   }
 
@@ -572,13 +872,30 @@ export class AnnotationEngine {
     switch (a.kind) {
       case 'rect':
       case 'ellipse':
-        return { ...base, [a.kind]: { color: a.color, lineWidth: near(a.lineWidth), filled: a.filled } };
+        return {
+          ...base,
+          [a.kind]: { color: a.color, lineWidth: near(a.lineWidth), filled: a.filled, fillOpacity: a.fillOpacity ?? DEFAULT_FILL_OPACITY, dash: a.dash ?? 'solid' },
+        };
       case 'arrow':
-        return { ...base, arrow: { color: a.color, lineWidth: near(a.lineWidth), style: a.style } };
+        return { ...base, arrow: { color: a.color, lineWidth: near(a.lineWidth), style: a.style, dash: a.dash ?? 'solid' } };
       case 'pen':
         return { ...base, pen: { color: a.color, lineWidth: near(a.lineWidth) } };
+      case 'highlight':
+        return { ...base, highlight: { ...base.highlight, shape: 'brush', color: a.color, lineWidth: near(a.lineWidth) } };
+      case 'highlightRect':
+        return { ...base, highlight: { ...base.highlight, shape: 'rect', color: a.color } };
+      case 'spotlight':
+        return { ...base, highlight: { ...base.highlight, shape: 'spotlight', dim: a.dim } };
+      case 'magnifier':
+        return { ...base, highlight: { ...base.highlight, shape: 'magnifier', color: a.color } };
+      case 'distance':
+        return { ...base, measure: { shape: 'distance', color: a.color, lineWidth: near(a.lineWidth), unit: a.unit } };
+      case 'angle':
+        return { ...base, measure: { ...base.measure, shape: 'angle', color: a.color, lineWidth: near(a.lineWidth) } };
+      case 'counter':
+        return { ...base, counter: { color: a.color, size: near(a.size), numbering: a.numbering } };
       case 'text':
-        return { ...base, text: { color: a.color, fontSize: near(a.fontSize), bold: a.bold } };
+        return { ...base, text: { color: a.color, fontSize: near(a.fontSize), bold: a.bold, style: a.style ?? 'plain' } };
       case 'mosaicRect':
         return { ...base, mosaic: { ...base.mosaic, mode: a.mode, shape: 'rect' } };
       default:
@@ -605,7 +922,7 @@ export class AnnotationEngine {
     this.checkpoint();
     this.annotations = this.annotations.filter((x) => x.id !== id);
     this.selected = null;
-    this.text = { at: a.at, content: a.content, color: a.color, fontSize: a.fontSize, bold: a.bold, editing: a.id };
+    this.text = { at: a.at, content: a.content, color: a.color, fontSize: a.fontSize, bold: a.bold, style: a.style, editing: a.id };
     this.renderCommitted();
     this.changed();
   }
@@ -620,7 +937,7 @@ export class AnnotationEngine {
     // 点击位置作为第一行文字的垂直中心，体验上更像"在这里打字"
     const size = o.fontSize * this.scale;
     this.selected = null;
-    this.text = { at: { x: p.x, y: p.y - (size * 1.4) / 2 }, content: '', color: o.color, fontSize: size, bold: o.bold };
+    this.text = { at: { x: p.x, y: p.y - (size * 1.4) / 2 }, content: '', color: o.color, fontSize: size, bold: o.bold, style: o.style };
     this.changed();
   }
 
@@ -638,7 +955,7 @@ export class AnnotationEngine {
     if (t && t.content.trim()) {
       // 重新编辑的那次在 editText 时已经存过快照
       if (!t.editing) this.checkpoint();
-      this.annotations.push({ kind: 'text', id: t.editing ?? newId(), at: t.at, content: t.content.replace(/\s+$/, ''), color: t.color, fontSize: t.fontSize, bold: t.bold });
+      this.annotations.push({ kind: 'text', id: t.editing ?? newId(), at: t.at, content: t.content.replace(/\s+$/, ''), color: t.color, fontSize: t.fontSize, bold: t.bold, style: t.style });
       this.renderCommitted();
       this.changed();
       return true;
@@ -679,21 +996,31 @@ export class AnnotationEngine {
   /** 已提交画布上现在什么都没画（setClip 据此跳过重画） */
   private committedEmpty = true;
 
-  renderCommitted() {
+  /** `extra`：正在拖的聚光灯草稿（它要和已有的聚光灯一起挖洞，只能画在这一层） */
+  renderCommitted(extra?: Annotation) {
     const c = this.committed;
     const ctx = c?.getContext('2d');
     if (!c || !ctx) return;
+    const list = extra ? [...this.annotations, extra] : this.annotations;
     // 拖选区时每动一下都会走到这里（裁剪区变了）。画布和屏幕一样大，哪怕只是清空一遍，
     // 浏览器也得把整块画布重新提交给合成器；上面本来就是空的、也没有要画的，就什么都别做
-    if (this.annotations.length === 0 && !this.committedDirty) return;
-    this.committedDirty = this.annotations.length > 0;
+    const empty = list.length === 0 && !this.watermark;
+    if (empty && !this.committedDirty) return;
+    this.committedDirty = !empty;
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.clearRect(0, 0, c.width, c.height);
-    this.committedEmpty = this.annotations.length === 0;
+    this.committedEmpty = empty;
     ctx.setTransform(1, 0, 0, 1, -this.origin.x, -this.origin.y);
-    this.withClip(ctx, () => {
-      for (const a of this.annotations) drawAnnotation(ctx, a, this.backdrop, this.reveal ? this.revealProgress(a) : 1);
-    });
+    this.withClip(ctx, () => this.drawAll(ctx, list, true));
+  }
+
+  /** 先统一画聚光灯的压暗（见 drawSpotlights），再按顺序画其余标注 */
+  private drawAll(ctx: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D, list: Annotation[], animate: boolean) {
+    const spots = list.filter(isSpotlight);
+    if (spots.length && this.clip) drawSpotlights(ctx, spots, this.clip);
+    for (const a of list) drawAnnotation(ctx, a, this.backdrop, animate && this.reveal ? this.revealProgress(a) : 1);
+    // 水印压在所有标注上面
+    if (this.watermark && this.clip) drawWatermark(ctx, this.watermark, this.clip);
   }
 
   private renderDraft() {
@@ -701,6 +1028,10 @@ export class AnnotationEngine {
     const ctx = c?.getContext('2d');
     const d = this.draft;
     if (!c || !ctx || !d) return;
+    if (d.kind === 'spotlight') {
+      this.renderCommitted(d);
+      return;
+    }
     // 只清上一帧画过的那块，4K 画布整块清每帧也要好几毫秒
     const b = annotationBounds(d);
     const dirty = this.lastDraftBounds ? union(this.lastDraftBounds, b) : b;
@@ -718,9 +1049,11 @@ export class AnnotationEngine {
   contentBounds(): Rect | null {
     let acc: Rect | null = null;
     for (const a of this.visible) {
-      const b = annotationBounds(a);
+      // 聚光灯压暗的是整个选区
+      const b = a.kind === 'spotlight' && this.clip ? this.clip : annotationBounds(a);
       acc = acc ? union(acc, b) : b;
     }
+    if (this.watermark && this.clip) acc = acc ? union(acc, this.clip) : this.clip;
     if (!acc) return null;
     const rounded = { x: Math.floor(acc.x), y: Math.floor(acc.y), width: Math.ceil(acc.width) + 1, height: Math.ceil(acc.height) + 1 };
     return this.clip ? intersect(rounded, this.clip) : rounded;
@@ -739,7 +1072,7 @@ export class AnnotationEngine {
       ctx.rect(this.clip.x, this.clip.y, this.clip.width, this.clip.height);
       ctx.clip();
     }
-    for (const a of this.visible) drawAnnotation(ctx, a, this.backdrop);
+    this.drawAll(ctx, this.visible, false);
     const blob = await canvas.convertToBlob({ type: 'image/png' });
     return { png: new Uint8Array(await blob.arrayBuffer()), at: [b.x, b.y] };
   }

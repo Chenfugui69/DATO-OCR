@@ -24,6 +24,7 @@ import { AiChat } from '@/views/ai/AiChat';
 import { TranslateBox } from '@/views/translate/TranslateBox';
 
 import { ImageViewer } from './ImageViewer';
+import { StructuredResult, type StructuredKind, type StructuredState } from './StructuredResult';
 
 /** AI 对话那一列的默认宽度和可调范围（逻辑像素） */
 const AI_COLUMN = 420;
@@ -192,6 +193,25 @@ export default function OcrView() {
   };
 
   const engines = useQuery({ queryKey: ['ocr-status'], queryFn: ocr.status, staleTime: 30_000 });
+  // 识别成表格 / 公式（AI 看图）：结果替换文字那一列，"返回"回到识字结果
+  const [structured, setStructured] = useState<StructuredState | null>(null);
+  const structJob = useRef<string | null>(null);
+  const runStructure = useCallback(
+    (kind: StructuredKind) => {
+      if (!job) return;
+      structJob.current = job.id;
+      setStructured({ kind, status: 'running' });
+      ocr.structure(job.id, kind).then(
+        (text) => structJob.current === job.id && setStructured({ kind, status: 'done', text }),
+        (err: unknown) => structJob.current === job.id && setStructured({ kind, status: 'error', error: err instanceof Error ? err.message : String(err) }),
+      );
+    },
+    [job],
+  );
+  // 换了一张图（新的识字任务）就回到文字
+  useEffect(() => {
+    if (job?.id !== structJob.current) setStructured(null);
+  }, [job?.id]);
   const autoCopy = settings?.ocr.autoCopy ?? true;
   const result = job?.result;
   const info = result
@@ -259,7 +279,14 @@ export default function OcrView() {
             style={showTranslate && job.status === 'done' ? { gridTemplateRows: `minmax(0, ${textSplit}fr) ${GUTTER}px minmax(0, ${1 - textSplit}fr)` } : undefined}
           >
             <div ref={listRef} className="ocr-text">
-              {job.status === 'running' ? (
+              {structured ? (
+                <StructuredResult
+                  state={structured}
+                  // 拼成行的文字和原始文字块都给：拼行时相邻两块偶尔会粘在一起（数字连成一串），
+                  // 原始块里长数字又偶尔被拆成几块。数字在任何一份里找得到就算对上
+                  ocrText={job.result ? `${job.result.rawText}\n${job.result.blocks.map((b) => b.text).join('\n')}` : fullText}
+                  onBack={() => setStructured(null)} onRetry={() => runStructure(structured.kind)} />
+              ) : job.status === 'running' ? (
                 <div className="ocr-text__loading">
                   <Skeleton />
                   <Skeleton />
@@ -378,6 +405,18 @@ export default function OcrView() {
         >
           <Button disabled={!job || job.status === 'running'}>
             {t('ocr.rerun')}
+            <ChevronDown size={12} strokeWidth={1.5} />
+          </Button>
+        </DropdownMenu>
+        <DropdownMenu
+          align="start"
+          items={[
+            { label: t('ocr.structured.toTable'), onSelect: () => runStructure('table') },
+            { label: t('ocr.structured.toFormula'), onSelect: () => runStructure('formula') },
+          ]}
+        >
+          <Button disabled={!job || job.status === 'running' || structured?.status === 'running'}>
+            {t('ocr.structured.menu')}
             <ChevronDown size={12} strokeWidth={1.5} />
           </Button>
         </DropdownMenu>

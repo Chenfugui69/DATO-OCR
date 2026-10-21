@@ -42,6 +42,14 @@ pub fn get(conn: &Connection, key: &str) -> AppResult<Option<String>> {
     }
 }
 
+/// 存过这个密钥（不管现在解不解得开）
+pub fn exists(conn: &Connection, key: &str) -> AppResult<bool> {
+    Ok(conn
+        .query_row("SELECT 1 FROM secrets WHERE key = ?1", [key], |_| Ok(()))
+        .optional()?
+        .is_some())
+}
+
 /// 脱敏显示：`sk-••••••••1234`（前 3 后 4）
 pub fn masked(plain: &str) -> String {
     let chars: Vec<char> = plain.chars().collect();

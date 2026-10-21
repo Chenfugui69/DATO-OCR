@@ -506,6 +506,8 @@ pub enum FinishAction {
     Ai,
     /// 录制选区为 GIF
     Gif,
+    /// 录制选区为视频（MP4）
+    Video,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -518,6 +520,9 @@ pub struct FinishMeta {
     pub action: FinishAction,
     /// 标注层 PNG 左上角（本屏局部物理坐标）；没有标注时为 None
     pub annotation_at: Option<(i32, i32)>,
+    /// 自由选区的轮廓（本屏局部物理坐标）；`rect` 是它的外接矩形。轮廓以外截出来是透明的
+    #[serde(default)]
+    pub shape: Option<Vec<[f64; 2]>>,
 }
 
 pub fn finish(app: &AppHandle, meta: FinishMeta, annotation_png: Vec<u8>) -> AppResult<()> {
@@ -544,8 +549,13 @@ pub fn finish(app: &AppHandle, meta: FinishMeta, annotation_png: Vec<u8>) -> App
     if meta.action == FinishAction::Longshot {
         return longshot::start(app, session.clone(), monitor, global);
     }
-    if meta.action == FinishAction::Gif {
-        return crate::gif_record::start(app, session.clone(), monitor, global);
+    if meta.action == FinishAction::Gif || meta.action == FinishAction::Video {
+        let format = if meta.action == FinishAction::Gif {
+            crate::gif_record::RecordFormat::Gif
+        } else {
+            crate::gif_record::RecordFormat::Mp4
+        };
+        return crate::gif_record::start(app, session.clone(), monitor, global, format);
     }
 
     let mut image = imaging::crop_opaque(&shot.image, meta.rect)?;
@@ -557,6 +567,11 @@ pub fn finish(app: &AppHandle, meta: FinishMeta, annotation_png: Vec<u8>) -> App
             i64::from(ax - meta.rect.x),
             i64::from(ay - meta.rect.y),
         )?;
+    }
+    if let Some(shape) = meta.shape.as_ref().filter(|s| s.len() >= 3) {
+        let (ox, oy) = (f64::from(meta.rect.x), f64::from(meta.rect.y));
+        let local: Vec<[f64; 2]> = shape.iter().map(|[x, y]| [x - ox, y - oy]).collect();
+        imaging::mask_polygon(&mut image, &local);
     }
     let source_app = session.source_app.clone();
     if meta.action == FinishAction::Pin {
@@ -625,9 +640,15 @@ pub(crate) fn perform(
     };
     match action {
         FinishAction::Copy => {
+            // 自由选区有透明的部分：另外写一份 PNG，粘贴到支持透明的程序里还是那个形状
+            let png = if imaging::has_alpha(&image) {
+                Some(imaging::encode_png(&image)?)
+            } else {
+                None
+            };
             platform::clipboard_write(&ClipboardPayload::Image {
                 image: (*image).clone(),
-                png: None,
+                png,
             })?;
             if settings.finish_action == "copyAndSave" {
                 let path = auto_save_path(&settings)?;
@@ -670,7 +691,7 @@ pub(crate) fn perform(
             );
             add_to_library();
         }
-        FinishAction::Longshot | FinishAction::Gif => {}
+        FinishAction::Longshot | FinishAction::Gif | FinishAction::Video => {}
     }
     Ok(())
 }

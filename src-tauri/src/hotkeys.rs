@@ -25,6 +25,8 @@ pub enum HotkeyAction {
     Translate,
     Instant,
     Ai,
+    /// 把剪贴板里的图贴到屏幕上
+    PinClipboard,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -47,6 +49,7 @@ impl HotkeyAction {
             "translate" => Self::Translate,
             "instant" => Self::Instant,
             "ai" => Self::Ai,
+            "pinClipboard" => Self::PinClipboard,
             _ => return None,
         })
     }
@@ -94,7 +97,18 @@ pub fn dispatch(app: &AppHandle, action: HotkeyAction) {
                 ..Default::default()
             },
         ),
+        HotkeyAction::PinClipboard => pin_clipboard(app),
     }
+}
+
+/// 贴出剪贴板里的图；没有图就弹个提示（热键、托盘菜单都走这里）
+pub fn pin_clipboard(app: &AppHandle) {
+    let app = app.clone();
+    std::thread::spawn(move || {
+        if let Err(err) = crate::pin::pin_clipboard(&app) {
+            crate::wm::toast(&app, "info", err.to_string());
+        }
+    });
 }
 
 /// 按当前设置重新注册全部热键。
@@ -114,6 +128,7 @@ pub fn register_all(app: &AppHandle) -> Vec<HotkeyStatus> {
         (HotkeyAction::Translate, hk.translate),
         (HotkeyAction::Instant, hk.instant),
         (HotkeyAction::Ai, hk.ai),
+        (HotkeyAction::PinClipboard, hk.pin_clipboard),
     ];
     for (action, accel) in wanted {
         let accel = accel.trim().to_string();

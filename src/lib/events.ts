@@ -50,6 +50,8 @@ export interface EventMap {
   'selection-button-show': { generation: number; dark: boolean | null; backdrop: string | null };
   'ai-context': AiContext;
   'editor-open': EditorDoc;
+  /** 剪辑窗口：又录完一段要剪（这段的 id） */
+  'record-edit': number;
 }
 
 export type EventName = keyof EventMap;

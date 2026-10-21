@@ -8,7 +8,7 @@ import './capture.css';
 import '@/views/annotate/annotate.css';
 
 import { Window } from '@tauri-apps/api/window';
-import { Copy, Eye, Languages, Move, X } from 'lucide-react';
+import { Copy, Eye, Languages, Lock, Move, X } from 'lucide-react';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { flushSync } from 'react-dom';
 import { useTranslation } from 'react-i18next';
@@ -18,11 +18,11 @@ import { broadcast, on } from '@/lib/events';
 import { formatColor, readableOn } from '@/lib/format';
 import { CONTENT_INTERVAL, useElementSize, useThrottled } from '@/lib/hooks';
 import { capture, gif, reportError } from '@/lib/ipc';
-import { shotUrl, windowLabel } from '@/lib/platform';
+import { isMac, shotUrl, windowLabel } from '@/lib/platform';
 import { MID_ACTIONS, TAIL_ACTIONS, type CaptureIntent, type FinishAction, type FrameStyle, type MidAction, type TailAction } from '@/lib/types';
 import { notify } from '@/ui/overlays';
 import { AnnotationEngine, toolOf } from '@/views/annotate/engine';
-import { BRUSH_RANGE, PEN_RANGE, type Tool } from '@/views/annotate/model';
+import { BRUSH_RANGE, PEN_RANGE, watermarkOf, type Tool } from '@/views/annotate/model';
 import { bmpSource, type PixelSource } from '@/views/annotate/pixels';
 import { canPick, handleCursor, SelectionOverlay, toolCursor } from '@/views/annotate/SelectionOverlay';
 import { TextEditor, useEngineVersion } from '@/views/annotate/TextEditor';
@@ -44,6 +44,7 @@ import {
   placeSizeHint,
   placeToolbar,
   resizeByHandle,
+  resizeWithRatio,
   right,
   snapEdges,
   snapLines,
@@ -53,6 +54,10 @@ import {
   type Rect,
   type SnapLines,
 } from './geometry';
+import { CodeResults } from './CodeResults';
+import { StructuredCard } from './StructuredCard';
+import { rememberSelection, SelectionPanel } from './SelectionPanel';
+import { saveTemplate } from '@/views/annotate/templates';
 import { GifUI } from './GifUI';
 import { LongshotUI } from './LongshotUI';
 import { Magnifier } from './Magnifier';
@@ -71,8 +76,18 @@ let windowsLocal: { handle: number; rect: Rect }[] = [];
 const childCache = new Map<number, Rect[]>();
 let childTimer: number | undefined;
 let childPending: number | null = null;
-let press: { at: Point; hover: Rect | null } | null = null;
-let drag: { kind: 'move' | 'resize'; handle?: Handle; at: Point; orig: Rect } | null = null;
+/** lasso：按着 Option / Alt 拖 = 自由画选区（`points` 是一路画下来的轨迹） */
+let press: { at: Point; hover: Rect | null; lasso: boolean; points: Point[] } | null = null;
+let drag: { kind: 'move' | 'resize'; handle?: Handle; at: Point; orig: Rect; shape?: Point[] | null } | null = null;
+
+/** 一串点的外接矩形 */
+function boundsOf(points: Point[]): Rect {
+  const xs = points.map((q) => q.x);
+  const ys = points.map((q) => q.y);
+  const x = Math.floor(Math.min(...xs));
+  const y = Math.floor(Math.min(...ys));
+  return { x, y, width: Math.max(1, Math.ceil(Math.max(...xs)) - x), height: Math.max(1, Math.ceil(Math.max(...ys)) - y) };
+}
 let lines: SnapLines = { xs: [], ys: [] };
 let activeElsewhere: number | null = null;
 /** 正在打字时按了右键：已经在按下时提交了文字，紧跟着的 contextmenu 不能再当"退出截图" */
@@ -169,6 +184,9 @@ async function startSession() {
   if (get().session?.sessionId === info.sessionId) return;
 
   engine.reset();
+  // 水印每次截图都从关着开始（工具的其他选项照旧记着）
+  const opts = get().options;
+  if (opts.watermark.enabled) set({ options: { ...opts, watermark: { ...opts.watermark, enabled: false } } });
   pixels = null;
   bitmap?.close();
   bitmap = null;
@@ -263,15 +281,18 @@ function cancel() {
   if (s) void capture.cancel(s.sessionId);
 }
 
-function setSelection(sel: Rect | null, phase = get().phase) {
-  set({ selection: sel, phase });
+/** `shape`：自由选区的轮廓。不传 = 普通矩形选区（输入宽高、套比例、Ctrl+A 之类都会变回矩形） */
+function setSelection(sel: Rect | null, phase = get().phase, shape: Point[] | null = null) {
+  // 选区一动，二维码的框和结果就对不上了，收起来
+  // 识别表格 / 公式的卡片也一样（正在识别的，结果回来时发现对不上就丢掉）
+  set(get().codes || get().structured ? { selection: sel, phase, shape, codes: null, structured: null } : { selection: sel, phase, shape });
   engine.setClip(sel);
 }
 
 const isTextIntent = (intent: CaptureIntent | undefined) => intent === 'ocr' || intent === 'translate';
 
-function enterEditing(sel: Rect) {
-  setSelection(sel, 'editing');
+function enterEditing(sel: Rect, shape: Point[] | null = null) {
+  setSelection(sel, 'editing', shape);
   const s = get().session;
   if (!s) return;
   void broadcast('capture-active-monitor', { sessionId: s.sessionId, monitorId: MONITOR_ID });
@@ -301,11 +322,19 @@ async function finish(action: FinishAction | 'cancel') {
   }
   if (!selection) return;
   if (engine.text) engine.commitText();
-  set({ busy: true });
+  rememberSelection(MONITOR_ID, selection);
+  set({ busy: true, sizePanel: false });
   try {
     const layer = await engine.exportLayer();
     await capture.finish(
-      { sessionId: session.sessionId, monitorId: MONITOR_ID, rect: selection, action, annotationAt: layer?.at ?? null },
+      {
+        sessionId: session.sessionId,
+        monitorId: MONITOR_ID,
+        rect: selection,
+        action,
+        annotationAt: layer?.at ?? null,
+        shape: get().shape?.map((q): [number, number] => [q.x, q.y]) ?? null,
+      },
       layer?.png ?? new Uint8Array(),
     );
   } catch (err) {
@@ -321,8 +350,54 @@ function onAction(id: ActionId) {
   if (!s) return;
   if (id === 'done') void finish(s.intent === 'translate' ? 'copy' : intentAction(s.intent));
   else if (id === 'translate') void translateInPlace();
+  else if (id === 'qr') void scanCodes();
+  else if (id === 'table' || id === 'formula') void recognizeStructure(id);
   else if (id === 'undo') engine.undo();
   else void finish(id === 'cancel' ? 'cancel' : id === 'save' ? 'save' : id);
+}
+
+/** 把现在的标注存成模板（模板工具里的"存当前标注"） */
+function saveCurrentTemplate(): boolean {
+  const t = saveTemplate(engine.annotations, engine.scale);
+  if (!t) {
+    notify.info(i18n.t('tools.templateNothing'));
+    return false;
+  }
+  set({ options: { ...get().options, template: { selected: t.id } } });
+  notify.success(i18n.t('tools.templateSaved'));
+  return true;
+}
+
+/** 识别选区里的二维码 / 条码，结果显示在选区旁边的卡片里 */
+async function scanCodes() {
+  const { session, selection, scanning } = get();
+  if (!session || !selection || scanning) return;
+  set({ scanning: true, codes: null });
+  try {
+    const codes = await capture.scanCodes(session.sessionId, MONITOR_ID, selection);
+    if (get().session?.sessionId !== session.sessionId) return;
+    if (!codes.length) notify.info(i18n.t('capture.noCode'));
+    else set({ codes });
+  } catch (err) {
+    notify.error(err);
+  } finally {
+    set({ scanning: false });
+  }
+}
+
+/** 选区识别成表格 / 公式（AI 看图），结果卡片盖在选区上 */
+async function recognizeStructure(kind: 'table' | 'formula') {
+  const { session, selection, structured } = get();
+  if (!session || !selection || structured?.status === 'running') return;
+  if (engine.text) engine.commitText();
+  set({ structured: { kind, status: 'running' }, codes: null, sizePanel: false });
+  const stale = () => get().session?.sessionId !== session.sessionId || get().structured?.kind !== kind || get().selection !== selection;
+  try {
+    const text = await capture.structure(session.sessionId, MONITOR_ID, selection, kind);
+    if (!stale()) set({ structured: { kind, status: 'done', text } });
+  } catch (err) {
+    if (!stale()) set({ structured: { kind, status: 'error', error: err instanceof Error ? err.message : String(err) } });
+  }
 }
 
 /** 译文从上往下依次显现：选区顶上的一行马上开始，最底下的一行晚这么多毫秒 */
@@ -362,6 +437,15 @@ async function translateInPlace() {
   }
 }
 
+/** 把鼠标下的颜色贴到屏幕上（一张小卡片，能看 HEX / RGB / HSL、复制），截图随之结束 */
+function pinColor() {
+  const { cursor, session } = get();
+  if (!cursor || !pixels || !session) return;
+  const c = pixels.get(cursor.x, cursor.y);
+  if (!c) return;
+  void capture.pinColor(session.sessionId, MONITOR_ID, Math.round(cursor.x), Math.round(cursor.y), [c[0], c[1], c[2]]).catch(notify.error);
+}
+
 function copyColor() {
   const { cursor, colorFormat } = get();
   if (!cursor || !pixels) return;
@@ -380,6 +464,8 @@ function onPointerDown(e: React.PointerEvent) {
   flushMove();
   const st = get();
   if (!st.session || st.busy) return;
+  // 选区面板开着时点别处：先收起面板（面板自己的点击不会冒泡到这里）
+  if (st.sizePanel) set({ sizePanel: false });
   if (e.button === 2) {
     // 打字时右键和左键一样：提交文字，不退出截图（防止打完字误触右键全没了）
     if (engine.text) {
@@ -399,7 +485,7 @@ function onPointerDown(e: React.PointerEvent) {
   (e.target as Element).setPointerCapture?.(e.pointerId);
 
   if (st.phase === 'detect') {
-    press = { at: p, hover: st.hover };
+    press = { at: p, hover: st.hover, lasso: e.altKey, points: [p] };
     set({ phase: 'pressing' });
     return;
   }
@@ -435,8 +521,9 @@ function onPointerDown(e: React.PointerEvent) {
     return;
   }
   const h = hitHandle(sel, p, handleRadius);
-  if (h) drag = { kind: 'resize', handle: h, at: p, orig: sel };
-  else if (contains(sel, p)) drag = { kind: 'move', at: p, orig: sel };
+  // 自由选区只能整体挪，不能拖边改大小（轮廓是画出来的，拉伸没有意义）
+  if (h && !st.shape) drag = { kind: 'resize', handle: h, at: p, orig: sel };
+  else if (contains(sel, p)) drag = { kind: 'move', at: p, orig: sel, shape: st.shape };
 }
 
 /** 遮罩鼠标穿透、露出真实桌面的那几个状态（长截图、GIF 录制） */
@@ -492,11 +579,22 @@ function handleMove(e: MoveInput) {
     case 'pressing': {
       if (!press) return;
       const moved = Math.hypot(p.x - press.at.x, p.y - press.at.y) / scale();
-      if (moved >= DRAG_THRESHOLD_CSS) setSelection(fromPoints(press.at, p), 'selecting');
+      if (moved < DRAG_THRESHOLD_CSS) return;
+      if (press.lasso) {
+        press.points.push(p);
+        setSelection(boundsOf(press.points), 'selecting', [...press.points]);
+      } else setSelection(fromPoints(press.at, p), 'selecting');
       return;
     }
     case 'selecting': {
       if (!press) return;
+      if (press.lasso) {
+        // 自由画：点太密没用，隔一两个像素记一个
+        const last = press.points[press.points.length - 1]!;
+        if (Math.hypot(p.x - last.x, p.y - last.y) >= 2 * scale()) press.points.push(p);
+        setSelection(clampRect(boundsOf(press.points), screenRect()), 'selecting', [...press.points]);
+        return;
+      }
       const raw = fromPoints(press.at, p);
       const sel = snapEdges(raw, { l: p.x <= press.at.x, r: p.x > press.at.x, t: p.y <= press.at.y, b: p.y > press.at.y }, lines, snapThreshold(e));
       setSelection(clampRect(sel, screenRect()));
@@ -513,10 +611,20 @@ function handleMove(e: MoveInput) {
       }
       if (drag?.kind === 'move') {
         const moved = { ...drag.orig, x: drag.orig.x + p.x - drag.at.x, y: drag.orig.y + p.y - drag.at.y };
-        setSelection(clampMove(snapMove(moved, lines, snapThreshold(e)), screenRect()));
+        const next = clampMove(snapMove(moved, lines, snapThreshold(e)), screenRect());
+        // 自由选区：轮廓跟着外接矩形一起平移
+        const dx = next.x - drag.orig.x;
+        const dy = next.y - drag.orig.y;
+        setSelection(next, undefined, drag.shape?.map((q) => ({ x: q.x + dx, y: q.y + dy })) ?? null);
         return;
       }
       if (drag?.kind === 'resize' && drag.handle) {
+        // 锁了宽高比：按比例缩放，不吸附（吸附会把比例拉歪）
+        const ratio = get().ratio;
+        if (ratio) {
+          setSelection(clampRect(resizeWithRatio(drag.orig, drag.handle, p, ratio), screenRect()));
+          return;
+        }
         const raw = resizeByHandle(drag.orig, drag.handle, p);
         const o = drag.orig;
         // 只吸附真正在动的那几条边（拖过对边翻转后，动的边可能换了一侧）
@@ -560,8 +668,14 @@ function onPointerUp() {
     return;
   }
   if (st.phase === 'selecting' && st.selection) {
+    const lasso = press?.lasso ? press.points : null;
     press = null;
-    enterEditing(st.selection);
+    // 自由画的轮廓太小（几乎没拖）就当没画，回到等待框选
+    if (lasso && (lasso.length < 3 || st.selection.width < 8 || st.selection.height < 8)) {
+      setSelection(null, 'detect');
+      return;
+    }
+    enterEditing(st.selection, lasso);
     return;
   }
   if (engine.drawing) engine.end();
@@ -630,13 +744,22 @@ function onKeyDown(e: KeyboardEvent) {
   const st = get();
   if (!st.session || st.phase === 'idle' || isLive(st.phase)) return;
   if (engine.text) return; // 文字输入框自己处理
+  // 输入框里打字（选区面板、水印文字）：字母不能当成工具快捷键，回车也不是完成截图
+  if ((e.target as Element | null)?.closest?.('input, textarea, [contenteditable="true"], .cap-panel')) return;
+  // 角度标注画了一条边、在等第二条：Esc 只放弃这一笔
+  if (e.key === 'Escape' && engine.waitingSecondClick) {
+    e.preventDefault();
+    engine.cancelDraft();
+    return;
+  }
   const key = e.key;
   const ctrl = e.ctrlKey || e.metaKey;
 
   if (key === 'Escape') {
     e.preventDefault();
-    // 有选中的标注先取消选中，再按一次才退出截图
-    if (engine.selected) engine.select(null);
+    // 先收起二维码结果 / 选区面板，再取消选中的标注，再按一次才退出截图
+    if (st.codes || st.sizePanel || st.structured) set({ codes: null, sizePanel: false, structured: null });
+    else if (engine.selected) engine.select(null);
     else cancel();
     return;
   }
@@ -664,11 +787,23 @@ function onKeyDown(e: KeyboardEvent) {
     } else copyColor();
     return;
   }
+  if ((st.phase === 'detect' || st.phase === 'selecting' || st.phase === 'pressing') && key.toLowerCase() === 'p' && !ctrl) {
+    e.preventDefault();
+    pinColor();
+    return;
+  }
   if (st.phase !== 'editing') return;
 
   if (ctrl && key.toLowerCase() === 'z') {
     e.preventDefault();
     engine.undo();
+    return;
+  }
+  // 选中的标注调图层：⌘] 上移、⌘[ 下移，加 Shift 直接到最上 / 最下
+  if (ctrl && engine.selected && (e.code === 'BracketRight' || e.code === 'BracketLeft')) {
+    e.preventDefault();
+    const up = e.code === 'BracketRight';
+    engine.reorderSelected(e.shiftKey ? (up ? 'top' : 'bottom') : up ? 'up' : 'down');
     return;
   }
   if (ctrl && key.toLowerCase() === 's') return void (e.preventDefault(), finish('save'));
@@ -785,6 +920,24 @@ function Mask({
         </>
       )}
     </>
+  );
+}
+
+/**
+ * 自由选区：外接矩形里、轮廓外面的部分也压暗（矩形外面已经由 Mask 压暗了），再沿轮廓描一圈框色。
+ * 用一个盖住外接矩形的 SVG：矩形加轮廓按奇偶规则填充，正好填的是"矩形减轮廓"。
+ */
+function ShapeOutline({ shape, rect, s, opacity }: { shape: Point[]; rect: Rect; s: number; opacity: number }) {
+  const ox = rect.x;
+  const oy = rect.y;
+  const pts = shape.map((q) => `${((q.x - ox) / s).toFixed(1)},${((q.y - oy) / s).toFixed(1)}`).join(' L');
+  const w = rect.width / s;
+  const h = rect.height / s;
+  return (
+    <svg className="cap-shape" style={{ left: ox / s, top: oy / s, width: w, height: h }} viewBox={`0 0 ${w} ${h}`}>
+      {opacity > 0 && <path d={`M0,0 H${w} V${h} H0 Z M${pts} Z`} fill={`rgba(0,0,0,${opacity})`} fillRule="evenodd" />}
+      <path d={`M${pts} Z`} className="cap-shape__line" />
+    </svg>
   );
 }
 
@@ -916,7 +1069,7 @@ function FrameBox({
 
 /** 选区框样式 → CSS 变量（选区框、悬停框、拖柄共用）。 */
 function frameVars(f: FrameStyle | undefined): React.CSSProperties {
-  const style = f ?? { color: 'accent', width: 3, style: 'solid', radius: 0 };
+  const style = f ?? { color: 'accent', width: 3, style: 'solid', radius: 0, handles: 'bar' };
   return {
     '--cap-frame-color': style.color === 'accent' ? 'var(--cn-accent)' : style.color,
     // 完成按钮用框的颜色当底色，上面的勾按底色深浅选黑或白
@@ -928,20 +1081,56 @@ function frameVars(f: FrameStyle | undefined): React.CSSProperties {
   } as React.CSSProperties;
 }
 
-function SizeHint({ rect, s, viewport }: { rect: Rect; s: number; viewport: { width: number; height: number } }) {
+function SizeHint({
+  rect,
+  s,
+  viewport,
+  interactive,
+}: {
+  rect: Rect;
+  s: number;
+  viewport: { width: number; height: number };
+  /** 编辑态：点它打开选区面板 */
+  interactive?: boolean;
+}) {
   const ref = useRef<HTMLDivElement>(null);
   const size = useElementSize(ref, { width: 90, height: 22 });
+  const panel = useOverlay((x) => x.sizePanel);
+  const ratio = useOverlay((x) => x.ratio);
+  const session = useOverlay((x) => x.session);
   // 位置每帧跟着选区走；数字隔一会儿才换（每换一次都要重画文字）
   const text = useThrottled(`${rect.width} × ${rect.height}`, CONTENT_INTERVAL);
   const pos = placeSizeHint({ x: rect.x / s, y: rect.y / s, width: rect.width / s, height: rect.height / s }, size, viewport);
+  // 面板放在标签下面；离屏幕底边太近就放上面
+  const below = pos.y + 140 < viewport.height;
   return (
-    <div ref={ref} className="cap-size cn-numeric" style={{ transform: `translate(${pos.x}px, ${pos.y}px)` }}>
+    <div
+      ref={ref}
+      className={clsx('cap-size cn-numeric', interactive && 'cap-size--interactive')}
+      style={{ transform: `translate(${pos.x}px, ${pos.y}px)` }}
+      onPointerDown={interactive ? (e) => e.stopPropagation() : undefined}
+      onClick={interactive ? () => set({ sizePanel: !get().sizePanel }) : undefined}
+      title={interactive ? i18n.t('capture.panel.open') : undefined}
+    >
+      {ratio !== null && interactive && <Lock size={9} strokeWidth={2} className="cap-size__lock" aria-hidden />}
       {text}
+      {interactive && panel && session && (
+        <div className={clsx('cap-panel-anchor', !below && 'cap-panel-anchor--above')}>
+          <SelectionPanel
+            selection={rect}
+            bounds={screenRect()}
+            monitor={MONITOR_ID}
+            ratio={ratio}
+            onChange={(r) => setSelection(r)}
+            onRatio={(r) => set({ ratio: r })}
+          />
+        </div>
+      )}
     </div>
   );
 }
 
-function Handles({ rect, s, radius }: { rect: Rect; s: number; radius: number }) {
+function Handles({ rect, s, radius, dots }: { rect: Rect; s: number; radius: number; dots: boolean }) {
   // 圆角框的四个角点沿 45° 收到圆弧上，不悬在框外
   const inset = Math.min(radius, rect.width / s / 2, rect.height / s / 2) * (1 - Math.SQRT1_2);
   return (
@@ -954,7 +1143,8 @@ function Handles({ rect, s, radius }: { rect: Rect; s: number; radius: number })
         // 框线是 outline，画在选区外面一圈；拖柄要落在线的正中，往外挪半个线宽
         const sx = h.includes('w') ? -1 : h.includes('e') ? 1 : 0;
         const sy = h.includes('n') ? -1 : h.includes('s') ? 1 : 0;
-        const kind = corner ? 'corner' : sy !== 0 ? 'h' : 'v';
+        // 设置里选了小圆点：四条边中间也画成和角上一样的圆点
+        const kind = corner || dots ? 'corner' : sy !== 0 ? 'h' : 'v';
         return (
           <span
             key={h}
@@ -1134,6 +1324,7 @@ function Toolbars({
   tools,
   mid,
   order,
+  hidden,
   frosted,
 }: {
   rect: Rect;
@@ -1145,11 +1336,14 @@ function Toolbars({
   tools?: Tool[];
   mid?: MidAction[];
   order?: TailAction[];
+  /** 设置里藏起来的按钮 */
+  hidden?: string[];
 }) {
   const { t } = useTranslation();
   const version = useEngineVersion(engine);
   const tool = useOverlay((x) => x.tool);
   const translating = useOverlay((x) => x.translating);
+  const scanning = useOverlay((x) => x.scanning);
   const options = useOverlay((x) => x.options);
   const pixelsReady = useOverlay((x) => x.pixelsReady);
   const bitmapReady = useOverlay((x) => x.bitmapReady);
@@ -1236,10 +1430,12 @@ function Toolbars({
         canUndo={canUndo}
         onUndo={() => engine.undo()}
         tools={tools}
+        // 录视频暂时只有 macOS 能用
+        hidden={isMac ? hidden : [...(hidden ?? []), 'video']}
         actions={[mid?.length ? mid : MID_ACTIONS, order?.length ? order : TAIL_ACTIONS]}
         onAction={onAction}
         disabledTools={{ mosaic: !pixelsReady }}
-        disabledActions={{ translate: translating }}
+        disabledActions={{ translate: translating, qr: scanning }}
       />
     ),
     // version：撤销栈、选中的标注变了工具条上的状态可能跟着变
@@ -1263,6 +1459,7 @@ function Toolbars({
             if (picked && pickedTool) engine.applyOptions(o);
             set({ options: o });
           }}
+          onSaveTemplate={saveCurrentTemplate}
         />
       )}
       <TranslationBar css={css} />
@@ -1290,11 +1487,27 @@ export default function CaptureView() {
   const session = useOverlay((x) => x.session);
   const phase = useOverlay((x) => x.phase);
   const selection = useOverlay((x) => x.selection);
+  const codes = useOverlay((x) => x.codes);
+  const structured = useOverlay((x) => x.structured);
+  const shape = useOverlay((x) => x.shape);
   const hover = useOverlay((x) => x.hover);
   const cursorStyle = useOverlay((x) => x.cursorStyle);
   const tool = useOverlay((x) => x.tool);
   const options = useOverlay((x) => x.options);
-  const [viewport, setViewport] = useState({ width: window.innerWidth, height: window.innerHeight });
+  // 水印跟着选项走（开关、文字、字号…），画在标注层上一起导出
+  useEffect(() => {
+    engine.setWatermark(session ? watermarkOf(options.watermark, engine.scale) : null);
+  }, [options.watermark, session]);
+  const [windowSize, setViewport] = useState({ width: window.innerWidth, height: window.innerHeight });
+  // 不截图时 macOS 上遮罩窗口缩成 1×1 点省内存，铺回整屏后的 resize 事件可能比第一帧晚到，
+  // 会话期间按这块屏本身的大小排版
+  const viewport = useMemo(
+    () =>
+      session
+        ? { width: session.monitor.bounds.width / session.monitor.scaleFactor, height: session.monitor.bounds.height / session.monitor.scaleFactor }
+        : windowSize,
+    [session, windowSize],
+  );
 
   useEffect(() => {
     engine.attach(committed.current, drafting.current);
@@ -1402,10 +1615,14 @@ export default function CaptureView() {
       )}
       {(phase === 'selecting' || phase === 'editing') && selection && (
         <>
-          <FrameBox rect={selection} s={s} width={frameWidth} radius={radius} solid={frameSolid} corners={frameCorners} />
+          {shape ? (
+            <ShapeOutline shape={shape} rect={selection} s={s} opacity={opacity} />
+          ) : (
+            <FrameBox rect={selection} s={s} width={frameWidth} radius={radius} solid={frameSolid} corners={frameCorners} />
+          )}
           {/* 拖柄从开始拖选区就跟着显示，不是松手才冒出来。四角样式的框本身就是四个角，不再叠拖柄 */}
-          {!frameCorners && !engine.drawing && <Handles rect={selection} s={s} radius={radius} />}
-          <SizeHint rect={selection} s={s} viewport={viewport} />
+          {!frameCorners && !engine.drawing && !shape && <Handles rect={selection} s={s} radius={radius} dots={frame?.handles === 'dot'} />}
+          <SizeHint rect={selection} s={s} viewport={viewport} interactive={phase === 'editing'} />
         </>
       )}
       {phase === 'editing' && selection && (
@@ -1420,11 +1637,26 @@ export default function CaptureView() {
             s={s}
             viewport={viewport}
             tools={cfg?.toolbarTools}
+            hidden={cfg?.toolbarHidden}
             mid={cfg?.toolbarActions}
             order={cfg?.toolbarOrder}
             frosted={cfg?.toolbarStyle === 'frosted'}
           />
         </>
+      )}
+      {phase === 'editing' && selection && codes && (
+        <CodeResults codes={codes} selection={selection} s={s} viewport={viewport} onClose={() => set({ codes: null })} onDone={cancel} />
+      )}
+      {phase === 'editing' && selection && structured && (
+        <StructuredCard
+          state={structured}
+          selection={selection}
+          s={s}
+          viewport={viewport}
+          onClose={() => set({ structured: null })}
+          onRetry={() => void recognizeStructure(structured.kind)}
+          onDone={cancel}
+        />
       )}
       {phase === 'longshot' && selection && <LongshotUI rect={selection} s={s} viewport={viewport} />}
       {phase === 'gif' && selection && <GifUI rect={selection} s={s} viewport={viewport} />}

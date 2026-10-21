@@ -33,7 +33,7 @@ export function SelectionOverlay({ engine, displayScale }: { engine: AnnotationE
 }
 
 export function handleCursor(h: AnnotationHandle): string {
-  return h === 'from' || h === 'to' ? 'move' : HANDLE_CURSORS[h];
+  return h === 'from' || h === 'to' || h === 'vertex' ? 'move' : HANDLE_CURSORS[h];
 }
 
 const ringCache = new Map<string, string>();
@@ -65,6 +65,10 @@ export function toolCursor(tool: Tool | null, o: ToolOptions): string {
   switch (tool) {
     case 'pen':
       return ringCursor(o.pen.lineWidth, o.pen.color);
+    case 'highlight':
+      return o.highlight.shape === 'brush' ? ringCursor(o.highlight.lineWidth, o.highlight.color) : 'crosshair';
+    case 'eraser':
+      return ringCursor(12);
     case 'mosaic':
       return o.mosaic.shape === 'rect' ? 'crosshair' : ringCursor(o.mosaic.brushSize);
     case 'text':
@@ -78,5 +82,14 @@ export function toolCursor(tool: Tool | null, o: ToolOptions): string {
 
 /** 能点选已有标注的工具（画笔、手绘马赛克时点哪都是接着画） */
 export function canPick(tool: Tool | null, o: ToolOptions): boolean {
-  return tool === null || tool === 'rect' || tool === 'ellipse' || tool === 'arrow' || tool === 'text' || (tool === 'mosaic' && o.mosaic.shape === 'rect');
+  return (
+    tool === null ||
+    tool === 'rect' ||
+    tool === 'ellipse' ||
+    tool === 'arrow' ||
+    tool === 'text' ||
+    tool === 'counter' ||
+    (tool === 'highlight' && o.highlight.shape !== 'brush') ||
+    (tool === 'mosaic' && o.mosaic.shape === 'rect')
+  );
 }

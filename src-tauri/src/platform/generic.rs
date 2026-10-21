@@ -37,6 +37,11 @@ pub fn place_window(
     Ok(())
 }
 
+/// Windows 上藏起来的遮罩不按整屏留画面缓冲，直接藏就行。
+pub fn park_overlay(window: &WebviewWindow) {
+    let _ = window.hide();
+}
+
 /// Windows 上拿着键盘的窗口就是系统的前台窗口。
 pub fn is_foreground(window: &WebviewWindow) -> bool {
     super::native_handle(window)
@@ -108,6 +113,95 @@ pub fn menu_label(text: &str, accelerator: &str) -> String {
 
 pub fn after_silent_start() {}
 
+/// 录视频的写入器：Windows 还没做（下一步用 Media Foundation），先报不支持。
+pub struct VideoWriter;
+
+impl VideoWriter {
+    pub fn create(
+        _path: &std::path::Path,
+        _width: u32,
+        _height: u32,
+        _fps: u32,
+        _options: super::types::VideoOptions,
+    ) -> AppResult<Self> {
+        Err(crate::error::AppError::msg("这个系统上暂时还不能录视频"))
+    }
+
+    pub fn start(&mut self, _origin: std::time::Instant) {}
+
+    pub fn warnings(&self) -> &[String] {
+        &[]
+    }
+
+    pub fn push(&mut self, _frame: &image::RgbaImage, _ms: u64) -> AppResult<()> {
+        Ok(())
+    }
+
+    pub fn finish(self, _end_ms: u64) -> AppResult<usize> {
+        Ok(0)
+    }
+}
+
+/// 剪辑 / 混音录好的视频：没有视频编码的平台不支持
+pub fn export_video(
+    _src: &std::path::Path,
+    _dst: &std::path::Path,
+    _edit: super::types::VideoEdit,
+) -> AppResult<()> {
+    Err(crate::error::AppError::msg("这个系统上暂时还不能剪辑视频"))
+}
+
+/// 摄像头画面：还没做
+pub struct Camera;
+
+impl Camera {
+    pub fn start(_size: u32) -> AppResult<Self> {
+        Err(crate::error::AppError::msg("这个系统上暂时还不能录摄像头"))
+    }
+
+    pub fn latest(&self) -> Option<image::RgbaImage> {
+        None
+    }
+}
+
+pub fn media_access(_kind: super::types::MediaKind) -> super::types::MediaAccess {
+    super::types::MediaAccess::Unsupported
+}
+
+pub fn request_media_access(kind: super::types::MediaKind) -> super::types::MediaAccess {
+    media_access(kind)
+}
+
+/// 纯 Rust 的二维码识别（rqrr），只认二维码。macOS 在 Vision 没认出来时也拿它再试一遍。
+pub fn scan_codes(image: &image::RgbaImage) -> AppResult<Vec<super::types::ScannedCode>> {
+    let (w, h) = image.dimensions();
+    let mut prepared =
+        rqrr::PreparedImage::prepare_from_greyscale(w as usize, h as usize, |x, y| {
+            let p = image.get_pixel(x as u32, y as u32).0;
+            // 和常见的灰度公式一致（整数版，免得每个像素都做浮点）
+            ((u32::from(p[0]) * 299 + u32::from(p[1]) * 587 + u32::from(p[2]) * 114) / 1000) as u8
+        });
+    let mut out = Vec::new();
+    for grid in prepared.detect_grids() {
+        let Ok((_, text)) = grid.decode() else {
+            continue;
+        };
+        let xs = grid.bounds.map(|p| f64::from(p.x));
+        let ys = grid.bounds.map(|p| f64::from(p.y));
+        let x = xs.iter().copied().fold(f64::INFINITY, f64::min);
+        let y = ys.iter().copied().fold(f64::INFINITY, f64::min);
+        out.push(super::types::ScannedCode {
+            kind: "QR".into(),
+            text,
+            x,
+            y,
+            width: xs.iter().copied().fold(f64::NEG_INFINITY, f64::max) - x,
+            height: ys.iter().copied().fold(f64::NEG_INFINITY, f64::max) - y,
+        });
+    }
+    Ok(out)
+}
+
 pub fn is_reopen_event(_event: &tauri::RunEvent) -> bool {
     false
 }
@@ -127,4 +221,19 @@ pub fn start_sms_watcher(
     _tx: std::sync::mpsc::Sender<super::types::SmsMessage>,
     _enabled: Box<dyn Fn() -> bool + Send>,
 ) {
+}
+
+#[cfg(test)]
+mod tests {
+    /// 真机烟雾测试（Windows 上二维码只靠它）：
+    /// `CHENOCR_SMOKE_QR=二维码图片 cargo test -- --ignored smoke_scan_codes --nocapture`
+    #[test]
+    #[ignore]
+    fn smoke_scan_codes() {
+        let path = std::env::var("CHENOCR_SMOKE_QR").unwrap();
+        let image = image::open(&path).unwrap().to_rgba8();
+        let codes = super::scan_codes(&image).unwrap();
+        println!("{codes:?}");
+        assert!(!codes.is_empty());
+    }
 }

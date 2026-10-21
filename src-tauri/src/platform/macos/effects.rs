@@ -117,11 +117,13 @@ thread_local! {
 }
 
 type AllocFn = unsafe extern "C-unwind" fn(&AnyClass, Sel) -> *mut AnyObject;
-/// `TaoWindow` 原来的（从 NSObject 继承来的）`+alloc`
+/// `NSWindow` 原来的（从 NSObject 继承来的）`+alloc`
 static ORIGINAL_ALLOC: OnceLock<AllocFn> = OnceLock::new();
 
 extern "C-unwind" fn alloc_window(class: &AnyClass, sel: Sel) -> *mut AnyObject {
-    let class = if PANEL_NEXT.replace(false) {
+    // 钩子装在 NSWindow 上，所有窗口类都会走到这里，只换 tao 的窗口
+    let class = if PANEL_NEXT.get() && class.name().to_bytes() == b"TaoWindow" {
+        PANEL_NEXT.set(false);
         panel_class().unwrap_or(class)
     } else {
         class
@@ -133,17 +135,17 @@ extern "C-unwind" fn alloc_window(class: &AnyClass, sel: Sel) -> *mut AnyObject 
     }
 }
 
-/// 给 `TaoWindow` 装上 `+alloc`（只在主线程调用）。tao 的窗口类要等它建过第一个窗口才存在
-/// （主窗口在启动时就建了，轮到浮层时一定已经有了）；万一还没有，这次不装，下次再试。
+/// 给 `NSWindow` 装上 `+alloc`（只在主线程调用）。不直接装在 tao 的窗口类 `TaoWindow` 上：
+/// 那个类要等 tao 建过第一个窗口才存在，而主窗口现在是用到时才建，启动时第一个建的就是截图遮罩，
+/// 轮到它时还没有这个类，它就建不成面板了（热键截图后要点一下遮罩才能拖）。
+/// NSWindow 自己没有 `+alloc`，加上去不会盖掉别的实现，子类都会走到这里。
 fn alloc_hook_installed() -> bool {
     static INSTALLED: OnceLock<()> = OnceLock::new();
     if INSTALLED.get().is_some() {
         return true;
     }
-    let Some(tao) = AnyClass::get(c"TaoWindow") else {
-        return false;
-    };
-    let (Some(method), Some(_)) = (tao.class_method(sel!(alloc)), panel_class()) else {
+    let window = NSWindow::class();
+    let (Some(method), Some(_)) = (window.class_method(sel!(alloc)), panel_class()) else {
         return false;
     };
     // SAFETY: `+alloc` 的签名就是 AllocFn；类方法加在元类上，签名串沿用原方法的。
@@ -152,7 +154,7 @@ fn alloc_hook_installed() -> bool {
         let _ = ORIGINAL_ALLOC.set(original);
         let hook: Imp = std::mem::transmute::<AllocFn, Imp>(alloc_window);
         objc2::ffi::class_addMethod(
-            std::ptr::from_ref(tao.metaclass()).cast_mut(),
+            std::ptr::from_ref(window.metaclass()).cast_mut(),
             sel!(alloc),
             hook,
             objc2::ffi::method_getTypeEncoding(method),
@@ -350,6 +352,31 @@ pub const OVER_DOCK_GAP: f64 = 8.0;
 /// 我们自己抓屏是在遮罩显示之前，不会把它拍进去；长截图、录 GIF 期间上层会另外排除。
 pub fn set_overlay_capturable(window: &WebviewWindow, visible: bool) {
     set_exclude_from_capture(window, !visible);
+}
+
+/// 见 `platform::park_overlay`。留在原来那块屏的左上角，缩成 1×1 点，稍等再藏。
+/// 先缩后藏：页面要按小尺寸画过一帧，WebKit 才放掉整屏大小的图层；藏着的窗口不画，
+/// 直接藏起来再缩的话，那几块缓冲有时一直留着（实测 5K 屏的遮罩截完图停在 230MB）。
+/// 1×1 的透明窗口看不见，多留这一会儿没关系。
+pub fn park_overlay(window: &WebviewWindow) {
+    with_window(window, |ns, _| {
+        // 刚摆过的窗口下一轮还会按整屏再摆一次（见 `place_window`），不撤掉的话这里白缩
+        PENDING_FRAME.with_borrow_mut(|pending| pending.remove(&ns.windowNumber()));
+        let mut frame = ns.frame();
+        frame.origin.y += frame.size.height - 1.0;
+        frame.size = objc2_foundation::NSSize::new(1.0, 1.0);
+        ns.setFrame_display(frame, false);
+    });
+    let window = window.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_millis(200));
+        with_window(&window, |ns, _| {
+            // 这中间又开始截图、铺回整屏了就别藏
+            if ns.frame().size.width <= 1.0 {
+                ns.orderOut(None);
+            }
+        });
+    });
 }
 
 /// 浮层盖不盖在程序坞上面：程序坞的窗口层级比普通浮层高，要盖住它得再往上提一档。

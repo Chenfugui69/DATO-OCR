@@ -12,6 +12,8 @@ pub const LONGSHOT_PROGRESS: &str = "longshot-progress";
 pub const LONGSHOT_STATE: &str = "longshot-state";
 pub const GIF_STATE: &str = "gif-state";
 pub const GIF_PROGRESS: &str = "gif-progress";
+/// 剪辑窗口：有一段新录的要剪（负载是这段的 id）
+pub const RECORD_EDIT: &str = "record-edit";
 
 pub const CLIPBOARD_CHANGED: &str = "clipboard-changed";
 pub const CLIPBOARD_PANEL_SHOW: &str = "clipboard-panel-show";

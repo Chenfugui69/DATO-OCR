@@ -129,6 +129,45 @@ pub async fn ocr_rerun(
     blocking(move || ocr::rerun(&app, &job_id, engine, upscale)).await
 }
 
+/// 识别出来的表格导出成 Excel：先问存在哪，返回存好的路径（取消了返回 None）
+#[tauri::command]
+pub async fn ocr_export_xlsx(
+    app: AppHandle,
+    rows: Vec<Vec<ocr::xlsx::TableCell>>,
+) -> AppResult<Option<String>> {
+    blocking(move || {
+        use tauri_plugin_dialog::DialogExt;
+        let settings = crate::state::state(&app).settings.read().capture.clone();
+        let dir = crate::capture::save_directory(&settings);
+        let tr = crate::i18n::localize;
+        let picked = app
+            .dialog()
+            .file()
+            .set_title(tr("导出表格"))
+            .set_directory(&dir)
+            .set_file_name(tr("表格.xlsx"))
+            .add_filter(tr("Excel 表格"), &["xlsx"])
+            .blocking_save_file();
+        let Some(path) = picked.and_then(|p| p.into_path().ok()) else {
+            return Ok(None);
+        };
+        let path = if path.extension().is_some_and(|e| e.eq_ignore_ascii_case("xlsx")) {
+            path
+        } else {
+            path.with_extension("xlsx")
+        };
+        ocr::xlsx::write(&rows, &path)?;
+        Ok(Some(path.to_string_lossy().into_owned()))
+    })
+    .await
+}
+
+/// 用 AI 把识字的图识别成表格 / 公式（kind：table | formula）
+#[tauri::command]
+pub async fn ocr_structure(app: AppHandle, job_id: String, kind: String) -> AppResult<String> {
+    ocr::structure(&app, &job_id, &kind).await
+}
+
 #[tauri::command]
 pub async fn ocr_save_text(app: AppHandle, record_id: i64, text: String) -> AppResult<()> {
     state(&app)

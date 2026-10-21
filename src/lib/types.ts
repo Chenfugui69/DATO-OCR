@@ -49,6 +49,7 @@ export interface Settings {
     translate: string;
     instant: string;
     ai: string;
+    pinClipboard: string;
   };
   capture: CaptureSettings;
   longshot: {
@@ -128,6 +129,7 @@ export interface Settings {
   sync: SyncSettings;
   /** 给 AI 工具用的 MCP 服务 */
   mcp: { enabled: boolean; port: number; allowWrite: boolean };
+  record: RecordSettings;
   update: {
     /** 自动检查更新（启动后一次，之后每 6 小时） */
     autoCheck: boolean;
@@ -247,11 +249,11 @@ export interface PopupStyle {
 export type TailAction = 'undo' | 'save' | 'pin' | 'cancel' | 'done';
 export const TAIL_ACTIONS: TailAction[] = ['undo', 'save', 'pin', 'cancel', 'done'];
 /** 中间那一组 */
-export type MidAction = 'ocr' | 'translate' | 'ai' | 'longshot' | 'gif';
-export const MID_ACTIONS: MidAction[] = ['ocr', 'translate', 'ai', 'longshot', 'gif'];
+export type MidAction = 'ocr' | 'translate' | 'qr' | 'table' | 'formula' | 'ai' | 'longshot' | 'gif' | 'video';
+export const MID_ACTIONS: MidAction[] = ['ocr', 'translate', 'qr', 'table', 'formula', 'ai', 'longshot', 'gif', 'video'];
 /** 绘制工具 */
-export type ToolId = 'rect' | 'ellipse' | 'arrow' | 'pen' | 'mosaic' | 'text';
-export const TOOL_ORDER: ToolId[] = ['rect', 'ellipse', 'arrow', 'pen', 'mosaic', 'text'];
+export type ToolId = 'rect' | 'ellipse' | 'arrow' | 'pen' | 'highlight' | 'counter' | 'mosaic' | 'text' | 'measure' | 'watermark' | 'template' | 'eraser';
+export const TOOL_ORDER: ToolId[] = ['rect', 'ellipse', 'arrow', 'pen', 'highlight', 'counter', 'mosaic', 'text', 'measure', 'watermark', 'template', 'eraser'];
 
 export interface FrameStyle {
   /** 'accent' = 跟随主题色，否则 #RRGGBB */
@@ -260,6 +262,8 @@ export interface FrameStyle {
   /** corners = 只画四个角 */
   style: 'solid' | 'dashed' | 'dotted' | 'corners';
   radius: number;
+  /** 四条边中间的拖柄：bar = 小圆条，dot = 小圆点（四个角一直是圆点） */
+  handles: 'bar' | 'dot';
 }
 
 export interface CaptureSettings {
@@ -280,6 +284,8 @@ export interface CaptureSettings {
   rightClick: 'none' | 'exit' | 'cancelSelection';
   /** 截图工具条三组按钮各自的顺序：绘制工具、识字翻译那一组、最右边那一组 */
   toolbarTools: ToolId[];
+  /** 工具条上隐藏的按钮（设置里点图标切换） */
+  toolbarHidden?: string[];
   toolbarActions: MidAction[];
   toolbarOrder: TailAction[];
   /** 截图工具条的样子：glass = 半透明玻璃条 | frosted = 磨砂玻璃 */
@@ -301,7 +307,7 @@ export interface VisualCapabilities {
   powerSaver: boolean;
 }
 
-export type HotkeyAction = 'capture' | 'longshot' | 'ocr' | 'clipboard' | 'translate' | 'instant' | 'ai';
+export type HotkeyAction = 'capture' | 'longshot' | 'ocr' | 'clipboard' | 'translate' | 'instant' | 'ai' | 'pinClipboard';
 
 export interface HotkeyStatus {
   action: HotkeyAction;
@@ -352,7 +358,7 @@ export interface AppInfo {
 // ───────────────────────── 截图 ─────────────────────────
 
 export type CaptureIntent = 'normal' | 'ocr' | 'longshot' | 'translate';
-export type FinishAction = 'copy' | 'save' | 'pin' | 'ocr' | 'translate' | 'longshot' | 'ai' | 'gif';
+export type FinishAction = 'copy' | 'save' | 'pin' | 'ocr' | 'translate' | 'longshot' | 'ai' | 'gif' | 'video';
 
 export interface SessionInfo {
   sessionId: number;
@@ -394,6 +400,25 @@ export interface LongshotProgress {
   failures: number;
   previewVersion: number;
   seam: number | null;
+}
+
+/** 识别出来的一个二维码 / 条码，位置按物理像素 */
+export interface ScannedCode {
+  kind: string;
+  text: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+/** 贴图里识别出来的一段文字，外接框按图片物理像素 */
+export interface PinText {
+  text: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
 }
 
 export interface PinInfo {
@@ -788,3 +813,31 @@ export type MailCodesStatus = (
   /** 存没存密码（密码本身读不回来） */
   hasPassword: boolean;
 };
+
+/** 录制视频（MP4）的设置；GIF 的帧率、录不录鼠标在 capture 里 */
+export interface RecordSettings {
+  resolution: 'original' | '1080p' | '720p';
+  fps: 15 | 24 | 30 | 60;
+  systemAudio: boolean;
+  microphone: boolean;
+  camera: boolean;
+  cameraPosition: 'top-left' | 'top-right' | 'bottom-left' | 'bottom-right';
+  cameraSize: 'small' | 'medium' | 'large';
+  maxSeconds: number;
+  editBeforeSave: boolean;
+}
+
+export type MediaKind = 'microphone' | 'camera';
+export type MediaAccess = 'granted' | 'denied' | 'notDetermined' | 'unsupported';
+
+/** 录完待剪辑的一段（GIF 或视频） */
+export interface RecordEditInfo {
+  id: number;
+  format: 'gif' | 'mp4';
+  durationMs: number;
+  width: number;
+  height: number;
+  /** 临时文件路径（视频用 asset 协议播放） */
+  path: string;
+  thumbs: { ms: number; url: string }[];
+}

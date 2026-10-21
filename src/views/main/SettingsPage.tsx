@@ -17,25 +17,27 @@ import {
   RefreshCw,
   RotateCcw,
   ScanText,
+  Search,
   ScrollText,
   Settings2,
   ShieldCheck,
   Sparkles,
   TextSelect,
+  Video,
   Wifi,
 } from 'lucide-react';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import { formatBytes, relativeTime } from '@/lib/format';
 import { useEvent } from '@/lib/events';
-import { clipboard, ocr, system, update as updater } from '@/lib/ipc';
+import { clipboard, ocr, record, system, update as updater } from '@/lib/ipc';
 import { accelLabel, isMac } from '@/lib/platform';
 import { useSettings, useSettingsStore } from '@/lib/settings';
 import { currentVisuals } from '@/lib/theme';
-import type { EngineStatus, HotkeyAction, PaddleDownload, Permissions, Settings } from '@/lib/types';
+import type { EngineStatus, HotkeyAction, MediaKind, PaddleDownload, Permissions, Settings } from '@/lib/types';
 import { BrandMark } from '@/ui/BrandMark';
-import { Button, Segmented, Select, Slider, Switch, TextField } from '@/ui/controls';
+import { Button, SearchField, Segmented, Select, Slider, Switch, TextField } from '@/ui/controls';
 import { HotkeyInput } from '@/ui/HotkeyInput';
 import { confirmDialog, notify } from '@/ui/overlays';
 
@@ -53,7 +55,7 @@ import { UpdateBanner, UpdateDialog, useUpdate } from './UpdateDialog';
 /** 验证码保留时间的预设（秒）；0 = 不删 */
 const OTP_EXPIRE_PRESETS = ['30', '60', '300', '0'];
 
-const SECTIONS = ['general', 'permissions', 'capture', 'longshot', 'ocr', 'translate', 'selection', 'ai', 'mcp', 'network', 'clipboard', 'hotkeys', 'appearance', 'storage', 'update', 'about'] as const;
+const SECTIONS = ['general', 'permissions', 'capture', 'longshot', 'record', 'ocr', 'translate', 'selection', 'ai', 'mcp', 'network', 'clipboard', 'hotkeys', 'appearance', 'storage', 'update', 'about'] as const;
 type Section = (typeof SECTIONS)[number];
 
 /** 左边栏每个分类的图标和底色（像 macOS 的系统设置：彩色圆角方块里一个白色图标） */
@@ -62,6 +64,7 @@ const SECTION_ICON: Record<Section, [LucideIcon, string]> = {
   permissions: [ShieldCheck, '#007aff'],
   capture: [Crop, '#0a84ff'],
   longshot: [ScrollText, '#5856d6'],
+  record: [Video, '#ff3b30'],
   ocr: [ScanText, '#34c759'],
   translate: [Languages, '#00a6b4'],
   selection: [TextSelect, '#32ade6'],
@@ -104,6 +107,12 @@ export function SettingsPage({ section }: { section: string | null }) {
   // macOS 的屏幕录制 / 辅助功能权限；别的平台两项都是 null，不显示这一组。
   // 用户去系统设置里改完回来时窗口重新获得焦点，顺带重查一次
   const perms = useQuery({ queryKey: ['permissions'], queryFn: system.permissions, refetchOnWindowFocus: true });
+  const mediaAccess = useQuery({
+    queryKey: ['media-access'],
+    queryFn: async () => ({ microphone: await record.mediaAccess('microphone'), camera: await record.mediaAccess('camera') }),
+    enabled: isMac,
+    refetchOnWindowFocus: true,
+  });
   const permRows = (['screenCapture', 'accessibility'] as (keyof Permissions)[]).filter((k) => perms.data?.[k] != null);
 
   // 左边栏选中的分类；别处（剪贴板面板的"剪贴板设置…"、托盘）可以指定打开哪一类
@@ -114,6 +123,33 @@ export function SettingsPage({ section }: { section: string | null }) {
   useEffect(() => {
     scroller.current?.scrollTo({ top: 0 });
   }, [current]);
+
+  // 搜索：有字时右边显示所有分类，只留标题 / 说明里有这些字的行（分组标题、分类名对上了整组都留）
+  const [query, setQuery] = useState('');
+  const [hitSections, setHitSections] = useState<Set<string> | null>(null);
+  const searchRef = useRef<HTMLInputElement>(null);
+  const listRef = useRef<HTMLDivElement>(null);
+  const searching = query.trim() !== '';
+  // 设置一变，条件显示的行可能多出来 / 少掉，跟着重新过滤
+  useLayoutEffect(() => {
+    const found = filterSettings(listRef.current, query);
+    setHitSections((prev) => (sameSet(prev, found) ? prev : found));
+  }, [query, settings, permRows.length]);
+  useEffect(() => {
+    scroller.current?.scrollTo({ top: 0 });
+  }, [query]);
+  // ⌘F / Ctrl+F 跳到搜索框
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'f') {
+        e.preventDefault();
+        searchRef.current?.focus();
+        searchRef.current?.select();
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
 
   if (!settings) return null;
   const set = (mutate: (d: Settings) => void) => {
@@ -127,6 +163,23 @@ export function SettingsPage({ section }: { section: string | null }) {
       .catch(notify.error);
   };
   const hk = (action: HotkeyAction) => hotkeys.data?.find((h) => h.action === action);
+  const rec = settings.record;
+  // 打开麦克风 / 摄像头：先问系统要权限（第一次会弹框），被拒了就不打开，提示去系统设置里开
+  const toggleMedia = async (kind: MediaKind, on: boolean) => {
+    if (on) {
+      const access = await record.mediaRequest(kind).catch(() => 'denied' as const);
+      void qc.invalidateQueries({ queryKey: ['media-access'] });
+      if (access !== 'granted') {
+        notify.error(t('settings.record.denied', { name: t(`settings.record.${kind}`) }));
+        return;
+      }
+    }
+    set((d) => void (d.record[kind] = on));
+  };
+  const mediaDesc = (kind: MediaKind) => {
+    const access = mediaAccess.data?.[kind];
+    return access === 'denied' ? t('settings.record.deniedDesc') : t(`settings.record.${kind}Desc`);
+  };
   const visuals = currentVisuals();
   const c = settings.capture;
   const cb = settings.clipboard;
@@ -140,9 +193,32 @@ export function SettingsPage({ section }: { section: string | null }) {
       {/* 左：分类列表（彩色图标）；右：只显示选中的那一类 */}
       <aside className="settings-side">
         <h1 className="settings-side__title">{t('nav.settings')}</h1>
+        <SearchField
+          ref={searchRef}
+          className="settings-side__search"
+          value={query}
+          placeholder={t('settings.search.placeholder')}
+          onChange={setQuery}
+          onKeyDown={(e) => {
+            if (e.key === 'Escape' && query) {
+              e.stopPropagation();
+              setQuery('');
+            }
+          }}
+        />
         <nav className="settings-side__list">
           {SECTIONS.filter((s) => s !== 'permissions' || permRows.length > 0).map((s) => (
-            <button key={s} type="button" className="settings-side__item" data-active={current === s} onClick={() => setCurrent(s)}>
+            <button
+              key={s}
+              type="button"
+              className="settings-side__item"
+              data-active={!searching && current === s}
+              data-dim={searching && !hitSections?.has(s)}
+              onClick={() => {
+                setQuery('');
+                setCurrent(s);
+              }}
+            >
               <SectionIcon section={s} />
               <span className="cn-truncate">{t(`settings.section.${s}`)}</span>
             </button>
@@ -150,15 +226,27 @@ export function SettingsPage({ section }: { section: string | null }) {
         </nav>
       </aside>
       <div ref={scroller} className="settings-main">
-        <header className="settings-main__head">
-          <SectionIcon section={current} large />
-          <div>
-            <h2>{t(`settings.section.${current}`)}</h2>
-            <p>{t(`settings.sectionDesc.${current}`)}</p>
-          </div>
-        </header>
-        <SettingsSectionContext.Provider value={current}>
-        <div className="settings">
+        {searching ? (
+          <header className="settings-main__head">
+            <span className="set-icon set-icon--lg" style={{ '--tile': '#8e8e93' } as React.CSSProperties}>
+              <Search size={24} strokeWidth={2} />
+            </span>
+            <div>
+              <h2>{t('settings.search.title')}</h2>
+              <p>{hitSections?.size ? t('settings.search.desc', { query: query.trim() }) : t('settings.search.empty', { query: query.trim() })}</p>
+            </div>
+          </header>
+        ) : (
+          <header className="settings-main__head">
+            <SectionIcon section={current} large />
+            <div>
+              <h2>{t(`settings.section.${current}`)}</h2>
+              <p>{t(`settings.sectionDesc.${current}`)}</p>
+            </div>
+          </header>
+        )}
+        <SettingsSectionContext.Provider value={searching ? null : current}>
+        <div ref={listRef} className="settings" data-searching={searching}>
           {prompt && upd && <UpdateBanner status={upd} onOpen={() => setUpdOpen(true)} />}
           <Group id="general" title={t('settings.section.general')}>
             <Row title={t('settings.general.autoStart')}>
@@ -275,16 +363,6 @@ export function SettingsPage({ section }: { section: string | null }) {
             <Row title={t('settings.capture.instantCursor')} desc={t('settings.capture.instantCursorDesc')}>
               <Switch checked={c.instantCursor} onChange={(v) => set((d) => void (d.capture.instantCursor = v))} />
             </Row>
-            <Row title={t('settings.capture.gifFps')} desc={t('settings.capture.gifFpsDesc')}>
-              <Segmented
-                value={String(c.gifFps)}
-                options={['10', '15', '20', '30'].map((v) => ({ value: v, label: `${v} fps` }))}
-                onChange={(v) => set((d) => void (d.capture.gifFps = Number(v)))}
-              />
-            </Row>
-            <Row title={t('settings.capture.gifCursor')}>
-              <Switch checked={c.gifCursor} onChange={(v) => set((d) => void (d.capture.gifCursor = v))} />
-            </Row>
             <div className="set-row set-row--stack">
               <div className="set-row__label">
                 <div className="set-row__title">{t('settings.capture.toolbarOrder')}</div>
@@ -339,6 +417,78 @@ export function SettingsPage({ section }: { section: string | null }) {
               />
             </Row>
           </Group>
+
+          <Group id="record" title={t('settings.section.record')}>
+            <Row title={t('settings.capture.gifFps')} desc={t('settings.capture.gifFpsDesc')}>
+              <Segmented
+                value={String(c.gifFps)}
+                options={['10', '15', '20', '30'].map((v) => ({ value: v, label: `${v} fps` }))}
+                onChange={(v) => set((d) => void (d.capture.gifFps = Number(v)))}
+              />
+            </Row>
+            <Row title={t('settings.record.cursor')}>
+              <Switch checked={c.gifCursor} onChange={(v) => set((d) => void (d.capture.gifCursor = v))} />
+            </Row>
+            <Row title={t('settings.record.editBeforeSave')} desc={t('settings.record.editBeforeSaveDesc')}>
+              <Switch checked={rec.editBeforeSave} onChange={(v) => set((d) => void (d.record.editBeforeSave = v))} />
+            </Row>
+          </Group>
+          {isMac && (
+            <Group id="record-video" title={t('settings.record.videoTitle')} note={t('settings.record.videoNote')}>
+              <Row title={t('settings.record.resolution')} desc={t('settings.record.resolutionDesc')}>
+                <Segmented
+                  value={rec.resolution}
+                  options={[
+                    { value: 'original', label: t('settings.record.original') },
+                    { value: '1080p', label: '1080p' },
+                    { value: '720p', label: '720p' },
+                  ]}
+                  onChange={(v) => set((d) => void (d.record.resolution = v))}
+                />
+              </Row>
+              <Row title={t('settings.record.fps')}>
+                <Segmented
+                  value={String(rec.fps)}
+                  options={['15', '24', '30', '60'].map((v) => ({ value: v, label: `${v} fps` }))}
+                  onChange={(v) => set((d) => void (d.record.fps = Number(v) as Settings['record']['fps']))}
+                />
+              </Row>
+              <Row title={t('settings.record.maxSeconds')}>
+                <Select
+                  value={String(rec.maxSeconds)}
+                  options={[60, 180, 300, 600, 1800, 3600].map((v) => ({ value: String(v), label: t('settings.record.minutes', { count: v / 60 }) }))}
+                  onChange={(v) => set((d) => void (d.record.maxSeconds = Number(v)))}
+                />
+              </Row>
+              <Row title={t('settings.record.systemAudio')} desc={t('settings.record.systemAudioDesc')}>
+                <Switch checked={rec.systemAudio} onChange={(v) => set((d) => void (d.record.systemAudio = v))} />
+              </Row>
+              <Row title={t('settings.record.microphone')} desc={mediaDesc('microphone')}>
+                <Switch checked={rec.microphone} onChange={(v) => void toggleMedia('microphone', v)} />
+              </Row>
+              <Row title={t('settings.record.camera')} desc={mediaDesc('camera')}>
+                <Switch checked={rec.camera} onChange={(v) => void toggleMedia('camera', v)} />
+              </Row>
+              {rec.camera && (
+                <>
+                  <Row title={t('settings.record.cameraPosition')}>
+                    <Select
+                      value={rec.cameraPosition}
+                      options={(['top-left', 'top-right', 'bottom-left', 'bottom-right'] as const).map((v) => ({ value: v, label: t(`settings.record.corner.${v}`) }))}
+                      onChange={(v) => set((d) => void (d.record.cameraPosition = v))}
+                    />
+                  </Row>
+                  <Row title={t('settings.record.cameraSize')}>
+                    <Segmented
+                      value={rec.cameraSize}
+                      options={(['small', 'medium', 'large'] as const).map((v) => ({ value: v, label: t(`settings.record.size.${v}`) }))}
+                      onChange={(v) => set((d) => void (d.record.cameraSize = v))}
+                    />
+                  </Row>
+                </>
+              )}
+            </Group>
+          )}
 
           <Group id="longshot" title={t('settings.section.longshot')} note={t('settings.longshot.note')}>
             <Row title={t('settings.longshot.debounce')} desc={t('settings.longshot.debounceDesc')}>
@@ -592,7 +742,7 @@ export function SettingsPage({ section }: { section: string | null }) {
           </Group>
 
           <Group id="hotkeys" title={t('settings.section.hotkeys')} note={t('settings.hotkeys.note')}>
-            {(['capture', 'instant', 'longshot', 'ocr', 'clipboard', 'translate', 'ai'] as HotkeyAction[]).map((a) => {
+            {(['capture', 'instant', 'longshot', 'ocr', 'clipboard', 'translate', 'ai', 'pinClipboard'] as HotkeyAction[]).map((a) => {
               const status = hk(a);
               return (
                 <Row key={a} title={t(`settings.hotkeys.${a}`)} desc={status && !status.ok ? <span className="set-row__error">{status.error}</span> : undefined}>
@@ -608,7 +758,7 @@ export function SettingsPage({ section }: { section: string | null }) {
                   // 默认热键每个平台一套，由 Rust 那边给
                   void system
                     .defaultHotkeys()
-                    .then((defaults) => set((d) => void (d.hotkeys = { ...d.hotkeys, ...defaults, ai: d.hotkeys.ai })))
+                    .then((defaults) => set((d) => void (d.hotkeys = { ...d.hotkeys, ...defaults, ai: d.hotkeys.ai, pinClipboard: d.hotkeys.pinClipboard })))
                     .catch(notify.error)
                 }
               >
@@ -801,4 +951,33 @@ function PaddleEngineRow({ status }: { status?: EngineStatus }) {
       )}
     </Row>
   );
+}
+
+/** 按搜索词藏掉对不上的行和分组（直接改 DOM 上的标记，不动各个设置项自己的渲染）。
+ *  返回有命中的分类；没有搜索词时全部恢复、返回 null */
+function filterSettings(root: HTMLElement | null, query: string): Set<string> | null {
+  if (!root) return null;
+  const words = query.trim().toLowerCase().split(/\s+/).filter(Boolean);
+  const hits = new Set<string>();
+  for (const group of root.querySelectorAll<HTMLElement>('.set-group')) {
+    const head = (group.dataset.search ?? '').toLowerCase();
+    const headHit = words.length > 0 && words.every((w) => head.includes(w));
+    let any = false;
+    const card = group.querySelector('.set-card');
+    for (const item of card ? [...card.children] : []) {
+      const el = item as HTMLElement;
+      const label = (el.querySelector('.set-row__label') ?? el).textContent?.toLowerCase() ?? '';
+      const ok = !words.length || headHit || words.every((w) => head.includes(w) || label.includes(w));
+      el.classList.toggle('set-miss', !ok);
+      any ||= ok;
+    }
+    group.classList.toggle('set-miss', words.length > 0 && !any);
+    if (words.length && any && group.dataset.section) hits.add(group.dataset.section);
+  }
+  return words.length ? hits : null;
+}
+
+function sameSet(a: Set<string> | null, b: Set<string> | null) {
+  if (!a || !b) return a === b;
+  return a.size === b.size && [...a].every((x) => b.has(x));
 }

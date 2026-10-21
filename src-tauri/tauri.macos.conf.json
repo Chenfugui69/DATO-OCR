@@ -4,6 +4,7 @@
     "windows": [
       {
         "label": "main",
+        "create": false,
         "title": "DATO OCR",
         "url": "index.html",
         "width": 1120,
@@ -27,6 +28,7 @@
     "resources": null,
     "macOS": {
       "minimumSystemVersion": "13.0",
+      "entitlements": "Entitlements.plist",
       "signingIdentity": "-"
     }
   }

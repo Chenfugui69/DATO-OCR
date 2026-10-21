@@ -129,9 +129,129 @@
   background: var(--cn-accent-subtle);
   color: var(--cn-accent);
 }
+.an-choice__row {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 8px 0 6px;
+  font: 500 12px/1 var(--cn-font-sans);
+  white-space: nowrap;
+}
 .an-choice__text {
   padding: 0 6px;
   font: 500 12px/1 var(--cn-font-sans);
+}
+/* 二级工具条里的文字输入（水印文字） */
+.an-input {
+  width: 150px;
+  height: 26px;
+  padding: 0 8px;
+  border-radius: 7px;
+  border: 0.5px solid var(--cn-separator, rgba(128, 128, 128, 0.35));
+  background: var(--cn-fill-tertiary);
+  color: var(--cn-label);
+  font: 400 12px/26px var(--cn-font-sans);
+  outline: none;
+}
+.an-input:focus {
+  border-color: var(--cn-accent);
+}
+/* 模板：每个后面带一个删除的小叉，鼠标移上去才出来 */
+.an-template {
+  position: relative;
+  display: inline-flex;
+}
+.an-template__del {
+  position: absolute;
+  top: -3px;
+  right: -3px;
+  display: none;
+  place-items: center;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--cn-label-secondary);
+  color: #fff;
+}
+.an-template:hover .an-template__del {
+  display: grid;
+}
+/* 橡皮擦没有选项，二级工具条上只放一句提示 */
+.an-hint {
+  padding: 0 8px;
+  font: 400 12px/30px var(--cn-font-sans);
+  color: var(--cn-label-secondary);
+  white-space: nowrap;
+}
+/* 文字样式示意：普通、底色块、描边 */
+.an-textstyle {
+  display: inline-grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 4px;
+  font: 600 13px/1 var(--cn-font-sans);
+}
+.an-textstyle i {
+  font-style: normal;
+}
+.an-textstyle--fill {
+  background: currentColor;
+}
+.an-textstyle--fill i {
+  color: #fff;
+}
+.an-textstyle--outline i {
+  color: transparent;
+  -webkit-text-stroke: 1.2px currentColor;
+}
+/* 不透明度滑块：细轨道，已选的那段用强调色 */
+.an-range {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 4px 0 6px;
+}
+.an-range input {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 84px;
+  height: 4px;
+  margin: 0;
+  border-radius: 2px;
+  background: linear-gradient(
+    to right,
+    var(--cn-accent) 0 var(--an-range-fill, 50%),
+    var(--cn-fill-secondary, rgba(128, 128, 128, 0.3)) var(--an-range-fill, 50%) 100%
+  );
+  cursor: pointer;
+}
+.an-range input::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow:
+    0 0 0 0.5px rgba(0, 0, 0, 0.25),
+    0 1px 3px rgba(0, 0, 0, 0.3);
+}
+.an-range input::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border: none;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow:
+    0 0 0 0.5px rgba(0, 0, 0, 0.25),
+    0 1px 3px rgba(0, 0, 0, 0.3);
+}
+.an-range__value {
+  min-width: 32px;
+  font: 500 12px/1 var(--cn-font-sans);
+  color: var(--cn-label-secondary);
+  text-align: right;
 }
 /* 色块：18×18 圆形（规格 02 §3.7.3 是 16，放大一点好点） */
 .an-color {

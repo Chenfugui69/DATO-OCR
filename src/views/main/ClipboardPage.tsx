@@ -207,7 +207,7 @@ export function ClipboardPage() {
                       onDoubleClick={() => run(clipboard.copy(it.id).then(() => notify.success(t('clip.copied'))))}
                     >
                       <span className="clip-row__icon" style={it.type === 'color' ? { background: it.preview ?? undefined } : undefined}>
-                        {it.type === 'image' ? <img src={assetUrl(it.thumbPath)} alt="" loading="lazy" /> : it.type !== 'color' && <Icon size={16} strokeWidth={1.5} />}
+                        {it.type === 'image' ? <img src={assetUrl(it.thumbPath)} alt="" loading="lazy" decoding="async" /> : it.type !== 'color' && <Icon size={16} strokeWidth={1.5} />}
                       </span>
                       <div className="clip-row__main">
                         <div className="clip-row__text">

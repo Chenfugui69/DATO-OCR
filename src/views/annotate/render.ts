@@ -1,8 +1,18 @@
 // 标注绘制（规格 02 §5.2）。
 
+import { readableOn } from '@/lib/format';
 import type { Point, Rect } from '@/views/capture/geometry';
 
-import { TEXT_FONT, TEXT_LINE_HEIGHT, type Annotation } from './model';
+import {
+  DEFAULT_FILL_OPACITY,
+  formatCounter,
+  HIGHLIGHT_ALPHA,
+  TEXT_FONT,
+  TEXT_LINE_HEIGHT,
+  type Annotation,
+  type Dash,
+  type Watermark,
+} from './model';
 import type { PixelSource } from './pixels';
 
 type Ctx = CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D;
@@ -92,7 +102,7 @@ function drawMosaic(ctx: Ctx, a: Extract<Annotation, { kind: 'mosaic' }>, bg: Ba
     }
     return;
   }
-  // 模糊：裁到画笔经过的格子，再用画布原生 blur 滤镜把原图画进去（GPU 加速、尊重裁剪）
+  // 模糊：裁到画笔经过的格子，再把模糊后的原图画进去（见 `drawBlurred`）
   if (!bg.bitmap || cells.size === 0) return;
   let x0 = Infinity;
   let y0 = Infinity;
@@ -113,9 +123,55 @@ function drawMosaic(ctx: Ctx, a: Extract<Annotation, { kind: 'mosaic' }>, bg: Ba
   const sy = Math.max(0, y0 - r * 2);
   const sw = x1 - sx + r * 4;
   const sh = y1 - sy + r * 4;
-  ctx.filter = `blur(${r}px)`;
-  ctx.drawImage(bg.bitmap, sx, sy, sw, sh, sx, sy, sw, sh);
-  ctx.filter = 'none';
+  drawBlurred(ctx, bg.bitmap, sx, sy, sw, sh, r);
+}
+
+/**
+ * 画布原生的 blur 滤镜（`ctx.filter`）macOS 的 WebKit 不支持：设了不报错也不生效，画出来就是原图，
+ * 模糊马赛克等于没打。那里改成先缩小再平滑放大回去，效果接近高斯模糊，缩放走 GPU。
+ */
+const canvasFilter = typeof CanvasRenderingContext2D !== 'undefined' && 'filter' in CanvasRenderingContext2D.prototype;
+let blurScratch: HTMLCanvasElement | OffscreenCanvas | null = null;
+
+/** 把原图 (sx, sy, sw, sh) 这块模糊后画回同一位置（调用方先裁好剪切区域）。 */
+function drawBlurred(ctx: Ctx, src: CanvasImageSource, sx: number, sy: number, sw: number, sh: number, radius: number) {
+  if (canvasFilter) {
+    ctx.filter = `blur(${radius}px)`;
+    ctx.drawImage(src, sx, sy, sw, sh, sx, sy, sw, sh);
+    ctx.filter = 'none';
+    return;
+  }
+  // 缩到约 1/radius；一次缩太多会跳过像素（出来是噪点不是模糊），每次最多缩一半
+  const target = Math.max(1, radius);
+  let w = Math.max(1, Math.round(sw));
+  let h = Math.max(1, Math.round(sh));
+  if (!blurScratch) blurScratch = typeof OffscreenCanvas !== 'undefined' ? new OffscreenCanvas(w, h) : document.createElement('canvas');
+  if (blurScratch.width < w || blurScratch.height < h) {
+    blurScratch.width = Math.max(blurScratch.width, w);
+    blurScratch.height = Math.max(blurScratch.height, h);
+  }
+  const tmp = blurScratch.getContext('2d') as CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D | null;
+  if (!tmp) return;
+  tmp.imageSmoothingEnabled = true;
+  tmp.imageSmoothingQuality = 'high';
+  tmp.clearRect(0, 0, w, h);
+  tmp.drawImage(src, sx, sy, sw, sh, 0, 0, w, h);
+  let scale = 1;
+  while (scale * 2 <= target) {
+    const nw = Math.max(1, Math.round(w / 2));
+    const nh = Math.max(1, Math.round(h / 2));
+    tmp.drawImage(blurScratch, 0, 0, w, h, 0, 0, nw, nh);
+    w = nw;
+    h = nh;
+    scale *= 2;
+  }
+  const smoothing = ctx.imageSmoothingEnabled;
+  const quality = ctx.imageSmoothingQuality;
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = 'high';
+  ctx.drawImage(blurScratch, 0, 0, w, h, sx, sy, sw, sh);
+  ctx.imageSmoothingEnabled = smoothing;
+  ctx.imageSmoothingQuality = quality;
 }
 
 /** 矩形马赛克每个格子的颜色，按格子左上角的绝对坐标存 */
@@ -138,9 +194,7 @@ function drawMosaicRect(ctx: Ctx, a: Extract<Annotation, { kind: 'mosaicRect' }>
     const sy = Math.max(0, r.y - blur * 2);
     const sw = r.width + blur * 4;
     const sh = r.height + blur * 4;
-    ctx.filter = `blur(${blur}px)`;
-    ctx.drawImage(bg.bitmap, sx, sy, sw, sh, sx, sy, sw, sh);
-    ctx.filter = 'none';
+    drawBlurred(ctx, bg.bitmap, sx, sy, sw, sh, blur);
     return;
   }
   const src = bg.pixels;
@@ -242,7 +296,68 @@ function drawLabel(ctx: Ctx, a: Extract<Annotation, { kind: 'label' }>, progress
   ctx.filter = 'none';
 }
 
+/** 虚线 / 点线。点线用圆头的零长线段画成一个个圆点 */
+function applyDash(ctx: Ctx, dash: Dash | undefined, lineWidth: number) {
+  if (dash === 'dashed') ctx.setLineDash([lineWidth * 3, lineWidth * 2]);
+  else if (dash === 'dotted') {
+    ctx.lineCap = 'round';
+    ctx.setLineDash([0.01, lineWidth * 2]);
+  } else ctx.setLineDash([]);
+}
+
+/** 实心三角箭头头，尖在 tip，沿 (ux, uy) 方向 */
+function arrowHead(ctx: Ctx, tip: Point, ux: number, uy: number, len: number, half: number) {
+  const bx = tip.x - ux * len;
+  const by = tip.y - uy * len;
+  ctx.beginPath();
+  ctx.moveTo(tip.x, tip.y);
+  ctx.lineTo(bx - uy * half, by + ux * half);
+  ctx.lineTo(bx + uy * half, by - ux * half);
+  ctx.closePath();
+  ctx.fill();
+}
+
+/** 直线、双向箭头、虚线 / 点线的箭头：一根等宽的线，两头按需要加三角 */
+function drawLineArrow(ctx: Ctx, a: Extract<Annotation, { kind: 'arrow' }>) {
+  const dx = a.to.x - a.from.x;
+  const dy = a.to.y - a.from.y;
+  const len = Math.hypot(dx, dy);
+  if (len < 1) return;
+  const ux = dx / len;
+  const uy = dy / len;
+  const w = a.lineWidth;
+  const headEnd = a.style !== 'line';
+  const headStart = a.style === 'double';
+  let headLen = Math.max(w * 3.6, 8);
+  let headHalf = Math.max(w * 1.8, 4);
+  const heads = (headEnd ? 1 : 0) + (headStart ? 1 : 0);
+  if (heads && headLen * heads > len * 0.8) {
+    const k = (len * 0.8) / (headLen * heads);
+    headLen *= k;
+    headHalf *= k;
+  }
+  // 线身让开箭头头，免得虚线的一截从三角尖上戳出来
+  const from = headStart ? { x: a.from.x + ux * headLen * 0.8, y: a.from.y + uy * headLen * 0.8 } : a.from;
+  const to = headEnd ? { x: a.to.x - ux * headLen * 0.8, y: a.to.y - uy * headLen * 0.8 } : a.to;
+  ctx.strokeStyle = a.color;
+  ctx.fillStyle = a.color;
+  ctx.lineWidth = w;
+  ctx.lineCap = 'round';
+  applyDash(ctx, a.dash, w);
+  ctx.beginPath();
+  ctx.moveTo(from.x, from.y);
+  ctx.lineTo(to.x, to.y);
+  ctx.stroke();
+  ctx.setLineDash([]);
+  if (headEnd) arrowHead(ctx, a.to, ux, uy, headLen, headHalf);
+  if (headStart) arrowHead(ctx, a.from, -ux, -uy, headLen, headHalf);
+}
+
 function drawArrow(ctx: Ctx, a: Extract<Annotation, { kind: 'arrow' }>) {
+  if (a.style === 'line' || a.style === 'double' || (a.dash && a.dash !== 'solid')) {
+    drawLineArrow(ctx, a);
+    return;
+  }
   const dx = a.to.x - a.from.x;
   const dy = a.to.y - a.from.y;
   const len = Math.hypot(dx, dy);
@@ -308,6 +423,245 @@ function drawPen(ctx: Ctx, a: Extract<Annotation, { kind: 'pen' }>) {
   ctx.stroke();
 }
 
+/** 荧光笔涂抹：整条路径一次描完再半透明，交叠的地方不会越叠越深 */
+function drawHighlight(ctx: Ctx, a: Extract<Annotation, { kind: 'highlight' }>) {
+  ctx.globalAlpha = HIGHLIGHT_ALPHA;
+  drawPen(ctx, { kind: 'pen', id: a.id, points: a.points, color: a.color, lineWidth: a.lineWidth });
+}
+
+/** 序号：实心圆 + 白描边，编号按圆的底色挑黑字或白字 */
+function drawCounter(ctx: Ctx, a: Extract<Annotation, { kind: 'counter' }>) {
+  const r = a.size / 2;
+  ctx.beginPath();
+  ctx.arc(a.at.x, a.at.y, r, 0, Math.PI * 2);
+  ctx.fillStyle = a.color;
+  ctx.shadowColor = 'rgba(0,0,0,0.3)';
+  ctx.shadowBlur = Math.max(1, a.size * 0.12);
+  ctx.shadowOffsetY = Math.max(0.5, a.size * 0.04);
+  ctx.fill();
+  ctx.shadowColor = 'transparent';
+  ctx.lineWidth = Math.max(1, a.size * 0.07);
+  ctx.strokeStyle = '#fff';
+  ctx.stroke();
+  const label = formatCounter(a.n, a.numbering);
+  // 字多了缩小字号，别撑出圆外
+  const base = a.size * 0.56;
+  ctx.font = `600 ${base}px ${TEXT_FONT}`;
+  const w = ctx.measureText(label).width;
+  const fit = Math.min(1, (a.size * 0.78) / Math.max(1, w));
+  ctx.font = `600 ${base * fit}px ${TEXT_FONT}`;
+  ctx.fillStyle = readableOn(a.color) === 'white' ? '#fff' : 'rgba(0,0,0,0.85)';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(label, a.at.x, a.at.y + a.size * 0.02);
+}
+
+/**
+ * 聚光灯：在 `area`（选区 / 整张图）里铺一层压暗，再把每个聚光灯框擦掉。几个聚光灯一起画、只压暗一次
+ * （各画各的话框和框之间会互相压暗）。必须在别的标注之前画：擦框用的是 destination-out，会把画布上
+ * 已有的东西一起擦掉。
+ */
+export function drawSpotlights(ctx: Ctx, spots: Extract<Annotation, { kind: 'spotlight' }>[], area: Rect) {
+  if (!spots.length) return;
+  ctx.save();
+  ctx.fillStyle = `rgba(0,0,0,${Math.max(...spots.map((s) => s.dim))})`;
+  ctx.fillRect(area.x, area.y, area.width, area.height);
+  ctx.globalCompositeOperation = 'destination-out';
+  ctx.fillStyle = '#000';
+  for (const s of spots) ctx.fillRect(s.rect.x, s.rect.y, s.rect.width, s.rect.height);
+  ctx.restore();
+}
+
+/**
+ * 放大镜标注：原处一个细框，旁边一个圆里画放大后的画面，中间连一根线。
+ * 圆里显示的是以那块的中心为中心、边长等于那块长边的正方形（不是正方形的那块，短的方向多露一点）。
+ */
+function drawMagnifier(ctx: Ctx, a: Extract<Annotation, { kind: 'magnifier' }>, bg: Backdrop) {
+  const s = a.source;
+  const lw = Math.max(2, a.radius * 0.035);
+  // 连线：从框的中心指向圆心，两头都截到边上
+  const sx = s.x + s.width / 2;
+  const sy = s.y + s.height / 2;
+  const dx = a.center.x - sx;
+  const dy = a.center.y - sy;
+  const len = Math.hypot(dx, dy);
+  if (len > a.radius + 2) {
+    const ux = dx / len;
+    const uy = dy / len;
+    // 射线离开框的位置
+    const tx = ux ? (s.width / 2) / Math.abs(ux) : Infinity;
+    const ty = uy ? (s.height / 2) / Math.abs(uy) : Infinity;
+    const t0 = Math.min(tx, ty);
+    ctx.beginPath();
+    ctx.moveTo(sx + ux * t0, sy + uy * t0);
+    ctx.lineTo(a.center.x - ux * a.radius, a.center.y - uy * a.radius);
+    ctx.strokeStyle = a.color;
+    ctx.lineWidth = lw * 0.75;
+    ctx.stroke();
+  }
+  ctx.strokeStyle = a.color;
+  ctx.lineWidth = lw * 0.75;
+  ctx.strokeRect(s.x, s.y, s.width, s.height);
+  // 圆：先投影，再在圆里画放大的画面
+  ctx.save();
+  ctx.beginPath();
+  ctx.arc(a.center.x, a.center.y, a.radius, 0, Math.PI * 2);
+  ctx.shadowColor = 'rgba(0,0,0,0.35)';
+  ctx.shadowBlur = a.radius * 0.12;
+  ctx.shadowOffsetY = a.radius * 0.03;
+  ctx.fillStyle = '#fff';
+  ctx.fill();
+  ctx.restore();
+  if (bg.bitmap) {
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(a.center.x, a.center.y, a.radius, 0, Math.PI * 2);
+    ctx.clip();
+    const side = Math.max(1, s.width, s.height);
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = 'high';
+    ctx.drawImage(bg.bitmap, sx - side / 2, sy - side / 2, side, side, a.center.x - a.radius, a.center.y - a.radius, a.radius * 2, a.radius * 2);
+    ctx.restore();
+  }
+  ctx.beginPath();
+  ctx.arc(a.center.x, a.center.y, a.radius, 0, Math.PI * 2);
+  ctx.lineWidth = lw * 1.6;
+  ctx.strokeStyle = '#fff';
+  ctx.stroke();
+  ctx.lineWidth = lw;
+  ctx.strokeStyle = a.color;
+  ctx.stroke();
+}
+
+/** 放大镜标注的圆默认放在框的哪边、多大：放大两倍，摆在框的右边（右边放不下放左边） */
+export function placeMagnifier(source: Rect, area: Rect | null): { center: Point; radius: number } {
+  const radius = Math.max(24, Math.max(source.width, source.height));
+  const gap = radius * 0.5;
+  const cy = source.y + source.height / 2;
+  let cx = source.x + source.width + gap + radius;
+  if (area && cx + radius > area.x + area.width) cx = source.x - gap - radius;
+  if (area) {
+    cx = Math.min(Math.max(cx, area.x + radius), area.x + area.width - radius);
+  }
+  const y = area ? Math.min(Math.max(cy, area.y + radius), area.y + area.height - radius) : cy;
+  return { center: { x: cx, y }, radius };
+}
+
+/** 测量标签：小圆角色块里写数值，色块用标注的颜色 */
+function measureLabel(ctx: Ctx, text: string, at: Point, color: string, size: number) {
+  ctx.font = `600 ${size}px ${TEXT_FONT}`;
+  const w = ctx.measureText(text).width + size * 0.9;
+  const h = size * 1.5;
+  ctx.fillStyle = color;
+  ctx.beginPath();
+  ctx.roundRect(at.x - w / 2, at.y - h / 2, w, h, h / 2);
+  ctx.fill();
+  ctx.fillStyle = readableOn(color) === 'white' ? '#fff' : 'rgba(0,0,0,0.85)';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(text, at.x, at.y + size * 0.03);
+}
+
+/** 测距离标签上的数值：物理像素，或者按创建时的缩放换算成点 */
+export function distanceText(a: Extract<Annotation, { kind: 'distance' }>): string {
+  const px = Math.hypot(a.to.x - a.from.x, a.to.y - a.from.y);
+  return a.unit === 'pt' ? `${Math.round(px / Math.max(0.1, a.scale))} pt` : `${Math.round(px)} px`;
+}
+
+function drawDistance(ctx: Ctx, a: Extract<Annotation, { kind: 'distance' }>) {
+  const dx = a.to.x - a.from.x;
+  const dy = a.to.y - a.from.y;
+  const len = Math.hypot(dx, dy);
+  if (len < 1) return;
+  const nx = -dy / len;
+  const ny = dx / len;
+  const tick = Math.max(6, a.lineWidth * 4);
+  ctx.strokeStyle = a.color;
+  ctx.lineWidth = a.lineWidth;
+  ctx.lineCap = 'round';
+  ctx.beginPath();
+  ctx.moveTo(a.from.x, a.from.y);
+  ctx.lineTo(a.to.x, a.to.y);
+  // 两头的短横：标出量的是哪一段
+  for (const p of [a.from, a.to]) {
+    ctx.moveTo(p.x - nx * tick, p.y - ny * tick);
+    ctx.lineTo(p.x + nx * tick, p.y + ny * tick);
+  }
+  ctx.stroke();
+  const size = Math.max(10, a.lineWidth * 6);
+  measureLabel(ctx, distanceText(a), { x: (a.from.x + a.to.x) / 2 + nx * size * 1.3, y: (a.from.y + a.to.y) / 2 + ny * size * 1.3 }, a.color, size);
+}
+
+/** 两条边夹的角（0–180°） */
+export function angleDegrees(a: Extract<Annotation, { kind: 'angle' }>): number {
+  const a1 = Math.atan2(a.a.y - a.vertex.y, a.a.x - a.vertex.x);
+  const a2 = Math.atan2(a.b.y - a.vertex.y, a.b.x - a.vertex.x);
+  let d = Math.abs(a2 - a1);
+  if (d > Math.PI) d = Math.PI * 2 - d;
+  return (d * 180) / Math.PI;
+}
+
+function drawAngle(ctx: Ctx, a: Extract<Annotation, { kind: 'angle' }>) {
+  ctx.strokeStyle = a.color;
+  ctx.lineWidth = a.lineWidth;
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  ctx.beginPath();
+  ctx.moveTo(a.a.x, a.a.y);
+  ctx.lineTo(a.vertex.x, a.vertex.y);
+  ctx.lineTo(a.b.x, a.b.y);
+  ctx.stroke();
+  const la = Math.hypot(a.a.x - a.vertex.x, a.a.y - a.vertex.y);
+  const lb = Math.hypot(a.b.x - a.vertex.x, a.b.y - a.vertex.y);
+  if (la < 2 || lb < 2) return;
+  // 圆弧画在小于 180° 的那一侧
+  const a1 = Math.atan2(a.a.y - a.vertex.y, a.a.x - a.vertex.x);
+  const a2 = Math.atan2(a.b.y - a.vertex.y, a.b.x - a.vertex.x);
+  let delta = a2 - a1;
+  while (delta > Math.PI) delta -= Math.PI * 2;
+  while (delta < -Math.PI) delta += Math.PI * 2;
+  const r = Math.min(Math.max(16, a.lineWidth * 12), la * 0.6, lb * 0.6);
+  ctx.beginPath();
+  ctx.arc(a.vertex.x, a.vertex.y, r, a1, a1 + delta, delta < 0);
+  ctx.stroke();
+  const mid = a1 + delta / 2;
+  const size = Math.max(10, a.lineWidth * 6);
+  const lr = r + size * 1.6;
+  measureLabel(ctx, `${angleDegrees(a).toFixed(1)}°`, { x: a.vertex.x + Math.cos(mid) * lr, y: a.vertex.y + Math.sin(mid) * lr }, a.color, size);
+}
+
+/** 水印：文字转一个角度，在 `area` 里铺满（交错排开，像砖墙） */
+export function drawWatermark(ctx: Ctx, w: Watermark, area: Rect) {
+  const text = w.text.trim();
+  if (!text) return;
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(area.x, area.y, area.width, area.height);
+  ctx.clip();
+  ctx.globalAlpha = w.opacity;
+  ctx.fillStyle = w.color;
+  ctx.font = `500 ${w.fontSize}px ${TEXT_FONT}`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  const stepX = ctx.measureText(text).width + w.fontSize * 4;
+  const stepY = w.fontSize * 5;
+  const cx = area.x + area.width / 2;
+  const cy = area.y + area.height / 2;
+  ctx.translate(cx, cy);
+  ctx.rotate((w.angle * Math.PI) / 180);
+  // 转过之后要盖住整块：按对角线的长度铺
+  const half = Math.hypot(area.width, area.height) / 2 + stepX;
+  for (let row = 0, y = -half; y <= half; row += 1, y += stepY) {
+    const offset = row % 2 ? stepX / 2 : 0;
+    for (let x = -half + offset; x <= half; x += stepX) ctx.fillText(text, x, y);
+  }
+  ctx.restore();
+}
+
+/** 文字底色块的留白（字号的比例） */
+const TEXT_FILL_PAD_X = 0.32;
+const TEXT_FILL_PAD_Y = 0.1;
+
 export function textFont(a: { fontSize: number; bold: boolean }): string {
   return `${a.bold ? 600 : 400} ${a.fontSize}px ${TEXT_FONT}`;
 }
@@ -319,6 +673,31 @@ function drawText(ctx: Ctx, a: Extract<Annotation, { kind: 'text' }>) {
   const pad = (lh - a.fontSize) / 2;
   const lines = a.content.split('\n');
   ctx.lineJoin = 'round';
+  if (a.style === 'fill') {
+    // 底色块：选的颜色当底，字按底色深浅挑黑或白
+    const m = measureText(a);
+    const px = a.fontSize * TEXT_FILL_PAD_X;
+    const py = a.fontSize * TEXT_FILL_PAD_Y;
+    ctx.fillStyle = a.color;
+    ctx.beginPath();
+    ctx.roundRect(a.at.x - px, a.at.y - py, m.width + px * 2, m.height + py * 2, a.fontSize * 0.3);
+    ctx.fill();
+    ctx.fillStyle = readableOn(a.color) === 'white' ? '#fff' : 'rgba(0,0,0,0.88)';
+    lines.forEach((line, i) => ctx.fillText(line, a.at.x, a.at.y + i * lh + pad));
+    return;
+  }
+  if (a.style === 'outline') {
+    // 白色粗描边：压在花哨背景上也看得清
+    ctx.lineWidth = Math.max(2, a.fontSize / 5);
+    ctx.strokeStyle = readableOn(a.color) === 'white' ? '#fff' : '#000';
+    ctx.fillStyle = a.color;
+    lines.forEach((line, i) => {
+      const y = a.at.y + i * lh + pad;
+      ctx.strokeText(line, a.at.x, y);
+      ctx.fillText(line, a.at.x, y);
+    });
+    return;
+  }
   // 1px 深色描边：浅色背景上也看得清
   ctx.lineWidth = Math.max(1, a.fontSize / 16);
   ctx.strokeStyle = 'rgba(0,0,0,0.3)';
@@ -336,13 +715,14 @@ export function drawAnnotation(ctx: Ctx, a: Annotation, bg: Backdrop, progress =
     case 'rect': {
       const r = a.rect;
       if (a.filled) {
-        ctx.globalAlpha = 0.6;
+        ctx.globalAlpha = a.fillOpacity ?? DEFAULT_FILL_OPACITY;
         ctx.fillStyle = a.color;
         ctx.fillRect(r.x, r.y, r.width, r.height);
       } else {
         ctx.lineWidth = a.lineWidth;
         ctx.strokeStyle = a.color;
         ctx.lineJoin = 'miter';
+        applyDash(ctx, a.dash, a.lineWidth);
         const h = a.lineWidth / 2;
         ctx.strokeRect(r.x + h, r.y + h, Math.max(0, r.width - a.lineWidth), Math.max(0, r.height - a.lineWidth));
       }
@@ -362,16 +742,42 @@ export function drawAnnotation(ctx: Ctx, a: Annotation, bg: Backdrop, progress =
         Math.PI * 2,
       );
       if (a.filled) {
-        ctx.globalAlpha = 0.6;
+        ctx.globalAlpha = a.fillOpacity ?? DEFAULT_FILL_OPACITY;
         ctx.fillStyle = a.color;
         ctx.fill();
       } else {
         ctx.lineWidth = a.lineWidth;
         ctx.strokeStyle = a.color;
+        applyDash(ctx, a.dash, a.lineWidth);
         ctx.stroke();
       }
       break;
     }
+    case 'highlight':
+      drawHighlight(ctx, a);
+      break;
+    case 'highlightRect': {
+      const r = a.rect;
+      ctx.globalAlpha = HIGHLIGHT_ALPHA;
+      ctx.fillStyle = a.color;
+      ctx.fillRect(r.x, r.y, r.width, r.height);
+      break;
+    }
+    case 'spotlight':
+      // 压暗由引擎统一画（见 drawSpotlights）
+      break;
+    case 'counter':
+      drawCounter(ctx, a);
+      break;
+    case 'magnifier':
+      drawMagnifier(ctx, a, bg);
+      break;
+    case 'distance':
+      drawDistance(ctx, a);
+      break;
+    case 'angle':
+      drawAngle(ctx, a);
+      break;
     case 'arrow':
       drawArrow(ctx, a);
       break;
@@ -415,16 +821,45 @@ export function annotationBounds(a: Annotation): Rect {
     case 'ellipse':
     case 'mosaicRect':
     case 'label':
+    case 'highlightRect':
+    case 'spotlight':
       return a.rect;
+    case 'counter': {
+      const r = a.size / 2 + Math.max(2, a.size * 0.2);
+      return { x: a.at.x - r, y: a.at.y - r, width: r * 2, height: r * 2 };
+    }
+    case 'distance':
+    case 'angle': {
+      const pts = a.kind === 'distance' ? [a.from, a.to] : [a.vertex, a.a, a.b];
+      // 标签在线外面一点，留足余量
+      const pad = Math.max(10, a.lineWidth * 6) * 4 + a.lineWidth * 4;
+      const xs = pts.map((p) => p.x);
+      const ys = pts.map((p) => p.y);
+      const x = Math.min(...xs) - pad;
+      const y = Math.min(...ys) - pad;
+      return { x, y, width: Math.max(...xs) - x + pad, height: Math.max(...ys) - y + pad };
+    }
+    case 'magnifier': {
+      const r = a.radius * 1.2 + 4;
+      const x = Math.min(a.source.x, a.center.x - r);
+      const y = Math.min(a.source.y, a.center.y - r);
+      return {
+        x,
+        y,
+        width: Math.max(a.source.x + a.source.width, a.center.x + r) - x,
+        height: Math.max(a.source.y + a.source.height, a.center.y + r) - y,
+      };
+    }
     case 'arrow': {
-      const w = (a.style === 'thick' ? a.lineWidth * 1.6 : a.lineWidth) * 2 + 2;
+      const w = (a.style === 'thick' ? a.lineWidth * 1.6 : Math.max(a.lineWidth * 1.8, 4)) * 2 + 2;
       const x = Math.min(a.from.x, a.to.x) - w;
       const y = Math.min(a.from.y, a.to.y) - w;
       return { x, y, width: Math.abs(a.to.x - a.from.x) + w * 2, height: Math.abs(a.to.y - a.from.y) + w * 2 };
     }
     case 'pen':
+    case 'highlight':
     case 'mosaic': {
-      const r = a.kind === 'pen' ? a.lineWidth : a.brushSize + mosaicCell(a.brushSize);
+      const r = a.kind === 'mosaic' ? a.brushSize + mosaicCell(a.brushSize) : a.lineWidth;
       const xs = a.points.map((p) => p.x);
       const ys = a.points.map((p) => p.y);
       const x = Math.min(...xs) - pad(r);
@@ -433,7 +868,9 @@ export function annotationBounds(a: Annotation): Rect {
     }
     case 'text': {
       const m = measureText(a);
-      return { x: a.at.x - 2, y: a.at.y - 2, width: m.width + 4, height: m.height + 4 };
+      const px = a.style === 'fill' ? a.fontSize * TEXT_FILL_PAD_X : a.style === 'outline' ? a.fontSize / 10 : 0;
+      const py = a.style === 'fill' ? a.fontSize * TEXT_FILL_PAD_Y : a.style === 'outline' ? a.fontSize / 10 : 0;
+      return { x: a.at.x - 2 - px, y: a.at.y - 2 - py, width: m.width + 4 + px * 2, height: m.height + 4 + py * 2 };
     }
   }
 }

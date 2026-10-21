@@ -1,6 +1,14 @@
 // 可缩放、可拖动的图片查看器（滚轮缩放、拖动平移、双击复原），上面叠一层文字区域框。
+// 右下角一组缩放按钮：缩小、当前比例（点一下回到 100%）、放大、复原到适合窗口。
 
+import { Maximize2, Minus, Plus } from 'lucide-react';
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
+import { useTranslation } from 'react-i18next';
+
+import { Tooltip } from '@/ui/overlays';
+
+const MIN_SCALE = 0.02;
+const MAX_SCALE = 8;
 
 export interface ViewerBox {
   x: number;
@@ -27,6 +35,7 @@ export function ImageViewer({
   onHover: (index: number | null) => void;
   children?: ReactNode;
 }) {
+  const { t } = useTranslation();
   const wrap = useRef<HTMLDivElement>(null);
   const [view, setView] = useState({ scale: 1, x: 0, y: 0 });
   const fitted = useRef(false);
@@ -37,7 +46,7 @@ export function ImageViewer({
     if (!el || !width || !height) return;
     const pad = 24;
     const s = Math.min((el.clientWidth - pad * 2) / width, (el.clientHeight - pad * 2) / height, 1 / window.devicePixelRatio);
-    const scale = Math.max(s, 0.02);
+    const scale = Math.max(s, MIN_SCALE);
     setView({ scale, x: (el.clientWidth - width * scale) / 2, y: (el.clientHeight - height * scale) / 2 });
   }, [width, height]);
 
@@ -55,6 +64,21 @@ export function ImageViewer({
     return () => ro.disconnect();
   }, [fit]);
 
+  /** 以查看区中心为锚点缩放到 `next`（CSS 像素 / 图片像素） */
+  const zoomTo = (next: (scale: number) => number) => {
+    const el = wrap.current;
+    if (!el) return;
+    const mx = el.clientWidth / 2;
+    const my = el.clientHeight / 2;
+    setView((v) => {
+      const s = Math.min(MAX_SCALE, Math.max(MIN_SCALE, next(v.scale)));
+      return { scale: s, x: mx - ((mx - v.x) * s) / v.scale, y: my - ((my - v.y) * s) / v.scale };
+    });
+  };
+  // 比例按图片实际像素算：100% = 一个图片像素对一个屏幕像素
+  const dpr = window.devicePixelRatio;
+  const percent = Math.round(view.scale * dpr * 100);
+
   const onWheel = (e: React.WheelEvent) => {
     const el = wrap.current;
     if (!el) return;
@@ -62,7 +86,7 @@ export function ImageViewer({
     const mx = e.clientX - rect.left;
     const my = e.clientY - rect.top;
     setView((v) => {
-      const next = Math.min(8, Math.max(0.02, v.scale * (e.deltaY < 0 ? 1.15 : 1 / 1.15)));
+      const next = Math.min(MAX_SCALE, Math.max(MIN_SCALE, v.scale * (e.deltaY < 0 ? 1.15 : 1 / 1.15)));
       // 以鼠标位置为锚点缩放
       return { scale: next, x: mx - ((mx - v.x) * next) / v.scale, y: my - ((my - v.y) * next) / v.scale };
     });
@@ -107,6 +131,28 @@ export function ImageViewer({
           ))}
         </svg>
         {children}
+      </div>
+      <div className="viewer__zoom cn-glass" onPointerDown={(e) => e.stopPropagation()} onDoubleClick={(e) => e.stopPropagation()}>
+        <Tooltip content={t('ocr.zoom.out')} side="top">
+          <button type="button" aria-label={t('ocr.zoom.out')} onClick={() => zoomTo((s) => s / 1.25)}>
+            <Minus size={13} strokeWidth={1.75} />
+          </button>
+        </Tooltip>
+        <Tooltip content={t('ocr.zoom.actual')} side="top">
+          <button type="button" className="viewer__percent cn-numeric" aria-label={t('ocr.zoom.actual')} onClick={() => zoomTo(() => 1 / dpr)}>
+            {percent}%
+          </button>
+        </Tooltip>
+        <Tooltip content={t('ocr.zoom.in')} side="top">
+          <button type="button" aria-label={t('ocr.zoom.in')} onClick={() => zoomTo((s) => s * 1.25)}>
+            <Plus size={13} strokeWidth={1.75} />
+          </button>
+        </Tooltip>
+        <Tooltip content={t('ocr.zoom.fit')} side="top">
+          <button type="button" aria-label={t('ocr.zoom.fit')} onClick={fit}>
+            <Maximize2 size={12} strokeWidth={1.75} />
+          </button>
+        </Tooltip>
       </div>
     </div>
   );

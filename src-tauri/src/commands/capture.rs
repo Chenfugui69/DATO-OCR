@@ -8,7 +8,7 @@ use crate::capture::{self, CaptureIntent, FinishMeta, SessionInfo};
 use crate::editor::{self, EditorDoc, EditorFinish};
 use crate::error::{AppError, AppResult};
 use crate::pin::{self, PinInfo};
-use crate::platform::{self, ClipboardPayload, MonitorId, PhysicalRect, WindowHandle};
+use crate::platform::{self, ClipboardPayload, MonitorId, PhysicalRect, ScannedCode, WindowHandle};
 use crate::state::state;
 use crate::{library, longshot, ocr, wm};
 
@@ -47,6 +47,85 @@ pub async fn capture_window_children(handle: u64) -> AppResult<Vec<PhysicalRect>
 pub async fn capture_finish(app: AppHandle, request: Request<'_>) -> AppResult<()> {
     let (meta, body): (FinishMeta, Vec<u8>) = raw_request(&request)?;
     blocking(move || capture::finish(&app, meta, body)).await
+}
+
+/// 截图界面里把选区识别成表格 / 公式（AI 看图），返回模型的回答（表格是 HTML，公式是 LaTeX + MathML）。
+#[tauri::command]
+pub async fn capture_structure(
+    app: AppHandle,
+    session_id: u64,
+    monitor_id: u64,
+    rect: PhysicalRect,
+    kind: String,
+) -> AppResult<String> {
+    let image = {
+        let app = app.clone();
+        blocking(move || {
+            let session = state(&app)
+                .capture
+                .current()
+                .filter(|s| s.id == session_id)
+                .ok_or_else(|| AppError::msg("截图会话已结束"))?;
+            let shot = session
+                .monitor(MonitorId(monitor_id))
+                .ok_or_else(|| AppError::msg("显示器不存在"))?;
+            crate::imaging::crop_opaque(&shot.image, rect)
+        })
+        .await?
+    };
+    crate::ocr::structure_image(&app, &image, &kind).await
+}
+
+/// 截图时把鼠标下的颜色贴到屏幕上（颜色贴图）。`x`、`y` 是这块屏的局部物理坐标。
+#[tauri::command]
+pub async fn capture_pin_color(
+    app: AppHandle,
+    session_id: u64,
+    monitor_id: u64,
+    x: i32,
+    y: i32,
+    rgb: [u8; 3],
+) -> AppResult<()> {
+    let session = state(&app)
+        .capture
+        .current()
+        .filter(|s| s.id == session_id)
+        .ok_or_else(|| AppError::msg("截图会话已结束"))?;
+    let shot = session
+        .monitor(MonitorId(monitor_id))
+        .ok_or_else(|| AppError::msg("显示器不存在"))?;
+    let at = (shot.info.bounds.x + x, shot.info.bounds.y + y);
+    pin::create_color(&app, rgb, at, shot.info.scale_factor)?;
+    capture::end_session(&app, session_id, true);
+    Ok(())
+}
+
+/// 识别选区里的二维码 / 条码。位置换成这块屏的局部坐标（和选区一样）。
+#[tauri::command]
+pub async fn capture_scan_codes(
+    app: AppHandle,
+    session_id: u64,
+    monitor_id: u64,
+    rect: PhysicalRect,
+) -> AppResult<Vec<ScannedCode>> {
+    blocking(move || {
+        let session = state(&app)
+            .capture
+            .current()
+            .filter(|s| s.id == session_id)
+            .ok_or_else(|| AppError::msg("截图会话已结束"))?;
+        let shot = session
+            .monitor(MonitorId(monitor_id))
+            .ok_or_else(|| AppError::msg("显示器不存在"))?;
+        let image = crate::imaging::crop_opaque(&shot.image, rect)?;
+        let mut codes = platform::scan_codes(&image)?;
+        for c in &mut codes {
+            c.x += f64::from(rect.x);
+            c.y += f64::from(rect.y);
+        }
+        Ok(codes)
+    })
+    .await
 }
 
 /// 截图原位翻译：识别选区里的文字并整批翻译，返回每段的位置和译文。
@@ -93,6 +172,16 @@ pub async fn clipboard_write_text(text: String) -> AppResult<()> {
     platform::clipboard_write(&ClipboardPayload::Text {
         text,
         html: None,
+        rtf: None,
+    })
+}
+
+/// 同时写纯文本和 HTML（表格：粘贴到 Excel / Word 时合并单元格、表头都还在）
+#[tauri::command]
+pub async fn clipboard_write_rich(text: String, html: String) -> AppResult<()> {
+    platform::clipboard_write(&ClipboardPayload::Text {
+        text,
+        html: Some(html),
         rtf: None,
     })
 }
@@ -204,6 +293,36 @@ pub async fn pin_save(app: AppHandle, label: String) -> AppResult<()> {
     .await
 }
 
+/// 旋转 / 翻转贴图（op：rotateCw、rotateCcw、flipH、flipV），返回新的尺寸
+#[tauri::command]
+pub async fn pin_transform(app: AppHandle, label: String, op: String) -> AppResult<PinInfo> {
+    blocking(move || pin::transform(&app, &label, &op)).await
+}
+
+/// 恢复最近关掉的一张贴图，没有可恢复的返回 false
+#[tauri::command]
+pub async fn pin_restore_last(app: AppHandle) -> AppResult<bool> {
+    blocking(move || pin::restore_last(&app)).await
+}
+
+/// 把贴图送进编辑器画标注
+#[tauri::command]
+pub async fn pin_edit(app: AppHandle, label: String) -> AppResult<()> {
+    blocking(move || pin::edit(&app, &label)).await
+}
+
+/// 贴图里的二维码 / 条码
+#[tauri::command]
+pub async fn pin_scan_codes(app: AppHandle, label: String) -> AppResult<Vec<ScannedCode>> {
+    blocking(move || platform::scan_codes(&pin_image(&app, &label)?)).await
+}
+
+/// 贴图里的文字和位置（鼠标直接选字用）
+#[tauri::command]
+pub async fn pin_text(app: AppHandle, label: String) -> AppResult<Vec<pin::PinText>> {
+    blocking(move || pin::text(&app, &label).map(|t| (*t).clone())).await
+}
+
 #[tauri::command]
 pub async fn pin_ocr(app: AppHandle, label: String, translate: bool) -> AppResult<()> {
     blocking(move || {
@@ -240,4 +359,53 @@ pub async fn editor_open_shot(app: AppHandle, id: i64) -> AppResult<()> {
         editor::open(&app, image, Some(id)).map(drop)
     })
     .await
+}
+
+// ───────────────────────── 录完剪辑 ─────────────────────────
+
+/// 剪辑窗口要的信息：待剪辑的那段录制（时长、尺寸、缩略图、临时文件）
+#[tauri::command]
+pub async fn record_edit_info() -> AppResult<crate::record_edit::EditInfo> {
+    crate::record_edit::info()
+}
+
+/// 按剪辑保存：`start_ms`..`end_ms` 一段、`speed` 倍速（导出要一会儿，放后台线程）
+#[tauri::command]
+pub async fn record_edit_save(
+    app: AppHandle,
+    id: u64,
+    start_ms: u64,
+    end_ms: u64,
+    speed: f64,
+) -> AppResult<()> {
+    blocking(move || {
+        crate::record_edit::save(
+            &app,
+            id,
+            Some(platform::VideoEdit {
+                start_ms,
+                end_ms,
+                speed,
+            }),
+        )
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn record_edit_discard(app: AppHandle, id: u64) -> AppResult<()> {
+    crate::record_edit::discard(&app, id);
+    Ok(())
+}
+
+/// 麦克风 / 摄像头的授权状态
+#[tauri::command]
+pub async fn media_access(kind: platform::MediaKind) -> AppResult<platform::MediaAccess> {
+    Ok(platform::media_access(kind))
+}
+
+/// 还没问过就弹系统的授权框，等用户点完
+#[tauri::command]
+pub async fn media_request(kind: platform::MediaKind) -> AppResult<platform::MediaAccess> {
+    blocking(move || Ok(platform::request_media_access(kind))).await
 }
