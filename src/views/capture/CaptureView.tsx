@@ -19,7 +19,7 @@ import { CONTENT_INTERVAL, useElementSize, useThrottled } from '@/lib/hooks';
 import { capture, gif, reportError, system } from '@/lib/ipc';
 import { useSettingsStore } from '@/lib/settings';
 import { isMac, shotUrl, windowLabel } from '@/lib/platform';
-import { DEFAULT_GROUPS, MID_ACTIONS, TAIL_ACTIONS, type CaptureIntent, type CaptureTable, type FinishAction, type FrameStyle, type TailAction } from '@/lib/types';
+import { DEFAULT_GROUPS, MID_ACTIONS, TAIL_ACTIONS, type CaptureIntent, type CaptureTable, type FinishAction, type FrameStyle, type SessionInfo, type TailAction } from '@/lib/types';
 import { notify } from '@/ui/overlays';
 import { AnnotationEngine, toolOf } from '@/views/annotate/engine';
 import { BRUSH_RANGE, PEN_RANGE, watermarkOf, type Tool } from '@/views/annotate/model';
@@ -55,9 +55,10 @@ import {
   type SnapLines,
 } from './geometry';
 import { CodeBadges, CodeResults } from './CodeResults';
-import { candidatesAt, ElementCache, rectKey, thresholds, type ElementLevel, type UiElement } from './elements';
+import { candidatesAt, ElementCache, rectKey, tableMagnet, thresholds, withTable, type ElementLevel, type UiElement } from './elements';
 import { aiTableLayout, FormulaInPlace, mergeAiTable, TableInPlace } from './InPlaceResult';
-import { CameraFrame, Countdown, KeyHud, MoveHandle, RecordHints, RecordToolbar, sendGlyphs } from './RecordUI';
+import { EffectsPreview, LiveCapturable, LiveDrawRegion } from './RecordPreview';
+import { CameraFrame, Countdown, KeyHud, MoveHandle, PrepEdges, RecordHints, RecordToolbar, sendGlyphs, setRegion } from './RecordUI';
 import { rememberSelection, SelectionPanel } from './SelectionPanel';
 import { saveTemplate } from '@/views/annotate/templates';
 import { GifUI } from './GifUI';
@@ -77,6 +78,10 @@ let bitmap: ImageBitmap | null = null;
 let windowsLocal: { handle: number; rect: Rect }[] = [];
 const childCache = new Map<number, Rect[]>();
 let childTimer: number | undefined;
+/** 录制中开截图时，录制那次的会话信息（截完录制界面回来要用） */
+let recordingSession: SessionInfo | null = null;
+/** 这次算候选框时吸到的整张表（`rectKey`），没有就是空串 */
+let magnetKey = '';
 let childPending: number | null = null;
 /**
  * 界面元素（macOS 辅助功能，像 Snow Shot）：鼠标下面那个窗口里的元素由里到外的框（表格单元格 → 整张表 → … → 窗口）。
@@ -179,7 +184,14 @@ function hoverAt(p: Point, query = false): Rect | null {
 function elementCandidates(hit: { handle: number; rect: Rect }, p: Point): Rect[] {
   const s = get().session;
   const level: ElementLevel = s?.settings.elementLevel === 'block' ? 'block' : 'element';
-  return candidatesAt(elementCache.items(hit.handle), p, { ...thresholds(level, s?.monitor.scaleFactor ?? 1), maxArea: area(hit.rect) * 0.97 });
+  const scale = s?.monitor.scaleFactor ?? 1;
+  const opts = { ...thresholds(level, scale), maxArea: area(hit.rect) * 0.97 };
+  const items = elementCache.items(hit.handle);
+  const cands = candidatesAt(items, p, opts);
+  // 表格边上、表格外面不远：框整张表（见 tableMagnet）
+  const table = tableMagnet(items, p, cands, { margin: 18 * scale, band: 5 * scale, minSide: opts.minSide });
+  magnetKey = table ? rectKey(table) : '';
+  return withTable(table, cands);
 }
 
 /** 节流着去问鼠标下面的界面元素；鼠标还在上次问到的最里层元素里面（而且问过没多久）就不用再问 */
@@ -283,7 +295,8 @@ function detect(p: Point, query = false): Rect {
     }
     const pick = cands[Math.min(elementLevel, cands.length)] ?? hit.rect;
     const prev = get().hover;
-    if (elementLevel === 0 && prev && area(pick) > area(prev) * 2.5 && contains(hit.rect, { x: prev.x, y: prev.y })) {
+    // 吸到整张表的不算：那是鼠标挪到表格边上 / 外面特意要的
+    if (elementLevel === 0 && prev && rectKey(pick) !== magnetKey && area(pick) > area(prev) * 2.5 && contains(hit.rect, { x: prev.x, y: prev.y })) {
       // 正在问新位置、本地只找得到比刚才大得多的框（多半是整张表、整页）：先停在刚才的框上，别闪一下外框
       if (performance.now() < elementHoldUntil) return prev;
       // 刚出了一个小框、还贴着它的边（格子之间的缝、表头和第一行之间那几像素）：也先不跳到大框
@@ -316,6 +329,9 @@ async function startSession() {
   }
   if (!info) return;
   if (get().session?.sessionId === info.sessionId) return;
+  // 录制中又开了一次截图：录制的会话记下来，截完（gif-state 回来时）放回去
+  const phase0 = get().phase;
+  if (phase0 === 'gif' || phase0 === 'gif-other') recordingSession = get().session;
 
   engine.reset();
   // 水印每次截图都从关着开始（工具的其他选项照旧记着）
@@ -409,10 +425,36 @@ async function loadPixels(sessionId: number, imageId: string) {
     bitmap = bmp;
     engine.setBackdrop({ pixels, bitmap });
     set({ bitmapReady: true });
+    if (get().session?.settings.toolbarStyle === 'frosted') {
+      const url = await glassOf(bmp);
+      if (get().session?.sessionId === sessionId) set({ glass: url });
+      else URL.revokeObjectURL(url);
+    }
   } catch (err) {
     reportError('capture-overlay-pixels', err);
   }
 }
+
+/**
+ * 磨砂玻璃工具条的底：冻结画面缩小 8 倍、模糊、提饱和度。工具条用它当背景、按自己在屏幕上的位置对齐，
+ * 看起来就是把底下的画面模糊了。遮罩窗口是透明的、画面在底下另一个原生窗口里，CSS 的 backdrop-filter
+ * 够不着；以前垫系统的毛玻璃窗口，挪它要过进程，拖动时跟不上只能先撤掉。
+ */
+async function glassOf(bmp: ImageBitmap): Promise<string> {
+  const w = Math.max(1, Math.round(bmp.width / 8));
+  const h = Math.max(1, Math.round(bmp.height / 8));
+  const canvas = new OffscreenCanvas(w, h);
+  const ctx = canvas.getContext('2d');
+  if (!ctx) throw new Error('no 2d context');
+  ctx.filter = 'blur(4px) saturate(1.8)';
+  // 画得比画布大一圈：模糊到边上取的还是画面，不会从四周渗进透明、发灰
+  const m = 8;
+  ctx.drawImage(bmp, -m, -m, w + m * 2, h + m * 2);
+  return URL.createObjectURL(await canvas.convertToBlob({ type: 'image/png' }));
+}
+
+/** 工具条（CSS 像素）位置写给磨砂玻璃的底图对齐用，见 capture.css 的 --gx / --gy */
+const glassAt = (x: number, y: number) => ({ '--gx': `${x}px`, '--gy': `${y}px` }) as React.CSSProperties;
 
 function endSession() {
   pendingMove = null;
@@ -421,6 +463,8 @@ function endSession() {
   pixels = null;
   bitmap?.close();
   bitmap = null;
+  const glass = get().glass;
+  if (glass) URL.revokeObjectURL(glass);
   engine.reset();
   window.clearTimeout(childTimer);
   window.clearTimeout(elementTimer);
@@ -513,14 +557,19 @@ function onAction(id: ActionId) {
 function enterRecordPrep() {
   if (engine.text) engine.commitText();
   engine.select(null);
-  set({ recordPrep: true, tool: null, toolbarGroup: null, codes: null, structured: null, sizePanel: false, recordPanel: null });
+  set({ recordPrep: true, recordQuiet: true, tool: null, toolbarGroup: null, codes: null, structured: null, sizePanel: false, recordPanel: null });
+  // 截图框变成录制框：不压暗、露出真实桌面，除了录制的控制条这些以外鼠标都穿过去（底下的程序照常用）
+  const s = get().session;
+  if (s) void gif.prep(s.sessionId, MONITOR_ID, true).catch((err) => reportError('record-prep', err));
 }
 
 let countdownTimer: number | undefined;
 
 function exitRecordPrep() {
   window.clearInterval(countdownTimer);
-  set({ recordPrep: false, countdown: null, recordPanel: null });
+  set({ recordPrep: false, recordQuiet: false, countdown: null, recordPanel: null });
+  const s = get().session;
+  if (s) void gif.prep(s.sessionId, MONITOR_ID, false).catch((err) => reportError('record-prep', err));
 }
 
 /** 开始录：设置里有倒数就先倒数（选区正中一个大数字），再开始 */
@@ -786,6 +835,13 @@ function onPointerDown(e: React.PointerEvent) {
   }
   (e.target as Element).setPointerCapture?.(e.pointerId);
 
+  // 录制中选着演示工具：在选区里画（没选工具时遮罩是穿透的，收不到点击）
+  if (st.phase === 'gif' && st.tool && st.tool !== 'text' && st.selection && contains(st.selection, p)) {
+    engine.select(null);
+    engine.begin(st.tool, p, st.options);
+    return;
+  }
+
   if (st.phase === 'detect') {
     press = { at: p, hover: st.hover, lasso: e.altKey, points: [p] };
     set({ phase: 'pressing' });
@@ -825,7 +881,8 @@ function onPointerDown(e: React.PointerEvent) {
   const h = hitHandle(sel, p, handleRadius);
   // 自由选区只能整体挪，不能拖边改大小（轮廓是画出来的，拉伸没有意义）
   if (h && !st.shape) drag = { kind: 'resize', handle: h, at: p, orig: sel };
-  else if (contains(sel, p)) drag = { kind: 'move', at: p, orig: sel, shape: st.shape };
+  // 录制准备：录制框只能用右下角的把手挪，框里随便按鼠标不会把框拖走
+  else if (contains(sel, p) && !st.recordPrep) drag = { kind: 'move', at: p, orig: sel, shape: st.shape };
 }
 
 /** 遮罩鼠标穿透、露出真实桌面的那几个状态（长截图、GIF 录制） */
@@ -848,7 +905,8 @@ let moveFrame = 0;
  */
 function onPointerMove(e: React.PointerEvent) {
   const input = { clientX: e.clientX, clientY: e.clientY, shiftKey: e.shiftKey, altKey: e.altKey };
-  if (get().phase === 'editing' && engine.drawing) {
+  const phase = get().phase;
+  if ((phase === 'editing' || phase === 'gif') && engine.drawing) {
     flushMove();
     handleMove(input);
     return;
@@ -870,6 +928,11 @@ function flushMove() {
 
 function handleMove(e: MoveInput) {
   const st = get();
+  // 录制中用演示工具画
+  if (st.phase === 'gif' && engine.drawing) {
+    engine.update(toPx(e), e.shiftKey);
+    return;
+  }
   if (!st.session || st.phase === 'idle' || isLive(st.phase)) return;
   const p = toPx(e);
   set({ cursor: p });
@@ -948,7 +1011,7 @@ function handleMove(e: MoveInput) {
       else if (st.tool) cursor = sel && contains(sel, p) ? 'tool' : 'default';
       else if (sel) {
         const h = hitHandle(sel, p, 7 * scale());
-        cursor = h ? HANDLE_CURSORS[h] : contains(sel, p) ? 'move' : 'default';
+        cursor = h ? HANDLE_CURSORS[h] : contains(sel, p) && !st.recordPrep ? 'move' : 'default';
       }
       if (cursor !== st.cursorStyle) set({ cursorStyle: cursor });
       return;
@@ -1004,7 +1067,7 @@ function onWheel(e: React.WheelEvent) {
 
 function onDoubleClick(e: React.MouseEvent) {
   const st = get();
-  if (st.phase !== 'editing' || !st.selection || !st.session) return;
+  if (st.phase !== 'editing' || !st.selection || !st.session || st.recordPrep) return;
   // 双击文字 = 改字
   const hit = engine.hit(toPx(e), 4 * scale());
   if (hit?.kind === 'text') {
@@ -1504,7 +1567,8 @@ function TranslationBar({ css }: { css: { x: number; y: number; width: number } 
     <div
       ref={ref}
       className="cap-trbar cn-glass"
-      style={{ transform: `translate(${Math.max(0, css.x + css.width - size.width)}px, ${Math.max(0, css.y - size.height - 6)}px)` }}
+      // left / top 定位，入场的 scale 才是以条自己为中心（见 InPlaceResult 的 StructuredBar）
+      style={{ left: Math.max(0, css.x + css.width - size.width), top: Math.max(0, css.y - size.height - 6) }}
       onPointerDown={(e) => e.stopPropagation()}
     >
       <button type="button" className={showOriginal ? '' : 'is-on'} onClick={() => showOriginal && toggle()}>
@@ -1638,31 +1702,31 @@ function selectedTranslationText(): string {
 /** 选区左上角留给尺寸提示的宽度（CSS 像素），够放下 "3840 × 2160" */
 const SIZE_HINT_ROOM = 96;
 
-/** 表格相关的界面元素角色（辅助功能）：选区框住的正好是表格时直接认为有表格 */
-const TABLE_ROLES = new Set(['AXTable', 'AXGrid', 'AXOutline']);
+/** 表格相关的界面元素角色（macOS 辅助功能、Windows UI Automation）：选区框住的正好是表格时直接认为有表格 */
+const TABLE_ROLES = new Set(['AXTable', 'AXGrid', 'AXOutline', 'Table', 'DataGrid']);
 
 /**
- * 「识别」组的提示：选区里有自动识别出来的二维码 → 组按钮换成二维码图标；看起来是表格 → 表格图标。
- * 两样都有时二维码优先（码小、一眼就能用上）。
+ * 「识别」组的提示：选区里有自动识别出来的二维码 → 组按钮换成二维码图标；看起来是表格 / 公式 → 换成表格 / 公式图标，
+ * 点一下直接识别（右键才展开整个组）。两样都有时二维码优先（码小、一眼就能用上）。
  */
-function useRecognizeHints(rect: Rect): { icon?: ActionIcon; hints: string[] } {
+function useRecognizeHints(rect: Rect): { icon?: ActionIcon; hints: string[]; direct?: 'table' | 'formula' } {
   const autoCodes = useOverlay((x) => x.autoCodes);
-  const tableHint = useOverlay((x) => x.tableHint);
+  const hint = useOverlay((x) => x.structureHint);
   return useMemo(() => {
     const qr = autoCodes.some((c) => contains(rect, { x: c.x + c.width / 2, y: c.y + c.height / 2 }));
-    const hints = [...(qr ? ['qr'] : []), ...(tableHint ? ['table'] : [])];
-    return { icon: qr ? ACTION_ICONS.qr : tableHint ? ACTION_ICONS.table : undefined, hints };
-  }, [autoCodes, tableHint, rect]);
+    const hints = [...(qr ? ['qr'] : []), ...(hint ? [hint] : [])];
+    return { icon: qr ? ACTION_ICONS.qr : hint ? ACTION_ICONS[hint] : undefined, hints, direct: qr ? undefined : (hint ?? undefined) };
+  }, [autoCodes, hint, rect]);
 }
 
-/** 选区停下来之后看看里面有没有表格：先看框住的界面元素是不是表格，再让后端按格子线判断 */
-function useTableDetection() {
+/** 选区停下来之后看看里面是表格还是公式：先看框住的界面元素是不是表格，再让后端看（格子线、分数线、数学符号） */
+function useStructureDetection() {
   const selection = useOverlay((x) => x.selection);
   const phase = useOverlay((x) => x.phase);
   const session = useOverlay((x) => x.session);
   useEffect(() => {
     if (phase !== 'editing' || !selection || !session) {
-      if (get().tableHint) set({ tableHint: false });
+      if (get().structureHint) set({ structureHint: null });
       return;
     }
     const hit = windowsLocal.find((w) => contains(w.rect, { x: selection.x + 1, y: selection.y + 1 }));
@@ -1672,14 +1736,14 @@ function useTableDetection() {
         .items(hit.handle)
         .some((e) => TABLE_ROLES.has(e.role) && intersectArea(e.rect, selection) >= 0.6 * Math.min(area(e.rect), area(selection)));
     if (ax) {
-      set({ tableHint: true });
+      set({ structureHint: 'table' });
       return;
     }
     let stale = false;
     const timer = window.setTimeout(() => {
       capture
-        .detectTable(session.sessionId, MONITOR_ID, selection)
-        .then((yes) => !stale && get().tableHint !== yes && set({ tableHint: yes }))
+        .detectStructure(session.sessionId, MONITOR_ID, selection)
+        .then((kind) => !stale && get().structureHint !== kind && set({ structureHint: kind }))
         .catch(() => {});
     }, 220);
     return () => {
@@ -1702,14 +1766,11 @@ function Toolbars({
   mid,
   order,
   hidden,
-  frosted,
   groups,
 }: {
   rect: Rect;
   s: number;
   viewport: { width: number; height: number };
-  /** 磨砂玻璃样式：工具条底下垫一块系统的毛玻璃（模糊冻结的画面） */
-  frosted?: boolean;
   /** 三组按钮各自的顺序（设置里可调）：绘制工具、识字翻译那一组、最右边那一组；可以有按钮组 */
   tools?: string[];
   mid?: string[];
@@ -1746,42 +1807,6 @@ function Toolbars({
   const pos = placeToolbar(css, bar, viewport);
   const above = !pos.inside && pos.y < css.y;
 
-  // 磨砂玻璃：毛玻璃是原生的一层，挪它要过一趟进程间调用，跟不上工具条每一帧的位置。
-  // 所以工具条在动的时候（拖选区、调大小）先撤掉、用普通样式，停稳了再垫上。
-  const [backed, setBacked] = useState(false);
-  const backedRef = useRef(false);
-  useEffect(() => {
-    if (!frosted) return;
-    if (backedRef.current) {
-      backedRef.current = false;
-      setBacked(false);
-      void capture.toolbarGlass(null, 0).catch(() => {});
-    }
-    let stale = false;
-    const timer = window.setTimeout(() => {
-      const area: [number, number, number, number] = [pos.x * s, pos.y * s, bar.width * s, bar.height * s];
-      capture.toolbarGlass(area, Math.round(12 * s)).then(
-        () => {
-          if (stale) return;
-          backedRef.current = true;
-          setBacked(true);
-        },
-        () => {},
-      );
-    }, 120);
-    return () => {
-      stale = true;
-      window.clearTimeout(timer);
-    };
-  }, [frosted, pos.x, pos.y, bar.width, bar.height, s]);
-  // 工具条收起（截完了、取消了、换成长截图）时撤掉
-  useEffect(
-    () => () => {
-      if (backedRef.current) void capture.toolbarGlass(null, 0).catch(() => {});
-      backedRef.current = false;
-    },
-    [],
-  );
   let subY = above ? pos.y - 4 - sub.height : pos.y + bar.height + 4;
   if (subY + sub.height > viewport.height || subY < 0) subY = above ? pos.y + bar.height + 4 : pos.y - 4 - sub.height;
   // 按钮组展开的二级条：和工具的二级条一样放在工具条外侧，对准组按钮
@@ -1805,7 +1830,7 @@ function Toolbars({
   // 拖选区框、调大小时工具条只是跟着换位置，里面几十个按钮一个都没变。位置直接写到元素上（下面的副作用），
   // 工具条本身只在内容真的变了（换工具、撤销栈、按钮顺序、能不能点）时才重画 —— 165Hz 的屏上每帧只有 6ms，
   // 每动一下都把整条工具条重画一遍是拖动时最大的一笔开销。
-  const barClass = clsx(pos.inside && 'cap-toolbar--inside', frosted && backed && 'an-toolbar--backed');
+  const barClass = clsx(pos.inside && 'cap-toolbar--inside');
   const canUndo = engine.canUndo;
   const pickTool = (next: Tool | null) => {
     if (engine.text) engine.commitText();
@@ -1814,6 +1839,9 @@ function Toolbars({
   };
   const groupIcons = recognize.icon ? { recognize: recognize.icon } : undefined;
   const groupHints = recognize.hints.length ? { recognize: true } : undefined;
+  const groupDirect = recognize.direct
+    ? { recognize: { action: recognize.direct, label: t('capture.structured.directTip', { name: t(`actions.${recognize.direct}`) }) } }
+    : undefined;
   const toolbar = useMemo(
     () => (
       <Toolbar
@@ -1826,6 +1854,7 @@ function Toolbars({
         onGroup={(id) => set({ toolbarGroup: id })}
         groupIcons={groupIcons}
         groupHints={groupHints}
+        groupDirect={groupDirect}
         canUndo={canUndo}
         onUndo={() => engine.undo()}
         tools={tools}
@@ -1838,11 +1867,16 @@ function Toolbars({
     ),
     // version：撤销栈、选中的标注变了工具条上的状态可能跟着变
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [barClass, tool, canUndo, tools, mid, order, groups, openGroup, recognize.icon, recognize.hints.length, pixelsReady, translating, version],
+    [barClass, tool, canUndo, tools, mid, order, groups, openGroup, recognize.icon, recognize.hints.length, recognize.direct, pixelsReady, translating, version],
   );
   // 位置：重画之后、上屏之前写上去（重画不会动这个内联样式，但第一次出现时要有）
   useLayoutEffect(() => {
-    if (barRef.current) barRef.current.style.transform = `translate(${pos.x}px, ${pos.y}px)`;
+    const el = barRef.current;
+    if (!el) return;
+    el.style.transform = `translate(${pos.x}px, ${pos.y}px)`;
+    // 磨砂玻璃的底图按工具条在屏幕上的位置对齐（capture.css 的 --gx / --gy）
+    el.style.setProperty('--gx', `${pos.x}px`);
+    el.style.setProperty('--gy', `${pos.y}px`);
   });
   return (
     <>
@@ -1850,7 +1884,7 @@ function Toolbars({
       {group && (
         <GroupBar
           ref={groupRef}
-          style={{ transform: `translate(${groupX}px, ${groupY}px)` }}
+          style={{ transform: `translate(${groupX}px, ${groupY}px)`, ...glassAt(groupX, groupY) }}
           group={group}
           tool={tool}
           hidden={hidden}
@@ -1865,7 +1899,7 @@ function Toolbars({
       {subTool && !group && (
         <SubToolbar
           ref={subRef}
-          style={{ transform: `translate(${subX}px, ${subY}px)` }}
+          style={{ transform: `translate(${subX}px, ${subY}px)`, ...glassAt(subX, subY) }}
           tool={subTool}
           options={subOptions}
           onChange={(o) => {
@@ -1903,9 +1937,11 @@ export default function CaptureView() {
   const codes = useOverlay((x) => x.codes);
   const structured = useOverlay((x) => x.structured);
   const recordPrep = useOverlay((x) => x.recordPrep);
+  const recordQuiet = useOverlay((x) => x.recordQuiet);
+  const glass = useOverlay((x) => x.glass);
   const autoCodes = useOverlay((x) => x.autoCodes);
   const shape = useOverlay((x) => x.shape);
-  useTableDetection();
+  useStructureDetection();
   const hover = useOverlay((x) => x.hover);
   const cursorStyle = useOverlay((x) => x.cursorStyle);
   const tool = useOverlay((x) => x.tool);
@@ -1949,13 +1985,23 @@ export default function CaptureView() {
       }),
       on('longshot-progress', (p) => set({ longshot: p })),
       on('gif-state', (p) => {
-        if (!p.active) return;
+        if (!p.active) {
+          recordingSession = null;
+          return;
+        }
+        // 录制中开的截图结束了：截图那次的会话已经收掉，换回录制的
+        if (!get().session && recordingSession) set({ session: recordingSession });
+        recordingSession = null;
         if (p.monitorId === MONITOR_ID) {
-          set({ phase: 'gif', selection: p.rect, tool: null, gif: null, recordPrep: false, countdown: null, recordPanel: null });
-          engine.reset();
+          // 准备时画的演示标注、选着的演示工具都留着（录进去）
+          set({ phase: 'gif', selection: p.rect, gif: null, recordPrep: false, countdown: null, recordPanel: null });
         } else set({ phase: 'gif-other' });
       }),
       on('gif-progress', (p) => set({ gif: p })),
+      // 录制准备：别的屏也不压暗（鼠标穿透 Rust 那边已经设好了）
+      on('record-prep', (p) => {
+        if (p.monitorId !== MONITOR_ID) set({ recordQuiet: p.active });
+      }),
       on('capture-hotkey', (intent) => {
         // 录 GIF 时再按一次截图热键 = 录完
         if (get().phase === 'gif') {
@@ -1993,7 +2039,8 @@ export default function CaptureView() {
       : phase === 'selecting' || phase === 'editing' || phase === 'longshot' || phase === 'gif'
         ? selection
         : null;
-  const showMask = phase !== 'longshot-other' && phase !== 'gif-other';
+  // 录制准备（这块屏或别的屏）：不压暗，录制只是框住一块，不打扰别的操作
+  const showMask = phase !== 'longshot-other' && phase !== 'gif-other' && !recordQuiet;
   const frame = isTextIntent(session?.intent) ? session?.settings.ocrFrame : session?.settings.frame;
   const radius = phase === 'longshot' || phase === 'gif' ? 0 : (frame?.radius ?? 0);
   const frameWidth = frame?.width ?? 3;
@@ -2005,14 +2052,18 @@ export default function CaptureView() {
 
   return (
     <div
-      className="cap-root"
+      className={clsx('cap-root', cfg?.toolbarStyle === 'flat' && 'an-flat')}
       // 自动化测试读预选框用（几何，物理像素）
       data-hover={(phase === 'detect' || phase === 'pressing') && hover ? `${hover.x},${hover.y},${hover.width},${hover.height}` : undefined}
       data-phase={phase}
+      // 工具条样式：半透明（默认）/ 磨砂玻璃（底图生成好了才有 data-glass）/ 扁平
+      data-toolbar-style={cfg?.toolbarStyle ?? 'glass'}
+      data-glass-ready={glass ? '' : undefined}
       style={{
         // 只有框选时是十字；编辑时按工具：画笔、手绘马赛克是圆圈，文字是 I 形，挪动标注是四向箭头
         cursor: phase === 'editing' ? (cursorStyle === 'tool' ? toolCursor(tool, options) : cursorStyle) : phase === 'passive' ? 'default' : 'crosshair',
         ...frameVars(frame),
+        ...(glass ? ({ '--cap-glass': `url(${glass})`, '--cap-vw': `${viewport.width}px`, '--cap-vh': `${viewport.height}px` } as React.CSSProperties) : null),
       }}
       onWheel={onWheel}
       onPointerDown={onPointerDown}
@@ -2052,7 +2103,11 @@ export default function CaptureView() {
           </div>
           {recordPrep ? (
             <>
-              <RecordToolbar rect={selection} s={s} viewport={viewport} live={false} onStart={startRecording} onExit={exitRecordPrep} />
+              <EffectsPreview rect={selection} s={s} />
+              <KeyHud rect={selection} s={s} />
+              <PrepEdges rect={selection} s={s} viewport={viewport} />
+              <LiveDrawRegion rect={selection} s={s} report={(id, r) => setRegion(id, r, s)} />
+              <RecordToolbar rect={selection} s={s} viewport={viewport} live={false} engine={engine} onStart={startRecording} onExit={exitRecordPrep} />
               <MoveHandle rect={selection} s={s} viewport={viewport} live={false} />
               <RecordHints rect={selection} s={s} />
               <CameraFrame rect={selection} s={s} />
@@ -2064,10 +2119,9 @@ export default function CaptureView() {
               s={s}
               viewport={viewport}
               tools={cfg?.toolbarTools}
-              hidden={cfg?.toolbarHidden}
+              hidden={session?.recording ? [...(cfg?.toolbarHidden ?? []), 'record', 'longshot'] : cfg?.toolbarHidden}
               mid={cfg?.toolbarActions}
               order={cfg?.toolbarOrder}
-              frosted={cfg?.toolbarStyle === 'frosted'}
               groups={cfg?.toolbarGroups ?? DEFAULT_GROUPS}
             />
           )}
@@ -2084,9 +2138,11 @@ export default function CaptureView() {
       {phase === 'gif' && selection && (
         <>
           <GifUI rect={selection} s={s} />
-          <RecordToolbar rect={selection} s={s} viewport={viewport} live onStart={() => {}} onExit={() => void gif.cancel()} />
+          <RecordToolbar rect={selection} s={s} viewport={viewport} live engine={engine} onStart={() => {}} onExit={() => void gif.cancel()} />
           <MoveHandle rect={selection} s={s} viewport={viewport} live />
           <KeyHud rect={selection} s={s} />
+          <LiveDrawRegion rect={selection} s={s} report={(id, r) => setRegion(id, r, s)} />
+          <LiveCapturable engine={engine} />
         </>
       )}
       <MagnifierLayer viewport={viewport} />

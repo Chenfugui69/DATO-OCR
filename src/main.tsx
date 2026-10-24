@@ -24,6 +24,7 @@ const views: [match: (label: string) => boolean, name: string, load: () => Promi
   [(l) => l === 'clipboard', 'clipboard', () => import('@/views/clipboard-panel/PanelView')],
   [(l) => l === 'preview', 'preview', () => import('@/views/clipboard-panel/PreviewView')],
   [(l) => l === 'toast', 'toast', () => import('@/views/toast/ToastView')],
+  [(l) => l === 'popmenu', 'popmenu', () => import('@/views/popmenu/PopMenuView')],
   [(l) => l === 'ocr', 'ocr', () => import('@/views/ocr/OcrView')],
   [(l) => l === 'editor', 'editor', () => import('@/views/editor/EditorView')],
   [(l) => l === 'recedit', 'recedit', () => import('@/views/record-edit/RecordEditView')],

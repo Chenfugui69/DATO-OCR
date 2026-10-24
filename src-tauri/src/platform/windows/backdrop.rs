@@ -148,12 +148,7 @@ pub fn load(monitor: MonitorId, image: &RgbaImage, at: PhysicalRect) -> AppResul
                 surface.width as usize * surface.height as usize * 4,
             )
         };
-        for (out, inp) in dst.chunks_exact_mut(4).zip(image.as_raw().chunks_exact(4)) {
-            out[0] = inp[2];
-            out[1] = inp[1];
-            out[2] = inp[0];
-            out[3] = 255;
-        }
+        crate::imaging::swap_rb_opaque(image.as_raw(), dst);
         push_to_dwm(surface, at)
     })
 }

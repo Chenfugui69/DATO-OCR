@@ -32,6 +32,8 @@ export interface OverlayState {
   cursor: Point | null;
   pixelsReady: boolean;
   bitmapReady: boolean;
+  /** 磨砂玻璃工具条的底：冻结画面缩小模糊后的图（blob URL），工具条拿它当背景；没生成好是 null */
+  glass: string | null;
   tool: Tool | null;
   options: ToolOptions;
   colorFormat: 'hex' | 'rgb' | 'hsl';
@@ -64,13 +66,16 @@ export interface OverlayState {
   /** 开着二级工具条的按钮组 */
   toolbarGroup: string | null;
   /** 选区里看起来有表格（「识别」组换成表格图标） */
-  tableHint: boolean;
+  /** 选区看起来是表格 / 公式（识别按钮换图标，点一下直接识别） */
+  structureHint: 'table' | 'formula' | null;
   /** 截图一开始就在后台识别出来的整屏二维码 / 条码（本屏局部物理坐标） */
   autoCodes: ScannedCode[];
   /** 选区识别成表格 / 公式（AI）的结果卡片；null = 没开 */
   structured: CaptureStructured | null;
   /** 录制准备：点了「录制」之后、开始录之前（工具条换成录制的，下面一条录制栏） */
   recordPrep: boolean;
+  /** 某块屏在录制准备：这块屏也不压暗（别的屏上的遮罩收到 record-prep 事件时设） */
+  recordQuiet: boolean;
   /** 开始录之前的倒数还剩几秒；null = 没在倒数 */
   countdown: number | null;
   /** 录制栏里展开的那个弹层 */
@@ -97,6 +102,7 @@ export const initialOverlay = (): Omit<OverlayState, 'options'> => ({
   cursor: null,
   pixelsReady: false,
   bitmapReady: false,
+  glass: null,
   tool: null,
   colorFormat: 'hex',
   cursorStyle: 'crosshair',
@@ -116,11 +122,12 @@ export const initialOverlay = (): Omit<OverlayState, 'options'> => ({
   scanning: false,
   structured: null,
   recordPrep: false,
+  recordQuiet: false,
   countdown: null,
   recordPanel: null,
   autoCodes: [],
   toolbarGroup: null,
-  tableHint: false,
+  structureHint: null,
 });
 
 // 工具的线宽/颜色在一次运行期间记忆（规格 02 §3.7.4）—— 不随会话重置

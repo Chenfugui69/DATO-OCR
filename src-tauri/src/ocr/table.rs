@@ -700,6 +700,10 @@ pub struct LaidCell {
     pub by_ink: bool,
     /// 笔画宽 ÷ 字号（判断粗体用；页面按它在半粗 / 全粗之间选）
     pub stroke: Option<f64>,
+    /// 斜体
+    pub italic: bool,
+    /// 等宽字体（代码、终端里的表）
+    pub mono: bool,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -845,7 +849,7 @@ fn ink(img: &RgbaImage, b: &Box2, bg: Rgb) -> Option<(Rgb, f64)> {
 /// 一段字的墨迹从哪到哪（字号的倍数，以基线为 0、往上为负）：有大写、数字或带上伸部分的小写
 /// （b d f h k l t）顶到大写高（约 0.73），只有 x 高的小写字母顶到 0.53；有下伸部分（g j p q y、括号）
 /// 往下 0.21，只有逗号、分号往下 0.12；中日韩的字从 -0.80 到 0.08
-fn ink_extent(text: &str) -> (f64, f64) {
+pub(super) fn ink_extent(text: &str) -> (f64, f64) {
     if text.chars().any(is_cjk) {
         return (0.80, 0.08);
     }
@@ -1023,9 +1027,24 @@ pub fn layout(img: &RgbaImage, grid: &Grid) -> LaidTable {
                 align,
                 by_ink: m.by_ink,
                 stroke: None,
+                italic: false,
+                mono: false,
             }
         })
         .collect();
+    // 大小写、斜体、等宽：按字形量（只看一行、按墨迹量的）
+    for (c, m) in cells.iter_mut().zip(&measured) {
+        let (Some(t), true, 1) = (m.text_box, m.by_ink, c.lines) else {
+            continue;
+        };
+        let b = clamp_box(img, &t);
+        let style = super::glyphs::analyze(img, b, m.bg, &c.text);
+        if let Some(text) = style.text {
+            c.text = text;
+        }
+        c.italic = style.italic;
+        c.mono = style.mono;
+    }
     snap_sizes(&mut cells);
     // 笔画宽 ÷ 字号：粗体的明显比一般的粗
     for (c, m) in cells.iter_mut().zip(&measured) {

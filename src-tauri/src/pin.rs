@@ -250,6 +250,8 @@ fn remove(app: &AppHandle, label: &str) {
     st.pins.pins.lock().remove(label);
     st.pins.texts.lock().remove(label);
     st.images.remove(label);
+    // 识别表格 / 公式时放进去的底图、原图
+    st.images.remove_prefix(&format!("{label}-"));
 }
 
 pub fn close(app: &AppHandle, label: &str) {

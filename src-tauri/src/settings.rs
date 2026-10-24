@@ -419,6 +419,8 @@ pub struct CaptureSettings {
     pub element_level: String,
     /// 截图时自动找出画面里的二维码 / 条码，码中间放个小图标，鼠标移上去看内容
     pub auto_scan_codes: bool,
+    /// 识别出的表格 / 公式盖在原处之后，原图怎么看：side = 直接摆在选区左边（放不下就右边）| toggle = 上方小条上点按钮切换
+    pub inplace_original: String,
     pub snap_threshold: u32,
     /// none（默认，右键什么都不做）| exit | cancelSelection
     pub right_click: String,
@@ -434,6 +436,7 @@ pub struct CaptureSettings {
     /// 组里的按钮不再单独出现在顺序里。默认有一个「识别」组：二维码、表格、公式
     pub toolbar_groups: Vec<ToolbarGroup>,
     /// 截图工具条的样子：glass = 半透明的玻璃条（默认）| frosted = 磨砂玻璃（像剪贴板面板，模糊底下的画面）
+    /// | flat = 扁平（不透明、不模糊，低配机器用）
     pub toolbar_style: String,
     /// copy | copyAndSave
     pub finish_action: String,
@@ -472,6 +475,7 @@ impl Default for CaptureSettings {
             detect_child_windows: true,
             element_level: "element".into(),
             auto_scan_codes: true,
+            inplace_original: "side".into(),
             snap_threshold: 8,
             right_click: "none".into(),
             toolbar_tools: owned(&TOOLBAR_TOOLS),
@@ -1456,6 +1460,9 @@ impl Settings {
         if !matches!(c.instant_action.as_str(), "select" | "copy" | "save") {
             c.instant_action = "select".into();
         }
+        if !matches!(c.inplace_original.as_str(), "side" | "toggle") {
+            c.inplace_original = "side".into();
+        }
         if !matches!(c.element_level.as_str(), "block" | "element") {
             c.element_level = "element".into();
         }
@@ -1479,7 +1486,7 @@ impl Settings {
         migrate_recognize_group(c);
         migrate_record_action(c);
         fix_toolbar(c);
-        if !matches!(c.toolbar_style.as_str(), "glass" | "frosted") {
+        if !matches!(c.toolbar_style.as_str(), "glass" | "frosted" | "flat") {
             c.toolbar_style = "glass".into();
         }
         c.snap_threshold = c.snap_threshold.min(32);

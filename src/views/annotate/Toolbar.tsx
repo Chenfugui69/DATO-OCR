@@ -190,6 +190,7 @@ function ToolButton({
   members,
   hint,
   onClick,
+  onContextMenu,
 }: {
   icon: LucideIcon | ActionIcon;
   label: string;
@@ -206,6 +207,8 @@ function ToolButton({
   /** 截图里识别到了这个组能处理的东西（二维码、表格）：按钮上亮一个小点提示 */
   hint?: boolean;
   onClick: () => void;
+  /** 右键（识别组在直接识别时：右键展开整个组） */
+  onContextMenu?: () => void;
 }) {
   return (
     <Tooltip content={label} shortcut={shortcut} side="top">
@@ -220,6 +223,14 @@ function ToolButton({
         aria-label={label}
         aria-pressed={active}
         onClick={onClick}
+        onContextMenu={
+          onContextMenu &&
+          ((e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            onContextMenu();
+          })
+        }
         onPointerDown={(e) => e.stopPropagation()}
       >
         <I size={18} strokeWidth={1.5} absoluteStrokeWidth />
@@ -253,6 +264,8 @@ export interface ToolbarProps {
   groupIcons?: Record<string, ActionIcon>;
   /** 组按钮亮小点提示 */
   groupHints?: Record<string, boolean>;
+  /** 组按钮点一下直接做这件事（识别组认出了表格 / 公式：直接识别），右键才展开组 */
+  groupDirect?: Record<string, { action: ActionId; label: string }>;
   className?: string;
   style?: React.CSSProperties;
 }
@@ -303,6 +316,7 @@ export const Toolbar = forwardRef<HTMLDivElement, ToolbarProps>(function Toolbar
     onGroup,
     groupIcons,
     groupHints,
+    groupDirect,
     className,
     style,
   },
@@ -322,16 +336,26 @@ export const Toolbar = forwardRef<HTMLDivElement, ToolbarProps>(function Toolbar
     const g = groupOf(entry)!;
     // 组里的工具正在用：组按钮显示那个工具、算按下
     const current = tool && g.items.includes(tool) ? tool : null;
+    const toggle = () => onGroup?.(openGroup === g.id ? null : g.id);
+    const direct = current ? undefined : groupDirect?.[g.id];
     return (
       <ToolButton
         key={entry}
         icon={current ? TOOL_ICONS[current] : (groupIcons?.[g.id] ?? groupIcon(g))}
-        label={groupLabel(g, t)}
+        label={direct ? direct.label : groupLabel(g, t)}
         active={openGroup === g.id || !!current}
         groupId={g.id}
         members={g.items}
         hint={groupHints?.[g.id]}
-        onClick={() => onGroup?.(openGroup === g.id ? null : g.id)}
+        onClick={
+          direct
+            ? () => {
+                onGroup?.(null);
+                onAction(direct.action);
+              }
+            : toggle
+        }
+        onContextMenu={direct ? toggle : undefined}
       />
     );
   };

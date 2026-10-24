@@ -387,6 +387,81 @@ html[data-view='capture'] #root {
   caret-color: var(--cn-accent);
   font-kerning: normal;
 }
+/* 像 Excel 一样操作的表格：拖着框选格子，不要选中文字；光标是 Excel 那个十字 */
+.cap-sheet {
+  cursor: cell;
+  user-select: none;
+  -webkit-user-select: none;
+}
+.cap-sheet__range {
+  position: absolute;
+  pointer-events: none;
+  background: color-mix(in srgb, var(--cn-accent) 14%, transparent);
+  box-shadow: inset 0 0 0 1.5px var(--cn-accent);
+  z-index: 2;
+}
+.cap-sheet__active {
+  position: absolute;
+  pointer-events: none;
+  box-shadow:
+    inset 0 0 0 2px var(--cn-accent),
+    0 0 0 1px color-mix(in srgb, #fff 70%, transparent);
+  z-index: 3;
+}
+/* 键盘的接收处：平时透明地压在当前格子上；改字时就是这一格的编辑框 */
+.cap-sheet__editor {
+  position: absolute;
+  z-index: 4;
+  margin: 0;
+  padding: 0 4px;
+  border: 0;
+  outline: none;
+  resize: none;
+  overflow: hidden;
+  opacity: 0;
+  pointer-events: none;
+  background: transparent;
+  color: transparent;
+  caret-color: transparent;
+  white-space: pre;
+  user-select: text;
+  -webkit-user-select: text;
+}
+.cap-sheet__editor[data-editing] {
+  opacity: 1;
+  pointer-events: auto;
+  caret-color: var(--cn-accent);
+  box-shadow:
+    inset 0 0 0 2px var(--cn-accent),
+    0 4px 14px rgba(0, 0, 0, 0.18);
+  cursor: text;
+}
+/* 选区旁边的原图：和选区一样大，点击穿过去 */
+.cap-original {
+  position: absolute;
+  pointer-events: none;
+  animation: cn-fade-in 160ms var(--cn-ease-out);
+}
+.cap-original img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border-radius: 4px;
+  box-shadow:
+    0 0 0 1px rgba(0, 0, 0, 0.18),
+    0 6px 20px rgba(0, 0, 0, 0.28);
+}
+/* 标签放在图的上面（图外），不挡原图的内容 */
+.cap-original__tag {
+  position: absolute;
+  left: 0;
+  bottom: calc(100% + 4px);
+  padding: 1px 6px;
+  border-radius: 4px;
+  font: 500 11px/16px var(--cn-font-sans);
+  color: #fff;
+  background: rgba(0, 0, 0, 0.45);
+}
 /* AI 认出的表格和原位的格子对不上时：自己画一张表铺满原来的范围（底色、线、字色按原图取） */
 .cap-inplace--plain .cap-inplace__cell {
   background: var(--cell-bg);
@@ -558,6 +633,22 @@ html[data-view='capture'] #root {
 /* 上下都放不下时工具条进到选区里面：加一层更不透明的底，免得和截图内容糊在一起 */
 .cap-toolbar--inside {
   background: var(--cn-glass-bg-chrome);
+}
+
+/* 磨砂玻璃工具条：底图是冻结画面缩小模糊后的图（CaptureView 的 glassOf），整屏大小铺开、按工具条自己的位置
+   （--gx / --gy，和它的 translate 一样）往回挪，露出来的正好是它底下那块画面。纯页面画的，拖动时每一帧都在 */
+.cap-root[data-toolbar-style='frosted'][data-glass-ready] :is(.an-toolbar:not(.rec-toolbar, .rec-bar), .an-subtoolbar, .an-groupbar) {
+  background-image:
+    linear-gradient(color-mix(in srgb, var(--cn-glass-bg-thin) 55%, transparent), color-mix(in srgb, var(--cn-glass-bg-thin) 55%, transparent)),
+    var(--cap-glass);
+  background-size:
+    auto,
+    var(--cap-vw) var(--cap-vh);
+  background-position:
+    0 0,
+    calc(var(--gx, 0px) * -1) calc(var(--gy, 0px) * -1);
+  background-repeat: no-repeat;
+  backdrop-filter: none;
 }
 
 .cap-intent {
@@ -1022,6 +1113,14 @@ html[data-view='capture'] #root {
   top: 0;
   animation: cn-fade-in 140ms var(--cn-ease-out);
 }
+/* 录制栏的弹层（效果设置、录制设置）往下展开时会经过右下角的移动把手：整条栏压在把手上面，
+   不然弹层被把手挡住（玻璃材质让栏自成一层，弹层的 z-index 出不了这一层） */
+.rec-toolbar {
+  z-index: 11;
+}
+.rec-bar {
+  z-index: 12;
+}
 .rec-toolbar--autohide {
   opacity: 0;
   transition: opacity 160ms var(--cn-ease-out);
@@ -1276,6 +1375,7 @@ html[data-view='capture'] #root {
 /* 选区右下角外面的移动把手 */
 .rec-move {
   position: absolute;
+  z-index: 4;
   left: 0;
   top: 0;
   display: grid;
@@ -1388,4 +1488,30 @@ html[data-view='capture'] #root {
     opacity: 1;
     scale: 1;
   }
+}
+
+/* 录制准备：选区里预览鼠标效果（录出来就是这样），不挡鼠标 */
+.rec-preview {
+  position: absolute;
+  pointer-events: none;
+  z-index: 2;
+}
+.rec-progress-preview {
+  position: absolute;
+  height: 4px;
+  pointer-events: none;
+  background: rgba(0, 0, 0, 0.18);
+}
+.rec-progress-preview i {
+  display: block;
+  height: 100%;
+}
+.rec-time-preview {
+  position: absolute;
+  padding: 2px 8px;
+  border-radius: 6px;
+  pointer-events: none;
+  font: 600 12px/18px var(--cn-font-sans);
+  color: #fff;
+  background: rgba(0, 0, 0, 0.55);
 }

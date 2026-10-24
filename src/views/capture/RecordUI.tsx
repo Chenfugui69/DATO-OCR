@@ -43,7 +43,10 @@ import type { RecordFormat, RecordSettings, Settings } from '@/lib/types';
 import { Select, Slider, Switch } from '@/ui/controls';
 import { notify, Tooltip } from '@/ui/overlays';
 
+import type { AnnotationEngine } from '@/views/annotate/engine';
+
 import { placeToolbar, type Rect } from './geometry';
+import { DemoTools } from './RecordPreview';
 import { get, set, useOverlay } from './store';
 
 type Viewport = { width: number; height: number };
@@ -78,6 +81,7 @@ export function RecordToolbar({
   s,
   viewport,
   live,
+  engine,
   onStart,
   onExit,
 }: {
@@ -86,6 +90,8 @@ export function RecordToolbar({
   viewport: Viewport;
   /** 正在录 */
   live: boolean;
+  /** 截图的标注：演示工具画在它上面 */
+  engine: AnnotationEngine;
   onStart: () => void;
   onExit: () => void;
 }) {
@@ -104,8 +110,8 @@ export function RecordToolbar({
   const max = progress?.maxMs ?? 0;
   const autoHide = live && !!rec?.autoHideToolbar;
 
-  // 录制中：工具条的屏幕区域报给 Rust（鼠标移上去才点得到）
-  useReportRegion(ref, live, s, [pos.x, pos.y, size.width, size.height]);
+  // 工具条的屏幕区域报给 Rust：准备和录制时遮罩别处都是鼠标穿透的，移到这上面才点得到
+  useReportRegion(ref, true, s, [pos.x, pos.y, size.width, size.height]);
 
   return (
     <>
@@ -115,6 +121,7 @@ export function RecordToolbar({
         style={{ transform: `translate(${pos.x}px, ${pos.y}px)` }}
         onPointerDown={stop}
       >
+        <DemoTools engine={engine} />
         {live ? (
           <Tooltip content={t('record.stop')} side="top">
             <button type="button" className="an-btn rec-btn--stop" aria-label={t('record.stop')} onClick={() => void gif.finish()}>
@@ -166,7 +173,7 @@ export function RecordToolbar({
           </button>
         </Tooltip>
       </div>
-      {!live && <RecordBar toolbar={{ x: pos.x, y: pos.y, height: size.height }} above={!pos.inside && pos.y < sel.y} viewport={viewport} />}
+      {!live && <RecordBar toolbar={{ x: pos.x, y: pos.y, height: size.height }} above={!pos.inside && pos.y < sel.y} viewport={viewport} s={s} />}
     </>
   );
 }
@@ -187,12 +194,20 @@ async function toggleMedia(kind: 'microphone' | 'camera', on: boolean) {
 
 /** 录制中把这块的屏幕区域报给 Rust（和把手一起） */
 const regions = new Map<string, { x: number; y: number; width: number; height: number }>();
+
+/** 录制中报一块能点的区域（CSS 像素）；null = 撤掉 */
+export function setRegion(id: string, r: { x: number; y: number; width: number; height: number } | null, s: number) {
+  if (r) regions.set(id, r);
+  else if (!regions.delete(id)) return;
+  report(s);
+}
 function report(s: number) {
   void gif
     .setRegions([...regions.values()].map((r) => ({ x: Math.floor(r.x * s), y: Math.floor(r.y * s), width: Math.ceil(r.width * s), height: Math.ceil(r.height * s) })))
     .catch(() => {});
 }
-function useReportRegion(ref: React.RefObject<HTMLElement | null>, live: boolean, s: number, deps: unknown[]) {
+/** `withPops`：连同里面弹出来的面板（.rec-pop，摆在条外面）一起算 */
+function useReportRegion(ref: React.RefObject<HTMLElement | null>, live: boolean, s: number, deps: unknown[], withPops = false) {
   const key = useRef(`r${Math.random().toString(36).slice(2)}`);
   useLayoutEffect(() => {
     const id = key.current;
@@ -200,8 +215,12 @@ function useReportRegion(ref: React.RefObject<HTMLElement | null>, live: boolean
       if (regions.delete(id)) report(s);
       return;
     }
-    const r = ref.current.getBoundingClientRect();
-    regions.set(id, { x: r.left, y: r.top, width: r.width, height: r.height });
+    const boxes = [ref.current, ...(withPops ? Array.from(ref.current.querySelectorAll('.rec-pop')) : [])].map((el) => el.getBoundingClientRect());
+    const x0 = Math.min(...boxes.map((b) => b.left));
+    const y0 = Math.min(...boxes.map((b) => b.top));
+    const x1 = Math.max(...boxes.map((b) => b.right));
+    const y1 = Math.max(...boxes.map((b) => b.bottom));
+    regions.set(id, { x: x0, y: y0, width: x1 - x0, height: y1 - y0 });
     report(s);
     return () => {
       regions.delete(id);
@@ -238,12 +257,14 @@ function Swatches({ value, onChange, label, icon: I }: { value: string; onChange
   );
 }
 
-function RecordBar({ toolbar, above, viewport }: { toolbar: { x: number; y: number; height: number }; above: boolean; viewport: Viewport }) {
+function RecordBar({ toolbar, above, viewport, s }: { toolbar: { x: number; y: number; height: number }; above: boolean; viewport: Viewport; s: number }) {
   const { t } = useTranslation();
   const settings = useSettings();
   const panel = useOverlay((x) => x.recordPanel);
   const ref = useRef<HTMLDivElement>(null);
   const size = useElementSize(ref, { width: 560, height: 40 });
+  // 录制栏和它弹出来的面板：准备时遮罩别处是穿透的，这些地方要能点
+  useReportRegion(ref, true, s, [toolbar.x, toolbar.y, toolbar.height, above, size.width, size.height, panel, !!settings], true);
   if (!settings) return null;
   const rec = settings.record;
   const x = Math.max(8, Math.min(toolbar.x, viewport.width - size.width - 8));
@@ -556,6 +577,48 @@ function SettingsPanel({ settings }: { settings: Settings }) {
 // ───────────────────────── 选区上的东西：移动把手、提示、摄像头框、按键显示、倒数 ─────────────────────────
 
 /** 选区右下角外面的移动把手：拖它挪选区。录制中也能拖（录制区域跟着挪） */
+/**
+ * 录制准备：选区四条边（调大小的把手在上面）报成能点的区域，别处鼠标都穿过去。
+ * 在遮罩上按下鼠标（拖边、拖把手、画演示标注）到松开之前整块屏都收鼠标，不然拖出这几块就断了
+ */
+export function PrepEdges({ rect, s, viewport }: { rect: Rect; s: number; viewport: Viewport }) {
+  const sel = css(rect, s);
+  useLayoutEffect(() => {
+    const band = 10;
+    const edges = {
+      'edge-t': { x: sel.x - band, y: sel.y - band, width: sel.width + band * 2, height: band * 2 },
+      'edge-b': { x: sel.x - band, y: sel.y + sel.height - band, width: sel.width + band * 2, height: band * 2 },
+      'edge-l': { x: sel.x - band, y: sel.y - band, width: band * 2, height: sel.height + band * 2 },
+      'edge-r': { x: sel.x + sel.width - band, y: sel.y - band, width: band * 2, height: sel.height + band * 2 },
+    };
+    for (const [id, r] of Object.entries(edges)) regions.set(id, r);
+    report(s);
+    return () => {
+      for (const id of Object.keys(edges)) regions.delete(id);
+      report(s);
+    };
+  }, [sel.x, sel.y, sel.width, sel.height, s]);
+  useEffect(() => {
+    const down = () => {
+      regions.set('press', { x: 0, y: 0, width: viewport.width, height: viewport.height });
+      report(s);
+    };
+    const up = () => {
+      if (regions.delete('press')) report(s);
+    };
+    window.addEventListener('pointerdown', down, true);
+    window.addEventListener('pointerup', up, true);
+    window.addEventListener('pointercancel', up, true);
+    return () => {
+      window.removeEventListener('pointerdown', down, true);
+      window.removeEventListener('pointerup', up, true);
+      window.removeEventListener('pointercancel', up, true);
+      up();
+    };
+  }, [s, viewport.width, viewport.height]);
+  return null;
+}
+
 export function MoveHandle({ rect, s, viewport, live }: { rect: Rect; s: number; viewport: Viewport; live: boolean }) {
   const { t } = useTranslation();
   const ref = useRef<HTMLButtonElement>(null);
@@ -563,7 +626,7 @@ export function MoveHandle({ rect, s, viewport, live }: { rect: Rect; s: number;
   const cx = Math.min(viewport.width - 16, sel.x + sel.width + HANDLE_OUT);
   const cy = Math.min(viewport.height - 16, sel.y + sel.height + HANDLE_OUT);
   const [dragging, setDragging] = useState(false);
-  useReportRegion(ref, live, s, [cx, cy, dragging]);
+  useReportRegion(ref, true, s, [cx, cy, dragging]);
   const down = (e: React.PointerEvent<HTMLButtonElement>) => {
     if (e.button !== 0) return;
     e.preventDefault();
@@ -575,10 +638,8 @@ export function MoveHandle({ rect, s, viewport, live }: { rect: Rect; s: number;
     const maxY = viewport.height * s - from.height;
     setDragging(true);
     // 拖着的时候整块屏都要能收到鼠标（不然一离开把手遮罩又变成穿透，拖到一半就断了）
-    if (live) {
-      regions.set('drag', { x: 0, y: 0, width: viewport.width, height: viewport.height });
-      report(s);
-    }
+    regions.set('drag', { x: 0, y: 0, width: viewport.width, height: viewport.height });
+    report(s);
     let last = 0;
     const move = (ev: PointerEvent) => {
       const next = {
@@ -600,10 +661,8 @@ export function MoveHandle({ rect, s, viewport, live }: { rect: Rect; s: number;
       setDragging(false);
       const sel = get().selection;
       if (live && sel) void gif.moveTo(sel).catch(() => {});
-      if (live) {
-        regions.delete('drag');
-        report(s);
-      }
+      regions.delete('drag');
+      report(s);
     };
     window.addEventListener('pointermove', move);
     window.addEventListener('pointerup', up);
@@ -706,11 +765,14 @@ export function KeyHud({ rect, s }: { rect: Rect; s: number }) {
   const rec = useSettings()?.record;
   const [keys, setKeys] = useState<{ id: number; label: string; at: number }[]>([]);
   const seq = useRef(0);
-  useEvent('record-key', (label) => {
+  const push = (label: string) => {
     const id = ++seq.current;
     setKeys((cur) => [...cur.slice(-5), { id, label, at: Date.now() }]);
     window.setTimeout(() => setKeys((cur) => cur.filter((k) => k.id !== id)), 1600);
-  });
+  };
+  // 按键由后端（全局监听）报过来：录的时候、准备的时候都是（准备时遮罩鼠标穿透，焦点多半在别的程序上，
+  // 页面自己收不到按键）
+  useEvent('record-key', push);
   if (!rec?.keystrokes || !keys.length) return null;
   const sel = css(rect, s);
   const h = rec.effects.keyboardPx;

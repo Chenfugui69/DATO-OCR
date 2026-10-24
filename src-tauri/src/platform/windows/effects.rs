@@ -20,9 +20,7 @@ use windows::Win32::UI::WindowsAndMessaging::GetWindowRect;
 use super::util::{handle_of, hwnd};
 use crate::error::AppResult;
 pub use crate::platform::generic::{
-    apply_theme, build_floating, cursor_in_window, frame_window, is_foreground, park_overlay,
-    unpark_overlay,
-    place_window, set_above_dock, start_resize_drag, take_focus, window_effects, window_placement,
+    apply_theme, build_floating, cursor_in_window, frame_window, is_foreground, place_window, set_above_dock, start_resize_drag, take_focus, window_effects, window_placement,
     OVER_DOCK_GAP,
 };
 use crate::platform::PhysicalRect;
@@ -681,6 +679,22 @@ pub fn hide_window(window: &WebviewWindow) {
     unsafe {
         let _ = ShowWindow(h, SW_HIDE);
     }
+}
+
+/// 截图收工：藏起来、缩成 1×1、网页内存目标降到 Low。
+///
+/// 只藏不缩的话 WebView2 还按整屏留着画面缓冲（4K 屏一个遮罩一百多 MB 显存），待机时一直占着；
+/// 缩了之后上一张截图的纹理、像素数组还留在 GPU 缓存和 JS 堆里（又是一百多 MB），Low 让它们
+/// 马上清掉。网页照常运行（不像 `IsVisible = false` 那样停帧），下次截图前就能先画好。
+/// 下次截图 `overlay::arrange` 摆窗口时铺满整屏、`unpark_overlay` 把内存目标调回来。
+pub fn park_overlay(window: &WebviewWindow) {
+    let _ = window.hide();
+    let _ = window.set_size(tauri::PhysicalSize::new(1, 1));
+    super::webview_idle::set_memory_low(window, true);
+}
+
+pub fn unpark_overlay(window: &WebviewWindow) {
+    super::webview_idle::set_memory_low(window, false);
 }
 
 /// 加上 `WS_EX_NOACTIVATE`：点击、显示都不会把它变成前台窗口。

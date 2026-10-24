@@ -3,23 +3,36 @@
 // 双击收成小圆点 / 恢复 · 右键菜单 · Esc 或中键关闭。
 // 图里有字的话可以直接拖选：鼠标第一次移上来时识别一遍，在图上铺一层透明文字（位置、大小和图上的字对齐），
 // 在字上按下是选字，在空白处按下仍是拖动贴图。
+//
+// 鼠标移上来时右下角出一个半透明的小关闭按钮；图里看起来有表格 / 公式的话，关闭按钮左边再出一个一样不显眼的提示，
+// 点一下：表格原位盖在图上、像 Excel 一样改（和截图里同一套），公式原位显示、能改 LaTeX。
+// 右键菜单是自己画的（单独一个小窗口，见 popmenu.rs）：图标、快捷键、深浅色和程序别处一样。
 
-import { CheckMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu } from '@tauri-apps/api/menu';
 import { PhysicalPosition, PhysicalSize } from '@tauri-apps/api/dpi';
 import { getCurrentWindow } from '@tauri-apps/api/window';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import clsx from 'clsx';
+import { Copy, FileSpreadsheet, PenLine, Sigma, Table2, X } from 'lucide-react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
-import { capture, pin, system } from '@/lib/ipc';
-import { modKey, shotUrl, windowLabel } from '@/lib/platform';
-import type { PinInfo, PinText } from '@/lib/types';
+import { useEvent } from '@/lib/events';
+import { capture, ocr, pin, popmenu, system } from '@/lib/ipc';
+import { isMac, modKey, shotUrl, windowLabel } from '@/lib/platform';
+import type { CaptureTable, LaidCell, PinInfo, PinText, PopItem, RegionStyle } from '@/lib/types';
+import { Spinner } from '@/ui/controls';
 import { notify } from '@/ui/overlays';
+import '@/views/capture/capture.css';
+import { latexToMathml } from '@/views/capture/formulaRender';
+import { TableSheet } from '@/views/capture/TableSheet';
+import { splitFormula } from '@/views/ocr/StructuredResult';
+import { tableGrid, toExcelText, toHtmlTable, type Cell } from '@/views/ocr/structured';
 
 const LABEL = windowLabel();
 const DOT = 24;
 /** 透明文字的字号 = 框高 × 这个比例（行高留一点给上下的空白） */
 const TEXT_EM = 0.86;
 const TEXT_FONT = `-apple-system, 'PingFang SC', 'Segoe UI', 'Microsoft YaHei UI', sans-serif`;
+const MOD = isMac ? '⌘' : 'Ctrl+';
 
 /**
  * 当前选中的文字。各段文字是一个个绝对定位的块，浏览器拼起来时段与段之间什么都不加
@@ -65,6 +78,67 @@ function useTextFits(texts: PinText[] | null): number[] {
   }, [texts]);
 }
 
+/** 认出来的格子 + 改过的字 → 导出用的一行行单元格 */
+function toRows(cells: LaidCell[], texts: string[]): Cell[][] {
+  const rows: Cell[][] = [];
+  cells.forEach((c, i) => (rows[c.row] ??= []).push({ text: texts[i] ?? c.text, header: c.header, rowSpan: c.rowSpan, colSpan: c.colSpan }));
+  return rows.filter(Boolean);
+}
+
+type Mode = { kind: 'table'; data: CaptureTable } | { kind: 'formula'; text: string; region: RegionStyle };
+
+/** 贴图上原位显示的公式：铺底色，公式撑满（宽九成二、高八成），可以改 LaTeX（图底下一条输入框） */
+function PinFormula({ text, region, width, height, editing }: { text: string; region: RegionStyle; width: number; height: number; editing: boolean }) {
+  const parsed = useMemo(() => splitFormula(text), [text]);
+  const [latex, setLatex] = useState(parsed.latex);
+  const fresh = useMemo(() => latexToMathml(latex), [latex]);
+  const lastGood = useRef('');
+  if (fresh) lastGood.current = fresh;
+  const mathml = fresh ?? (lastGood.current || parsed.mathml);
+  const math = useRef<HTMLDivElement>(null);
+  const [size, setSize] = useState(24);
+  useLayoutEffect(() => {
+    const el = math.current;
+    if (!el) return;
+    el.style.fontSize = '24px';
+    const r = el.getBoundingClientRect();
+    if (!r.width || !r.height) return;
+    const next = Math.min(200, Math.max(8, 24 * Math.min((width * 0.92) / r.width, ((editing ? height - 40 : height) * 0.8) / r.height)));
+    el.style.fontSize = `${next}px`;
+    setSize(next);
+  }, [mathml, latex, width, height, editing]);
+  // 菜单 / 按钮要复制时拿现在的 LaTeX、MathML
+  useEffect(() => {
+    pinFormulaNow.latex = latex;
+    pinFormulaNow.mathml = mathml;
+  }, [latex, mathml]);
+  return (
+    <div className="pin-formula" style={{ background: region.background, color: region.color }} onMouseDown={(e) => e.stopPropagation()} onDoubleClick={(e) => e.stopPropagation()}>
+      {mathml ? (
+        <div ref={math} className="cap-inplace__math" style={{ fontSize: size }} dangerouslySetInnerHTML={{ __html: mathml }} />
+      ) : (
+        <div ref={math} className="cap-inplace__math cap-inplace__math--latex" style={{ fontSize: size }}>
+          {latex}
+        </div>
+      )}
+      {editing && (
+        <textarea
+          className="pin-formula__latex cn-selectable"
+          value={latex}
+          spellCheck={false}
+          autoFocus
+          data-invalid={(!fresh && !!latex.trim()) || undefined}
+          onChange={(e) => setLatex(e.currentTarget.value)}
+          onKeyDown={(e) => e.stopPropagation()}
+        />
+      )}
+    </div>
+  );
+}
+
+/** 公式现在的 LaTeX / MathML（复制按钮用） */
+const pinFormulaNow = { latex: '', mathml: '' };
+
 export default function PinView() {
   const { t } = useTranslation();
   const [info, setInfo] = useState<PinInfo | null>(null);
@@ -79,8 +153,14 @@ export default function PinView() {
   const [imageVersion, setImageVersion] = useState(0);
   const textAsked = useRef(false);
   const fits = useTextFits(texts);
+  // 表格 / 公式：看起来像哪个（右下角的提示）、正在认、认出来之后的样子
+  const [hint, setHint] = useState<'table' | 'formula' | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [mode, setMode] = useState<Mode | null>(null);
+  const [cellTexts, setCellTexts] = useState<string[]>([]);
+  const [editingLatex, setEditingLatex] = useState(false);
 
-  // 鼠标移上来才识别：大多数贴图只是看一眼，不必每张都跑一遍识字
+  // 鼠标移上来才识别字、看是不是表格 / 公式：大多数贴图只是看一眼，不必每张都跑一遍
   const loadText = useCallback(() => {
     if (textAsked.current) return;
     textAsked.current = true;
@@ -88,6 +168,10 @@ export default function PinView() {
       .text(LABEL)
       .then(setTexts)
       .catch(() => setTexts([]));
+    pin
+      .detectStructure(LABEL)
+      .then(setHint)
+      .catch(() => setHint(null));
   }, []);
 
   const copySelectedText = useCallback(async () => {
@@ -154,28 +238,27 @@ export default function PinView() {
   const scanCodes = useCallback(async () => {
     const codes = await pin.scanCodes(LABEL);
     if (!codes.length) {
-      notify.info(t('capture.noCode'));
+      void system.toast('info', t('capture.noCode'));
       return;
     }
-    const items = [];
-    for (const c of codes) {
+    const items: PopItem[] = [];
+    codeActions.current = {};
+    codes.forEach((c, i) => {
       const short = c.text.length > 42 ? `${c.text.slice(0, 42)}…` : c.text;
-      items.push(
-        await MenuItem.new({
-          text: `${t('pin.copyCode')}  ${short}`,
-          action: () =>
-            void capture
-              .writeText(c.text)
-              .then(() => notify.success(t('capture.codeCopied')))
-              .catch(notify.error),
-        }),
-      );
+      items.push({ kind: 'item', id: `code-copy-${i}`, label: `${t('pin.copyCode')}  ${short}`, icon: 'copy' });
+      codeActions.current[`code-copy-${i}`] = () =>
+        void capture
+          .writeText(c.text)
+          .then(() => system.toast('success', t('capture.codeCopied')))
+          .catch(notify.error);
       if (/^https?:\/\/\S+$/i.test(c.text.trim())) {
-        items.push(await MenuItem.new({ text: `${t('capture.openLink')}  ${short}`, action: () => void system.openUrl(c.text.trim()).catch(notify.error) }));
+        items.push({ kind: 'item', id: `code-open-${i}`, label: `${t('capture.openLink')}  ${short}`, icon: 'qr' });
+        codeActions.current[`code-open-${i}`] = () => void system.openUrl(c.text.trim()).catch(notify.error);
       }
-    }
-    await (await Menu.new({ items })).popup();
+    });
+    await popmenu.open(LABEL, items);
   }, [t]);
+  const codeActions = useRef<Record<string, () => void>>({});
 
   // 旋转 / 翻转：Rust 那边改图，这边按新尺寸以原来的中心为准调窗口
   const transform = useCallback(
@@ -190,8 +273,10 @@ export default function PinView() {
       const h = Math.round(next.height * zoomRef.current) + marginPx * 2;
       setInfo(next);
       setImageVersion((v) => v + 1);
-      // 识别过的字位置不对了，鼠标再移上来时重新识别
+      // 识别过的字、表格的位置不对了，鼠标再移上来时重新识别
       setTexts(null);
+      setMode(null);
+      setHint(null);
       textAsked.current = false;
       await win.setSize(new PhysicalSize(w, h));
       await win.setPosition(new PhysicalPosition(Math.round(pos.x + (size.width - w) / 2), Math.round(pos.y + (size.height - h) / 2)));
@@ -199,72 +284,153 @@ export default function PinView() {
     [info, dpr],
   );
 
+  // ── 表格 / 公式 ──
+  const openTable = useCallback(async () => {
+    setBusy(true);
+    try {
+      const data = await pin.table(LABEL);
+      setCellTexts(data.table.cells.map((c) => c.text));
+      setMode({ kind: 'table', data });
+    } catch (err) {
+      void system.toast('error', err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  }, []);
+  const openFormula = useCallback(async () => {
+    setBusy(true);
+    try {
+      const [text, region] = await Promise.all([pin.structure(LABEL, 'formula'), pin.regionStyle(LABEL)]);
+      setEditingLatex(false);
+      setMode({ kind: 'formula', text, region });
+    } catch (err) {
+      void system.toast('error', err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  }, []);
+  const copyTable = useCallback(() => {
+    if (mode?.kind !== 'table') return;
+    const rows = toRows(mode.data.table.cells, cellTexts);
+    void capture
+      .writeRich(toExcelText(tableGrid(rows)), toHtmlTable(rows))
+      .then(() => system.toast('success', t('ocr.structured.copied')))
+      .catch(notify.error);
+  }, [mode, cellTexts, t]);
+  const exportXlsx = useCallback(() => {
+    if (mode?.kind !== 'table') return;
+    void ocr
+      .exportXlsx(toRows(mode.data.table.cells, cellTexts))
+      .then((path) => {
+        if (path) void system.toast('success', t('ocr.structured.exported'));
+      })
+      .catch(notify.error);
+  }, [mode, cellTexts, t]);
+  const copyFormula = useCallback(
+    (what: 'latex' | 'mathml') => {
+      const value = what === 'latex' ? pinFormulaNow.latex.trim() : pinFormulaNow.mathml;
+      if (!value) return;
+      void capture
+        .writeText(value)
+        .then(() => system.toast('success', t('ocr.structured.copied')))
+        .catch(notify.error);
+    },
+    [t],
+  );
+
+  // ── 右键菜单 ──
+  const menuActions = useRef<Record<string, () => void>>({});
+  /** 表格的右键菜单（TableSheet 给的）：选了哪项交回给它 */
+  const sheetRun = useRef<((id: string) => void) | null>(null);
   const showMenu = useCallback(async () => {
     const win = getCurrentWindow();
-    const sep = () => PredefinedMenuItem.new({ item: 'Separator' });
-    const menu = await Menu.new({
-      items: [
-        ...(selectedText(texts) ? [await MenuItem.new({ text: t('pin.copyText'), action: () => void copySelectedText().catch(notify.error) })] : []),
-        await MenuItem.new({ text: t('pin.copy'), action: () => void pin.copy(LABEL).catch(notify.error) }),
-        await MenuItem.new({ text: t('pin.saveAs'), action: () => void pin.save(LABEL).catch(notify.error) }),
-        await MenuItem.new({ text: t('pin.ocr'), action: () => void pin.ocr(LABEL, false).catch(notify.error) }),
-        await MenuItem.new({ text: t('pin.translate'), action: () => void pin.ocr(LABEL, true).catch(notify.error) }),
-        await MenuItem.new({ text: t('pin.scanCode'), action: () => void scanCodes().catch(notify.error) }),
-        await MenuItem.new({ text: t('pin.edit'), action: () => void pin.edit(LABEL).catch(notify.error) }),
-        await Submenu.new({
-          text: t('pin.transform'),
-          items: [
-            await MenuItem.new({ text: t('pin.rotateCw'), action: () => void transform('rotateCw').catch(notify.error) }),
-            await MenuItem.new({ text: t('pin.rotateCcw'), action: () => void transform('rotateCcw').catch(notify.error) }),
-            await MenuItem.new({ text: t('pin.flipH'), action: () => void transform('flipH').catch(notify.error) }),
-            await MenuItem.new({ text: t('pin.flipV'), action: () => void transform('flipV').catch(notify.error) }),
-          ],
-        }),
-        await sep(),
-        await MenuItem.new({ text: t('pin.originalSize'), action: () => void applyZoom(1) }),
-        await MenuItem.new({ text: t('pin.fullOpacity'), action: () => setOpacity(1) }),
-        // 鼠标穿透：点到贴图上等于点到它下面的窗口；从托盘菜单"取消贴图的鼠标穿透"恢复
-        await MenuItem.new({
-          text: t('pin.clickThrough'),
-          action: () => {
-            void win.setIgnoreCursorEvents(true);
-            notify.info(t('pin.clickThroughHint'));
-          },
-        }),
-        await CheckMenuItem.new({
-          text: t('pin.alwaysOnTop'),
-          checked: onTop,
-          action: () => {
-            const next = !onTop;
-            setOnTop(next);
-            void win.setAlwaysOnTop(next);
-          },
-        }),
-        await sep(),
-        await MenuItem.new({ text: t('pin.close'), action: close }),
-        await MenuItem.new({ text: t('pin.closeAll'), action: () => void pin.closeAll() }),
-      ],
-    });
-    await menu.popup();
-  }, [t, applyZoom, onTop, close, copySelectedText, texts, scanCodes, transform]);
+    const hasText = !!selectedText(texts);
+    menuActions.current = {
+      copyText: () => void copySelectedText().catch(notify.error),
+      copy: () => void pin.copy(LABEL).catch(notify.error),
+      save: () => void pin.save(LABEL).catch(notify.error),
+      ocr: () => void pin.ocr(LABEL, false).catch(notify.error),
+      translate: () => void pin.ocr(LABEL, true).catch(notify.error),
+      qr: () => void scanCodes().catch(notify.error),
+      table: () => void openTable(),
+      formula: () => void openFormula(),
+      edit: () => void pin.edit(LABEL).catch(notify.error),
+      rotateCw: () => void transform('rotateCw').catch(notify.error),
+      rotateCcw: () => void transform('rotateCcw').catch(notify.error),
+      flipH: () => void transform('flipH').catch(notify.error),
+      flipV: () => void transform('flipV').catch(notify.error),
+      originalSize: () => void applyZoom(1),
+      opacity: () => setOpacity(1),
+      // 鼠标穿透：点到贴图上等于点到它下面的窗口；从托盘菜单"取消贴图的鼠标穿透"恢复
+      clickThrough: () => {
+        void win.setIgnoreCursorEvents(true);
+        void system.toast('info', t('pin.clickThroughHint'));
+      },
+      onTop: () => {
+        const next = !onTop;
+        setOnTop(next);
+        void win.setAlwaysOnTop(next);
+      },
+      close,
+      closeAll: () => void pin.closeAll(),
+    };
+    const item = (id: string, label: string, extra: Partial<Extract<PopItem, { kind: 'item' }>> = {}): PopItem => ({ kind: 'item', id, label, icon: id, ...extra });
+    const sep: PopItem = { kind: 'separator' };
+    const items: PopItem[] = [
+      ...(hasText ? [item('copyText', t('pin.copyText'))] : []),
+      item('copy', t('pin.copy'), { shortcut: `${MOD}C` }),
+      item('save', t('pin.saveAs'), { shortcut: `${MOD}S` }),
+      sep,
+      item('ocr', t('pin.ocr')),
+      item('translate', t('pin.translate')),
+      item('qr', t('pin.scanCode')),
+      item('table', t('actions.table')),
+      item('formula', t('actions.formula')),
+      item('edit', t('pin.edit')),
+      {
+        kind: 'row',
+        label: t('pin.transform'),
+        items: (['rotateCcw', 'rotateCw', 'flipH', 'flipV'] as const).map((id) => ({ id, icon: id, label: t(`pin.${id}`) })),
+      },
+      sep,
+      item('originalSize', t('pin.originalSize'), { disabled: zoomRef.current === 1 }),
+      item('opacity', t('pin.fullOpacity'), { disabled: opacity === 1 }),
+      item('clickThrough', t('pin.clickThrough')),
+      item('onTop', t('pin.alwaysOnTop'), { checked: onTop }),
+      sep,
+      item('close', t('pin.close'), { shortcut: 'Esc' }),
+      item('closeAll', t('pin.closeAll'), { danger: true }),
+    ];
+    await popmenu.open(LABEL, items);
+  }, [t, applyZoom, onTop, opacity, close, copySelectedText, texts, scanCodes, transform, openTable, openFormula]);
+  useEvent('popmenu-select', (id) => {
+    if (id.startsWith('sheet:')) sheetRun.current?.(id);
+    else (menuActions.current[id] ?? codeActions.current[id])?.();
+  });
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') close();
+      if (e.key === 'Escape') {
+        // 表格 / 公式开着：先收起它们
+        if (mode) setMode(null);
+        else close();
+      }
       // 选了字就复制字，没选就复制整张图
       else if (modKey(e) && e.key.toLowerCase() === 'c') {
         void copySelectedText()
           .then((copied) => (copied ? undefined : pin.copy(LABEL)))
           .catch(notify.error);
-      }
-      else if (modKey(e) && e.key.toLowerCase() === 's') void pin.save(LABEL).catch(notify.error);
+      } else if (modKey(e) && e.key.toLowerCase() === 's') void pin.save(LABEL).catch(notify.error);
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [close, copySelectedText]);
+  }, [close, copySelectedText, mode]);
 
   if (!info) return null;
   const pixelated = zoom >= 2;
+  const imgW = (info.width * zoom) / dpr;
+  const imgH = (info.height * zoom) / dpr;
+  const hintIcon = hint === 'formula' ? Sigma : Table2;
   return (
     <div
       className="pin-root"
@@ -308,9 +474,9 @@ export default function PinView() {
             // 不能等 requestAnimationFrame：macOS 上藏着的网页不跑动画帧，回调永远不来，每次都要等满超时 1.5 秒
             onLoad={(e) => void e.currentTarget.decode().catch(() => undefined).then(() => pin.ready(LABEL))}
             onError={() => void pin.ready(LABEL)}
-            style={{ width: (info.width * zoom) / dpr, height: (info.height * zoom) / dpr, imageRendering: pixelated ? 'pixelated' : 'auto' }}
+            style={{ width: imgW, height: imgH, imageRendering: pixelated ? 'pixelated' : 'auto' }}
           />
-          {texts && texts.length > 0 && (
+          {!mode && texts && texts.length > 0 && (
             <div className="pin-text" aria-hidden={false}>
               {texts.map((b, i) => {
                 const k = zoom / dpr;
@@ -336,7 +502,52 @@ export default function PinView() {
               })}
             </div>
           )}
+          {mode?.kind === 'table' && (
+            <TableSheet
+              data={mode.data}
+              s={dpr / zoom}
+              texts={cellTexts}
+              onTexts={setCellTexts}
+              style={{ left: 0, top: 0, width: imgW, height: imgH }}
+              menuHost={(items, run) => {
+                sheetRun.current = run;
+                void popmenu.open(LABEL, items);
+              }}
+            />
+          )}
+          {mode?.kind === 'formula' && <PinFormula text={mode.text} region={mode.region} width={imgW} height={imgH} editing={editingLatex} />}
           {zoom !== 1 && <span className="pin-zoom cn-glass-thin cn-numeric">{Math.round(zoom * 100)}%</span>}
+          {/* 鼠标移上来才出现：右下角关闭，左边是表格 / 公式的提示（开着时换成它们的几个操作） */}
+          <div className="pin-actions" onMouseDown={(e) => e.stopPropagation()} onDoubleClick={(e) => e.stopPropagation()}>
+            {mode?.kind === 'table' && (
+              <>
+                <PinButton icon={Copy} label={t('pin.copyTable')} onClick={copyTable} />
+                <PinButton icon={FileSpreadsheet} label={t('pin.exportXlsx')} onClick={exportXlsx} />
+                <PinButton icon={Table2} label={t('pin.exitTable')} on onClick={() => setMode(null)} />
+              </>
+            )}
+            {mode?.kind === 'formula' && (
+              <>
+                <PinButton text="TeX" label={t('pin.copyLatex')} onClick={() => copyFormula('latex')} />
+                <PinButton text="ML" label={t('pin.copyMathml')} onClick={() => copyFormula('mathml')} />
+                <PinButton icon={PenLine} label={t('pin.editLatex')} on={editingLatex} onClick={() => setEditingLatex((v) => !v)} />
+                <PinButton icon={Sigma} label={t('pin.exitFormula')} on onClick={() => setMode(null)} />
+              </>
+            )}
+            {!mode && busy && (
+              <span className="pin-btn" aria-label={t('pin.recognizing')}>
+                <Spinner size={11} />
+              </span>
+            )}
+            {!mode && !busy && hint && (
+              <PinButton
+                icon={hintIcon}
+                label={hint === 'formula' ? t('pin.hintFormula') : t('pin.hintTable')}
+                onClick={() => void (hint === 'formula' ? openFormula() : openTable())}
+              />
+            )}
+            <PinButton icon={X} label={t('pin.close')} onClick={close} />
+          </div>
         </div>
       )}
       <style>{`
@@ -350,11 +561,28 @@ export default function PinView() {
         .pin-text span { position: absolute; white-space: pre; transform-origin: 0 0; color: transparent; font-family: ${TEXT_FONT}; cursor: text; pointer-events: auto; user-select: text; -webkit-user-select: text; }
         .pin-text span::selection { background: rgba(10, 132, 255, 0.32); color: transparent; }
         .pin-frame:hover { box-shadow: 0 4px 12px rgba(0,0,0,0.28), 0 0 0 1px var(--cn-accent); }
-        .pin-zoom { position: absolute; right: 6px; bottom: 6px; padding: 2px 6px; border-radius: 4px; font: 500 11px/14px var(--cn-font-sans); color: var(--cn-label); line-height: 14px; pointer-events: none; }
+        .pin-zoom { position: absolute; left: 6px; bottom: 6px; padding: 2px 6px; border-radius: 4px; font: 500 11px/14px var(--cn-font-sans); color: var(--cn-label); line-height: 14px; pointer-events: none; }
         .pin-dot { border-radius: 50%; overflow: hidden; box-shadow: 0 2px 8px rgba(0,0,0,0.35), 0 0 0 2px #fff; }
         .pin-dot img { width: 100%; height: 100%; object-fit: cover; }
         @keyframes pin-out { to { opacity: 0; transform: scale(0.94); } }
+        /* 右下角的小按钮：半透明、不显眼，鼠标在贴图上才出现 */
+        .pin-actions { position: absolute; right: 5px; bottom: 5px; z-index: 6; display: flex; gap: 4px; line-height: 1; opacity: 0; pointer-events: none; transition: opacity 140ms var(--cn-ease-out); }
+        .pin-frame:hover .pin-actions { opacity: 1; pointer-events: auto; }
+        .pin-btn { display: inline-grid; place-items: center; min-width: 20px; height: 20px; padding: 0 4px; border: 0; border-radius: 10px; background: rgba(0,0,0,0.38); color: rgba(255,255,255,0.88); font: 600 9.5px/1 var(--cn-font-sans); cursor: pointer; opacity: 0.72; transition: opacity 120ms, background 120ms; }
+        .pin-btn:hover { opacity: 1; background: rgba(0,0,0,0.62); }
+        .pin-btn[data-on] { opacity: 1; background: var(--cn-accent); }
+        .pin-formula { position: absolute; inset: 0; display: grid; place-items: center; overflow: hidden; line-height: normal; }
+        .pin-formula__latex { position: absolute; left: 4px; right: 4px; bottom: 4px; height: 34px; padding: 4px 6px; border: 0; border-radius: 6px; resize: none; outline: none; font: 12px/1.4 'Cascadia Mono', Consolas, ui-monospace, monospace; color: var(--cn-label); background: var(--cn-bg-elevated); box-shadow: 0 0 0 1.5px var(--cn-accent); }
+        .pin-formula__latex[data-invalid] { color: var(--cn-red); }
       `}</style>
     </div>
+  );
+}
+
+function PinButton({ icon: I, text, label, on, onClick }: { icon?: typeof X; text?: string; label: string; on?: boolean; onClick: () => void }) {
+  return (
+    <button type="button" className={clsx('pin-btn')} data-on={on || undefined} title={label} aria-label={label} onClick={onClick}>
+      {I ? <I size={12} strokeWidth={2.2} /> : text}
+    </button>
   );
 }

@@ -825,7 +825,8 @@ html[data-view='main'][data-glass='off'] body {
   flex-wrap: wrap;
   gap: 12px;
 }
-.tb-order__bar {
+/* 两个类名：annotate.css 比这里后加载，单个类名的话它的 `height: 44px` 会把换行的第二行挤出条外 */
+.an-toolbar.tb-order__bar {
   /* 按钮多了一行放不下就换行（以前是一长条，设置页里被裁掉一截） */
   flex-wrap: wrap;
   height: auto;
@@ -928,7 +929,6 @@ html[data-view='main'][data-glass='off'] body {
 }
 .tb-order__new[data-disabled] {
   opacity: 0.5;
-}
 }
 .tb-order__bar--group {
   box-shadow: 0 0 0 0.5px var(--cn-separator);

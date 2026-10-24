@@ -7,6 +7,8 @@
 
 pub mod paddle;
 pub mod rapid;
+pub mod formula;
+pub mod glyphs;
 pub mod reflow;
 pub mod table;
 pub mod xlsx;
@@ -477,20 +479,38 @@ pub async fn structure_image(
     };
     let started = Instant::now();
     tracing::info!(kind, width = image.width(), height = image.height(), "AI 看图识别开始");
-    // 整个请求最多等 90 秒：流式回答每来一段就重新计时，模型对着一张没有表格 / 公式的图"想"很久时会一直不结束
-    let out = tokio::time::timeout(
-        std::time::Duration::from_secs(90),
-        crate::ai::complete_with_image(app, system, user, image, 4096),
-    )
-    .await
-    .map_err(|_| AppError::msg("AI 识别超时（90 秒没有认完），可以换个模型再试"));
-    tracing::info!(
-        kind,
-        elapsed_ms = started.elapsed().as_millis() as u64,
-        ok = matches!(out, Ok(Ok(_))),
-        "AI 看图识别结束"
-    );
-    let out = out??;
+    let mut attempt = 0;
+    let out = loop {
+        attempt += 1;
+        // 整个请求最多等 90 秒：流式回答每来一段就重新计时，模型对着一张没有表格 / 公式的图"想"很久时会一直不结束
+        let out = tokio::time::timeout(
+            std::time::Duration::from_secs(90),
+            crate::ai::complete_with_image(app, system, user, image, 4096),
+        )
+        .await
+        .map_err(|_| AppError::msg("AI 识别超时（90 秒没有认完），可以换个模型再试"))
+        .and_then(|r| r);
+        match &out {
+            Ok(_) => tracing::info!(
+                kind,
+                attempt,
+                elapsed_ms = started.elapsed().as_millis() as u64,
+                "AI 看图识别结束"
+            ),
+            Err(e) => tracing::warn!(
+                kind,
+                attempt,
+                elapsed_ms = started.elapsed().as_millis() as u64,
+                "AI 看图识别失败：{e}"
+            ),
+        }
+        // 网络出错（连不上、代理断了一下）再试一次；别的错（密钥不对、模型不认图）重试也没用
+        let retry = matches!(&out, Err(e) if e.to_string().contains("网络"));
+        if !retry || attempt >= 2 || started.elapsed() > std::time::Duration::from_secs(45) {
+            break out;
+        }
+    };
+    let out = out?;
     let out = strip_fence(out.trim());
     if out.is_empty() {
         return Err(AppError::msg(if kind == "table" {

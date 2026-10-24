@@ -18,6 +18,7 @@ pub mod secret;
 pub mod selection_hook;
 pub mod system_events;
 pub mod system_info;
+pub mod webview_idle;
 pub mod window_enum;
 
 mod util;

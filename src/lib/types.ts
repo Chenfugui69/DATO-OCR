@@ -295,6 +295,8 @@ export interface CaptureSettings {
   elementLevel: 'block' | 'element';
   /** 截图时自动识别画面里的二维码 / 条码 */
   autoScanCodes: boolean;
+  /** 识别出的表格 / 公式盖在原处之后原图怎么看：side = 摆在选区左边 | toggle = 小条上点按钮切换 */
+  inplaceOriginal: 'side' | 'toggle';
   snapThreshold: number;
   rightClick: 'none' | 'exit' | 'cancelSelection';
   /** 截图工具条三组按钮各自的顺序：绘制工具、识字翻译那一组、最右边那一组 */
@@ -306,8 +308,8 @@ export interface CaptureSettings {
   toolbarOrder: TailAction[];
   /** 按钮组：几个按钮合成工具条上的一个，点一下弹出二级工具条 */
   toolbarGroups?: { id: string; name: string; items: string[] }[];
-  /** 截图工具条的样子：glass = 半透明玻璃条 | frosted = 磨砂玻璃 */
-  toolbarStyle: 'glass' | 'frosted';
+  /** 截图工具条的样子：glass = 半透明玻璃条 | frosted = 磨砂玻璃 | flat = 扁平（不透明、不模糊） */
+  toolbarStyle: 'glass' | 'frosted' | 'flat';
   finishAction: 'copy' | 'copyAndSave';
   saveToLibrary: boolean;
   saveDirectory: string | null;
@@ -386,6 +388,8 @@ export interface SessionInfo {
   windows: WindowInfo[];
   cursor: [number, number] | null;
   hasFocus: boolean;
+  /** 录制中开的截图（录 DATO 自己的操作）：工具条上不放录制、长截图 */
+  recording: boolean;
   settings: CaptureSettings;
 }
 
@@ -863,6 +867,10 @@ export interface LaidCell {
   stroke?: number | null;
   /** 换过字的格子（AI 重新认过）：原图里那段字（墨迹框量的是它） */
   inkText?: string;
+  /** 斜体 */
+  italic?: boolean;
+  /** 等宽字体（代码、终端里的表） */
+  mono?: boolean;
   lines: number;
   /** 字号（像素）：按墨迹高换算 */
   fontPx: number;
@@ -959,3 +967,10 @@ export interface RecordEditInfo {
   path: string;
   thumbs: { ms: number; url: string }[];
 }
+
+/** 自己画的右键菜单的一项（见 popmenu.rs）：图标是 lucide 图标的名字 */
+export type PopItem =
+  | { kind: 'item'; id: string; label: string; icon?: string; shortcut?: string; checked?: boolean; disabled?: boolean; danger?: boolean }
+  | { kind: 'separator' }
+  /** 一排图标按钮（旋转、翻转这种一组小操作） */
+  | { kind: 'row'; label: string; items: { id: string; icon: string; label: string }[] };

@@ -138,6 +138,9 @@ windows = { version = "0.62", features = [
 # 只要解码，不要它自带的图片格式支持（图是我们自己转成灰度给它的）
 rxing = { version = "0.9", default-features = false, features = ["decoders", "multi_barcode_readers", "full_barcode_format_support", "encoding_rs"] }
 
+# WebView2 的控制器：窗口藏起来时告诉它"看不见了"、把内存目标调低（和 wry 用同一个版本，类型才对得上）
+webview2-com = "0.39"
+
 # 毛玻璃背板用到的 Vector2（windows 0.62 把数值类型拆成了单独的包）
 windows-numerics = "0.3"
 

@@ -81,28 +81,35 @@ pub async fn capture_structure(
     crate::ocr::structure_image(&app, &image, &kind).await
 }
 
-/// 选区里看起来有没有表格（有格子线）：截图工具条的「识别」按钮换成表格图标、亮个小点
+/// 选区里看起来是表格（有格子线）还是公式：截图工具条的「识别」按钮换成对应的图标、亮个小点，点一下直接识别。
+/// 返回 "table" / "formula"，都不像返回 None
 #[tauri::command]
-pub async fn capture_detect_table(
+pub async fn capture_detect_structure(
     app: AppHandle,
     session_id: u64,
     monitor_id: u64,
     rect: PhysicalRect,
-) -> AppResult<bool> {
+) -> AppResult<Option<&'static str>> {
     blocking(move || {
-        let session = state(&app)
-            .capture
-            .current()
-            .filter(|s| s.id == session_id)
-            .ok_or_else(|| AppError::msg("截图会话已结束"))?;
-        let shot = session
-            .monitor(MonitorId(monitor_id))
-            .ok_or_else(|| AppError::msg("显示器不存在"))?;
         // 不缩小：一像素的表格线缩一半就淡得认不出了。逐像素比一遍，几百万像素也就几十毫秒
-        let image = crate::imaging::crop_opaque(&shot.image, rect)?;
-        Ok(crate::ocr::table::looks_like_table(&image))
+        let image = selection_image(&app, session_id, monitor_id, rect)?;
+        detect_structure(&app, &image)
     })
     .await
+}
+
+/// 一张图看起来是表格（有格子线）还是公式（截图选区、贴图共用）
+fn detect_structure(app: &AppHandle, image: &image::RgbaImage) -> AppResult<Option<&'static str>> {
+    if crate::ocr::table::looks_like_table(image) {
+        return Ok(Some("table"));
+    }
+    // 公式要识字才看得出来：只看不大的图（公式一般不大），大图里有分数线才看
+    let pixels = image.width() * image.height();
+    if pixels > 1_500_000 && crate::ocr::formula::fraction_bars(image) == 0 {
+        return Ok(None);
+    }
+    let result = crate::ocr::recognize(app, image, None, pixels < 400_000)?;
+    Ok(crate::ocr::formula::looks_like_formula(image, &result.blocks).then_some("formula"))
 }
 
 /// 截图会话里一块屏上的选区原图
@@ -141,26 +148,27 @@ pub async fn capture_table(
     monitor_id: u64,
     rect: PhysicalRect,
 ) -> AppResult<CaptureTable> {
-    static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     blocking(move || {
         let image = selection_image(&app, session_id, monitor_id, rect)?;
-        let (table, background) = ocr::table_layout(&app, &image)?;
-        let n = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        let (bg_id, src_id) = (
-            format!("cap-{session_id}-table{n}-bg"),
-            format!("cap-{session_id}-table{n}-src"),
-        );
-        let st = state(&app);
-        st.images
-            .put(bg_id.clone(), std::sync::Arc::new(background));
-        st.images.put(src_id.clone(), std::sync::Arc::new(image));
-        Ok(CaptureTable {
-            table,
-            background: bg_id,
-            source: src_id,
-        })
+        laid_table(&app, image, &format!("cap-{session_id}-"))
     })
     .await
+}
+
+/// 认出表格、量好每格，底图和原图放进图片仓库（编号以 `prefix` 开头，跟着截图会话 / 贴图一起清掉）
+fn laid_table(app: &AppHandle, image: image::RgbaImage, prefix: &str) -> AppResult<CaptureTable> {
+    static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let (table, background) = ocr::table_layout(app, &image)?;
+    let n = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let (bg_id, src_id) = (format!("{prefix}table{n}-bg"), format!("{prefix}table{n}-src"));
+    let st = state(app);
+    st.images.put(bg_id.clone(), std::sync::Arc::new(background));
+    st.images.put(src_id.clone(), std::sync::Arc::new(image));
+    Ok(CaptureTable {
+        table,
+        background: bg_id,
+        source: src_id,
+    })
 }
 
 /// 选区的底色和字色（原位显示公式用），再把选区原图放进图片仓库（左边给用户对照）
@@ -179,22 +187,25 @@ pub async fn capture_region_style(
     monitor_id: u64,
     rect: PhysicalRect,
 ) -> AppResult<RegionStyle> {
-    static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     blocking(move || {
         let image = selection_image(&app, session_id, monitor_id, rect)?;
-        let (background, color) = ocr::table::region_colors(&image);
-        let n = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        let source = format!("cap-{session_id}-region{n}-src");
-        state(&app)
-            .images
-            .put(source.clone(), std::sync::Arc::new(image));
-        Ok(RegionStyle {
-            background,
-            color,
-            source,
-        })
+        Ok(region_style(&app, image, &format!("cap-{session_id}-")))
     })
     .await
+}
+
+/// 一块图的底色、字色，原图放进图片仓库（编号以 `prefix` 开头）
+fn region_style(app: &AppHandle, image: image::RgbaImage, prefix: &str) -> RegionStyle {
+    static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let (background, color) = ocr::table::region_colors(&image);
+    let n = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let source = format!("{prefix}region{n}-src");
+    state(app).images.put(source.clone(), std::sync::Arc::new(image));
+    RegionStyle {
+        background,
+        color,
+        source,
+    }
 }
 
 /// 截图时把鼠标下的颜色贴到屏幕上（颜色贴图）。`x`、`y` 是这块屏的局部物理坐标。
@@ -303,26 +314,10 @@ pub async fn capture_cancel(app: AppHandle, session_id: u64) -> AppResult<()> {
     Ok(())
 }
 
-/// 截图工具条的磨砂玻璃（设置里选了这个样式时）：在遮罩窗口里工具条的位置垫一块系统的毛玻璃。
-/// 遮罩窗口是透明的，底下冻结的画面在另一个原生窗口里，网页的模糊滤镜够不着，只能用系统的。
-/// `rect`：工具条在窗口里的位置（物理像素 x, y, 宽, 高），None = 撤掉；`radius`：圆角（物理像素）。
+/// 读剪贴板里的文字（识别出的表格里粘贴：从 Excel 复制来的是制表符分隔的几行）。没有文字时给空
 #[tauri::command]
-pub async fn capture_toolbar_glass(
-    window: tauri::WebviewWindow,
-    rect: Option<(f32, f32, f32, f32)>,
-    radius: u32,
-) -> AppResult<()> {
-    let target = window.clone();
-    window.run_on_main_thread(move || match rect {
-        Some(rect) => {
-            platform::set_backdrop(&target, Some(radius));
-            platform::set_backdrop_rect(&target, Some(rect), 0);
-        }
-        None => {
-            platform::set_backdrop(&target, None);
-        }
-    })?;
-    Ok(())
+pub async fn clipboard_read_text() -> AppResult<String> {
+    Ok(platform::clipboard_read_text().unwrap_or_default())
 }
 
 /// 取色器复制颜色值、识字结果复制等：写一段纯文本到剪贴板（会进历史）。
@@ -355,7 +350,27 @@ pub async fn longshot_set_regions(app: AppHandle, regions: Vec<PhysicalRect>) ->
 
 #[tauri::command]
 pub async fn gif_set_regions(regions: Vec<PhysicalRect>) -> AppResult<()> {
+    crate::capture::record_prep::set_regions(regions.clone());
     crate::gif_record::set_regions(regions);
+    Ok(())
+}
+
+/// 进 / 出录制准备：截图框变成录制框时不压暗、露出真实桌面，遮罩除了控制条这些以外鼠标穿透
+/// （见 capture/record_prep.rs）。`on = false`：退回截图编辑
+#[tauri::command]
+pub async fn capture_record_prep(app: AppHandle, session_id: u64, monitor_id: u64, on: bool) -> AppResult<()> {
+    if on {
+        crate::capture::record_prep::enter(&app, session_id, platform::MonitorId(monitor_id))
+    } else {
+        crate::capture::record_prep::leave(&app, true);
+        Ok(())
+    }
+}
+
+/// 录制中遮罩能不能被录进去（选区里画了演示用的标注时要能）
+#[tauri::command]
+pub async fn gif_set_capturable(app: AppHandle, on: bool) -> AppResult<()> {
+    crate::gif_record::set_capturable(&app, on);
     Ok(())
 }
 
@@ -507,6 +522,43 @@ pub async fn pin_scan_codes(app: AppHandle, label: String) -> AppResult<Vec<Scan
     blocking(move || platform::scan_codes(&pin_image(&app, &label)?)).await
 }
 
+/// 贴图看起来是表格还是公式（贴图右下角的小提示）
+#[tauri::command]
+pub async fn pin_detect_structure(app: AppHandle, label: String) -> AppResult<Option<&'static str>> {
+    blocking(move || detect_structure(&app, &pin_image(&app, &label)?)).await
+}
+
+/// 贴图里的表格：认出来、量好每格，像截图里一样原位盖在图上能改（图片编号跟着贴图一起清）
+#[tauri::command]
+pub async fn pin_table(app: AppHandle, label: String) -> AppResult<CaptureTable> {
+    blocking(move || {
+        let image = pin_image(&app, &label)?;
+        laid_table(&app, image, &format!("{label}-"))
+    })
+    .await
+}
+
+/// 贴图用 AI 认表格 / 公式（表格是 HTML，公式是 LaTeX + MathML）
+#[tauri::command]
+pub async fn pin_structure(app: AppHandle, label: String, kind: String) -> AppResult<String> {
+    let image = {
+        let app = app.clone();
+        let label = label.clone();
+        blocking(move || pin_image(&app, &label)).await?
+    };
+    crate::ocr::structure_image(&app, &image, &kind).await
+}
+
+/// 贴图的底色、字色（公式原位显示时铺底、上字）
+#[tauri::command]
+pub async fn pin_region_style(app: AppHandle, label: String) -> AppResult<RegionStyle> {
+    blocking(move || {
+        let image = pin_image(&app, &label)?;
+        Ok(region_style(&app, image, &format!("{label}-")))
+    })
+    .await
+}
+
 /// 贴图里的文字和位置（鼠标直接选字用）
 #[tauri::command]
 pub async fn pin_text(app: AppHandle, label: String) -> AppResult<Vec<pin::PinText>> {
@@ -598,4 +650,38 @@ pub async fn media_access(kind: platform::MediaKind) -> AppResult<platform::Medi
 #[tauri::command]
 pub async fn media_request(kind: platform::MediaKind) -> AppResult<platform::MediaAccess> {
     blocking(move || Ok(platform::request_media_access(kind))).await
+}
+
+// ───────────────────────── 自己画的右键菜单（贴图用） ─────────────────────────
+
+/// 弹出菜单：`owner` 是要菜单的窗口，选了哪项发 `popmenu-select` 给它
+#[tauri::command]
+pub async fn popmenu_open(app: AppHandle, owner: String, items: serde_json::Value) -> AppResult<()> {
+    crate::popmenu::open(&app, owner, items)
+}
+
+/// 菜单页面来取要显示的菜单项
+#[tauri::command]
+pub async fn popmenu_items() -> AppResult<Option<crate::popmenu::Pending>> {
+    Ok(crate::popmenu::items())
+}
+
+/// 菜单页面量好了自己多大（CSS 像素）：摆到鼠标那里显示
+#[tauri::command]
+pub async fn popmenu_place(app: AppHandle, width: f64, height: f64) -> AppResult<()> {
+    crate::popmenu::place(&app, width, height)
+}
+
+/// 选了一项
+#[tauri::command]
+pub async fn popmenu_pick(app: AppHandle, id: String) -> AppResult<()> {
+    crate::popmenu::pick(&app, id);
+    Ok(())
+}
+
+/// 不选了（点别处、Esc）
+#[tauri::command]
+pub async fn popmenu_close(app: AppHandle) -> AppResult<()> {
+    crate::popmenu::hide(&app);
+    Ok(())
 }

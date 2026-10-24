@@ -50,6 +50,43 @@ export function candidatesAt(items: UiElement[], p: Point, opts: { minSide: numb
   return out.sort((a, b) => area(a) - area(b));
 }
 
+/** 表格一类的元素（macOS 辅助功能、Windows UI Automation） */
+const TABLE_ROLES = new Set(['AXTable', 'AXGrid', 'AXOutline', 'Table', 'DataGrid']);
+
+/**
+ * 想框整张表格时的"磁吸"：候选框是由小到大的，在表格里面永远先框到单元格，挪到表格外面又一下子跳到整页。
+ * - 鼠标在表格边上一圈（框内 `band` 以内）：框整张表
+ * - 鼠标在表格外面不远（`margin` 以内），而且鼠标底下最小的东西比这张表还大（整页、面板）：也框整张表
+ * 几张表都够得着（两张表中间的空隙）取离鼠标最近的，一样近取小的。返回要吸的表，没有就是 null
+ */
+export function tableMagnet(items: UiElement[], p: Point, cands: Rect[], opts: { margin: number; band: number; minSide: number }): Rect | null {
+  let best: { r: Rect; d: number } | null = null;
+  for (const e of items) {
+    if (!TABLE_ROLES.has(e.role)) continue;
+    const r = e.rect;
+    if (r.width < opts.minSide * 2 || r.height < opts.minSide * 2) continue;
+    let d = 0;
+    if (contains(r, p)) {
+      const edge = Math.min(p.x - r.x, r.x + r.width - p.x, p.y - r.y, r.y + r.height - p.y);
+      if (edge > opts.band) continue;
+    } else {
+      const dx = Math.max(r.x - p.x, 0, p.x - (r.x + r.width));
+      const dy = Math.max(r.y - p.y, 0, p.y - (r.y + r.height));
+      d = Math.hypot(dx, dy);
+      const smallest = cands[0];
+      if (d > opts.margin || (smallest && area(smallest) <= area(r))) continue;
+    }
+    if (!best || d < best.d || (d === best.d && area(r) < area(best.r))) best = { r, d };
+  }
+  return best?.r ?? null;
+}
+
+/** 把要吸的表挪到候选框最前面，比它小的候选（表里的格子、行）去掉 */
+export function withTable(table: Rect | null, cands: Rect[]): Rect[] {
+  if (!table) return cands;
+  return [table, ...cands.filter((c) => area(c) > area(table) && rectKey(c) !== rectKey(table))];
+}
+
 /** 每个窗口一份缓存（这次截图期间） */
 export class ElementCache {
   private byWindow = new Map<number, { items: UiElement[]; keys: Set<string> }>();

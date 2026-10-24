@@ -74,6 +74,54 @@ pub fn encode_bmp24(img: &RgbaImage) -> Vec<u8> {
     out
 }
 
+/// 红蓝通道对调、alpha 补成 255：BGRA → RGBA 和 RGBA → BGRA 都是这一步。`src` 和 `dst` 等长。
+///
+/// 发布版按体积优化，编译器不会把逐像素的循环向量化，4K 一屏要 15ms（截图时还在 UI 线程上）；
+/// SSSE3 一次重排 16 字节，几毫秒。
+pub fn swap_rb_opaque(src: &[u8], dst: &mut [u8]) {
+    assert_eq!(src.len(), dst.len());
+    #[cfg(target_arch = "x86_64")]
+    let done = if std::arch::is_x86_feature_detected!("ssse3") {
+        // SAFETY: 刚确认 CPU 支持 SSSE3；两段等长，只读写前 `len / 16 * 16` 字节。
+        unsafe { swap_rb_ssse3(src, dst) }
+    } else {
+        0
+    };
+    #[cfg(not(target_arch = "x86_64"))]
+    let done = 0;
+    for (d, s) in dst[done..]
+        .chunks_exact_mut(4)
+        .zip(src[done..].chunks_exact(4))
+    {
+        d[0] = s[2];
+        d[1] = s[1];
+        d[2] = s[0];
+        d[3] = 255;
+    }
+}
+
+/// 处理掉 16 字节的整块，返回处理了多少字节。
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "ssse3")]
+unsafe fn swap_rb_ssse3(src: &[u8], dst: &mut [u8]) -> usize {
+    use std::arch::x86_64::{
+        __m128i, _mm_loadu_si128, _mm_or_si128, _mm_set1_epi32, _mm_setr_epi8, _mm_shuffle_epi8,
+        _mm_storeu_si128,
+    };
+    let order = _mm_setr_epi8(2, 1, 0, 3, 6, 5, 4, 7, 10, 9, 8, 11, 14, 13, 12, 15);
+    let alpha = _mm_set1_epi32(0xff00_0000_u32 as i32);
+    let blocks = src.len() / 16;
+    for i in 0..blocks {
+        // SAFETY: i * 16 + 16 <= len，两段都够长；未对齐读写
+        unsafe {
+            let v = _mm_loadu_si128(src.as_ptr().add(i * 16).cast::<__m128i>());
+            let v = _mm_or_si128(_mm_shuffle_epi8(v, order), alpha);
+            _mm_storeu_si128(dst.as_mut_ptr().add(i * 16).cast::<__m128i>(), v);
+        }
+    }
+    blocks * 16
+}
+
 pub fn has_alpha(img: &RgbaImage) -> bool {
     img.as_raw().chunks_exact(4).any(|p| p[3] != 255)
 }
@@ -353,6 +401,17 @@ mod tests {
         }
         let orange = dominant_color(&img).unwrap();
         assert!(orange[0] > 200 && orange[2] < 100, "{orange:?}");
+    }
+
+    /// SSSE3 整块和收尾的逐像素两段结果一样（长度故意不是 16 的倍数）
+    #[test]
+    fn swap_rb_matches_scalar() {
+        let src: Vec<u8> = (0..4 * 37).map(|i| (i * 31 % 251) as u8).collect();
+        let mut dst = vec![0; src.len()];
+        swap_rb_opaque(&src, &mut dst);
+        for (d, s) in dst.chunks_exact(4).zip(src.chunks_exact(4)) {
+            assert_eq!(d, [s[2], s[1], s[0], 255]);
+        }
     }
 
     #[test]

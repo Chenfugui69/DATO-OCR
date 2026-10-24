@@ -11,6 +11,7 @@
 //! 5. 用户完成 → `capture_finish`：裁剪 + 叠标注 → 复制/保存/贴图/识字/翻译/长截图
 
 pub mod overlay;
+pub mod record_prep;
 pub mod region_translate;
 
 use std::collections::HashSet;
@@ -83,6 +84,8 @@ impl Session {
 #[derive(Default)]
 pub struct CaptureState {
     current: Mutex<Option<Arc<Session>>>,
+    /// 录制中又开的一次截图（录 DATO 自己的操作）：录制那个会话先放在这里，截图结束再放回 `current`
+    outer: Mutex<Option<Arc<Session>>>,
     /// 截图/长截图进行中。热键再按一次直接忽略（规格 02 §3.9.1）
     busy: AtomicBool,
     next_id: AtomicU64,
@@ -103,6 +106,11 @@ impl CaptureState {
 
     pub(crate) fn release_busy(&self) {
         self.busy.store(false, Ordering::SeqCst);
+    }
+
+    /// 现在这次截图是录制中开的
+    pub fn is_nested(&self) -> bool {
+        self.outer.lock().is_some()
     }
 
     fn take_main_stashed(&self) -> bool {
@@ -175,6 +183,18 @@ pub fn image_id(session: u64, monitor: MonitorId) -> String {
 pub fn trigger(app: &AppHandle, intent: CaptureIntent) {
     let st = state(app);
     if st.capture.busy.load(Ordering::SeqCst) {
+        // 录制中按截图热键：照常开一次截图，录制不停 —— 用 DATO 截图的过程也录进去。
+        // 录制的控制条先让位，截完再回来（见 `end_session`）
+        if crate::gif_record::is_active() && !st.capture.is_nested() {
+            let app = app.clone();
+            std::thread::spawn(move || {
+                if let Err(err) = start(&app, intent, false, true) {
+                    tracing::error!("录制中截图没开起来：{err}");
+                    wm::toast(&app, "error", format!("截图失败：{err}"));
+                }
+            });
+            return;
+        }
         if st.capture.current().is_some() {
             let _ = app.emit(events::CAPTURE_HOTKEY, intent);
         }
@@ -182,7 +202,7 @@ pub fn trigger(app: &AppHandle, intent: CaptureIntent) {
     }
     let app = app.clone();
     std::thread::spawn(move || {
-        if let Err(err) = start(&app, intent, false) {
+        if let Err(err) = start(&app, intent, false, false) {
             report_start_failure(&app, &err);
         }
     });
@@ -214,15 +234,16 @@ pub fn trigger_instant(app: &AppHandle) {
     }
     let app = app.clone();
     std::thread::spawn(move || {
-        if let Err(err) = start(&app, CaptureIntent::Normal, true) {
+        if let Err(err) = start(&app, CaptureIntent::Normal, true, false) {
             report_start_failure(&app, &err);
         }
     });
 }
 
-fn start(app: &AppHandle, intent: CaptureIntent, instant: bool) -> AppResult<()> {
+/// `nested`：录制中开的截图（录制占着截图的"忙"，不再抢；录制的会话先收到 `outer`）
+fn start(app: &AppHandle, intent: CaptureIntent, instant: bool, nested: bool) -> AppResult<()> {
     let st = state(app);
-    if st.capture.busy.swap(true, Ordering::SeqCst) {
+    if !nested && st.capture.busy.swap(true, Ordering::SeqCst) {
         tracing::debug!("已在截图中，忽略这次热键");
         return Ok(());
     }
@@ -250,7 +271,9 @@ fn start(app: &AppHandle, intent: CaptureIntent, instant: bool) -> AppResult<()>
     let mut shots = match shots {
         Ok(shots) => shots,
         Err(err) => {
-            st.capture.release_busy();
+            if !nested {
+                st.capture.release_busy();
+            }
             return Err(err);
         }
     };
@@ -317,12 +340,25 @@ fn start(app: &AppHandle, intent: CaptureIntent, instant: bool) -> AppResult<()>
         started,
         shown: Mutex::new(HashSet::new()),
     });
-    *st.capture.current.lock() = Some(session.clone());
-    tracing::info!(session = id, ?intent, capture_ms, "截图会话开始");
+    {
+        let mut current = st.capture.current.lock();
+        if nested {
+            *st.capture.outer.lock() = current.take();
+            crate::gif_record::suspend_ui();
+        }
+        *current = Some(session.clone());
+    }
+    tracing::info!(session = id, ?intent, capture_ms, nested, "截图会话开始");
 
     let ui_app = app.clone();
     let ui_session = session.clone();
     app.run_on_main_thread(move || {
+        if nested {
+            // 录制时遮罩是鼠标穿透的，截图要收鼠标
+            overlay::for_each(&ui_app, |w| {
+                let _ = w.set_ignore_cursor_events(false);
+            });
+        }
         let infos: Vec<MonitorInfo> = ui_session.monitors.iter().map(|m| m.info.clone()).collect();
         if let Err(err) = overlay::arrange(&ui_app, &infos) {
             tracing::error!("摆放遮罩失败：{err}");
@@ -400,6 +436,8 @@ pub struct SessionInfo {
     /// 鼠标位置（本屏局部物理坐标）；不在本屏为 None
     pub cursor: Option<(i32, i32)>,
     pub has_focus: bool,
+    /// 录制中开的截图：工具条上不放录制、长截图
+    pub recording: bool,
     pub settings: CaptureSettings,
 }
 
@@ -430,6 +468,7 @@ pub fn session_info(app: &AppHandle, monitor: MonitorId) -> AppResult<Option<Ses
             .filter(|(x, y)| b.contains_point(*x, *y))
             .map(|(x, y)| (x - b.x, y - b.y)),
         has_focus: session.focus_monitor() == Some(monitor),
+        recording: st.capture.is_nested(),
         settings,
     }))
 }
@@ -466,6 +505,15 @@ pub fn overlay_ready(app: &AppHandle, session_id: u64, monitor: MonitorId) -> Ap
 /// 结束会话：藏遮罩、释放像素、可选地把焦点还给截图前的窗口。
 pub fn end_session(app: &AppHandle, session_id: u64, restore_focus: bool) {
     let st = state(app);
+    // 录制中开的截图还没结束，录制先结束了：录制的会话收掉就行，遮罩还归这次截图用
+    {
+        let mut outer = st.capture.outer.lock();
+        if outer.as_ref().is_some_and(|s| s.id == session_id) {
+            *outer = None;
+            st.images.remove_prefix(&format!("cap-{session_id}-"));
+            return;
+        }
+    }
     let session = {
         let mut current = st.capture.current.lock();
         match current.as_ref() {
@@ -474,7 +522,26 @@ pub fn end_session(app: &AppHandle, session_id: u64, restore_focus: bool) {
         }
     };
     let Some(session) = session else { return };
+    record_prep::leave(app, false);
     st.images.remove_prefix(&format!("cap-{session_id}-"));
+    // 录制中开的截图结束了：会话、遮罩都还给录制，录制的控制条回来
+    if let Some(outer) = st.capture.outer.lock().take() {
+        if crate::gif_record::is_active() {
+            *st.capture.current.lock() = Some(outer);
+            let ui_app = app.clone();
+            let previous = session.previous;
+            let _ = app.run_on_main_thread(move || {
+                let _ = ui_app.emit(events::CAPTURE_SESSION_END, ());
+                crate::gif_record::resume_ui(&ui_app);
+                if restore_focus {
+                    if let Some(prev) = previous {
+                        let _ = platform::focus_window(prev);
+                    }
+                }
+            });
+            return;
+        }
+    }
     let ui_app = app.clone();
     let previous = session.previous;
     let _ = app.run_on_main_thread(move || {
@@ -554,6 +621,15 @@ pub fn finish(app: &AppHandle, meta: FinishMeta, annotation_png: Vec<u8>) -> App
         meta.rect.height,
     );
 
+    // 录制中开的截图：不能再开长截图、再录一段（遮罩、抓屏都占着）
+    if st.capture.is_nested()
+        && matches!(
+            meta.action,
+            FinishAction::Longshot | FinishAction::Gif | FinishAction::Video | FinishAction::Record
+        )
+    {
+        return Err(AppError::msg("正在录制，先停下录制再用这个"));
+    }
     if meta.action == FinishAction::Longshot {
         return longshot::start(app, session.clone(), monitor, global);
     }

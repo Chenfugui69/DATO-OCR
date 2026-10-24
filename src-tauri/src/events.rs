@@ -14,6 +14,10 @@ pub const GIF_STATE: &str = "gif-state";
 pub const GIF_PROGRESS: &str = "gif-progress";
 /// 录制时按下了一个键（按键显示用），带显示的写法：⌘C、⏎……
 pub const RECORD_KEY: &str = "record-key";
+/// 录制准备开始 / 结束（所有遮罩都收：不压暗、穿透）
+pub const RECORD_PREP: &str = "record-prep";
+/// 录制准备时的鼠标（遮罩穿透了收不到）：位置、按着的键、滚轮，给鼠标效果预览用
+pub const RECORD_PREP_POINTER: &str = "record-prep-pointer";
 /// 剪辑窗口：有一段新录的要剪（负载是这段的 id）
 pub const RECORD_EDIT: &str = "record-edit";
 

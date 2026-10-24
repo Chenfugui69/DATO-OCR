@@ -371,10 +371,11 @@ export function SettingsPage({ section }: { section: string | null }) {
             </div>
             <Row title={t('settings.capture.toolbarStyle')} desc={t('settings.capture.toolbarStyleDesc')}>
               <Segmented
-                value={c.toolbarStyle === 'frosted' ? 'frosted' : 'glass'}
+                value={c.toolbarStyle === 'frosted' || c.toolbarStyle === 'flat' ? c.toolbarStyle : 'glass'}
                 options={[
                   { value: 'glass', label: t('settings.capture.toolbarStyleOpt.glass') },
                   { value: 'frosted', label: t('settings.capture.toolbarStyleOpt.frosted') },
+                  { value: 'flat', label: t('settings.capture.toolbarStyleOpt.flat') },
                 ]}
                 onChange={(v) => set((d) => void (d.capture.toolbarStyle = v))}
               />
@@ -409,6 +410,13 @@ export function SettingsPage({ section }: { section: string | null }) {
             </Row>
             <Row title={t('settings.capture.autoScanCodes')} desc={t('settings.capture.autoScanCodesDesc')}>
               <Switch checked={c.autoScanCodes} onChange={(v) => set((d) => void (d.capture.autoScanCodes = v))} />
+            </Row>
+            <Row title={t('settings.capture.inplaceOriginal')} desc={t('settings.capture.inplaceOriginalDesc')}>
+              <Segmented
+                value={c.inplaceOriginal}
+                options={(['side', 'toggle'] as const).map((v) => ({ value: v, label: t(`settings.capture.inplaceOriginalOpt.${v}`) }))}
+                onChange={(v) => set((d) => void (d.capture.inplaceOriginal = v))}
+              />
             </Row>
             <Row title={t('settings.capture.snap')} desc={t('settings.capture.snapDesc')}>
               <span className="set-row__value cn-numeric">{c.snapThreshold}px</span>

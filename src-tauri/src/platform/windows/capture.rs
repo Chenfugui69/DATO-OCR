@@ -1,4 +1,4 @@
-//! 抓屏，基于 xcap（Apache-2.0）+ WGC。
+//! 抓屏：GDI 从屏幕 DC 拷（见 `grab`）。xcap（Apache-2.0）只用来枚举显示器，录屏用它的 WGC 帧池。
 //!
 //! xcap 的 `x/y/width/height` 取自 `DEVMODEW`，是**物理像素**，正是我们要的坐标系。
 //! 这些访问器每次都会走一遍 `EnumDisplaySettingsW`，所以只枚举一次就组装好 `MonitorInfo`。
@@ -7,7 +7,7 @@
 use image::RgbaImage;
 use windows::Win32::Foundation::POINT;
 use windows::Win32::Graphics::Gdi::{
-    BitBlt, CreateCompatibleBitmap, CreateCompatibleDC, DeleteDC, DeleteObject, GetDC, GetDIBits,
+    BitBlt, CreateCompatibleDC, CreateDIBSection, DeleteDC, DeleteObject, GdiFlush, GetDC,
     GetMonitorInfoW, MonitorFromPoint, ReleaseDC, SelectObject, BITMAPINFO, BITMAPINFOHEADER,
     BI_RGB, CAPTUREBLT, DIB_RGB_COLORS, MONITORINFO, MONITOR_DEFAULTTONULL, SRCCOPY,
 };
@@ -60,52 +60,54 @@ pub fn patch(rect: PhysicalRect, below: Option<WindowHandle>) -> Option<RgbaImag
 }
 
 /// 从屏幕 DC 拷出一块（虚拟桌面坐标，物理像素），转成不透明 RGBA。
+///
+/// 整屏截图也走这里，不用 WGC：WGC 要一个 D3D 设备，xcap 把它放在进程级的静态变量里，
+/// 第一次抓屏之后主进程就一直多占 80～170MB（显卡驱动的用户态内存），待机也不释放。
+/// GDI 抓 4K 一屏 30ms 左右，比 WGC 慢十来毫秒，画面一样。
 fn grab(rect: PhysicalRect) -> windows::core::Result<RgbaImage> {
     let (w, h) = (rect.width as i32, rect.height as i32);
-    // SAFETY: 所有 GDI 对象都在本函数内创建并按相反顺序释放；缓冲按 32 位自上而下的 DIB 开好。
+    let info = BITMAPINFO {
+        bmiHeader: BITMAPINFOHEADER {
+            biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32,
+            biWidth: w,
+            biHeight: -h,
+            biPlanes: 1,
+            biBitCount: 32,
+            biCompression: BI_RGB.0,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    // SAFETY: 所有 GDI 对象都在本函数内创建并按相反顺序释放；DIB 是 32 位自上而下，
+    // `bits` 指向 w*h*4 字节，在 DeleteObject 之前读完。
     unsafe {
         let screen = GetDC(None);
         let mem = CreateCompatibleDC(Some(screen));
-        let bitmap = CreateCompatibleBitmap(screen, w, h);
-        let old = SelectObject(mem, bitmap.into());
-        // CAPTUREBLT：分层窗口（半透明的浮窗、菜单）也拷进来
-        let copied = BitBlt(mem, 0, 0, w, h, Some(screen), rect.x, rect.y, SRCCOPY | CAPTUREBLT);
-        let mut info = BITMAPINFO {
-            bmiHeader: BITMAPINFOHEADER {
-                biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32,
-                biWidth: w,
-                biHeight: -h,
-                biPlanes: 1,
-                biBitCount: 32,
-                biCompression: BI_RGB.0,
-                ..Default::default()
-            },
-            ..Default::default()
+        let mut bits = std::ptr::null_mut();
+        let dib = match CreateDIBSection(Some(mem), &info, DIB_RGB_COLORS, &mut bits, None, 0) {
+            Ok(dib) if !bits.is_null() => dib,
+            other => {
+                let _ = DeleteDC(mem);
+                ReleaseDC(None, screen);
+                return Err(other.err().unwrap_or_else(windows::core::Error::empty));
+            }
         };
-        let mut buf = vec![0u8; (w * h * 4) as usize];
+        let old = SelectObject(mem, dib.into());
+        // 直接拷进 DIB，少一次 GetDIBits 的整屏拷贝。CAPTUREBLT：分层窗口（半透明的浮窗、菜单）也拷进来
+        let copied = BitBlt(mem, 0, 0, w, h, Some(screen), rect.x, rect.y, SRCCOPY | CAPTUREBLT);
+        let _ = GdiFlush();
+        let image = copied.map(|()| {
+            let src = std::slice::from_raw_parts(bits.cast::<u8>(), (w * h * 4) as usize);
+            // BGRA → RGBA，alpha 没有语义，补成不透明
+            let mut buf = vec![0u8; src.len()];
+            crate::imaging::swap_rb_opaque(src, &mut buf);
+            buf
+        });
         SelectObject(mem, old);
-        let lines = GetDIBits(
-            mem,
-            bitmap,
-            0,
-            h as u32,
-            Some(buf.as_mut_ptr().cast()),
-            &mut info,
-            DIB_RGB_COLORS,
-        );
-        let _ = DeleteObject(bitmap.into());
+        let _ = DeleteObject(dib.into());
         let _ = DeleteDC(mem);
         ReleaseDC(None, screen);
-        copied?;
-        if lines != h {
-            return Err(windows::core::Error::from_thread());
-        }
-        // BGRA → RGBA，alpha 没有语义，补成不透明
-        for px in buf.chunks_exact_mut(4) {
-            px.swap(0, 2);
-            px[3] = 255;
-        }
-        RgbaImage::from_raw(rect.width, rect.height, buf).ok_or_else(windows::core::Error::empty)
+        RgbaImage::from_raw(rect.width, rect.height, image?).ok_or_else(windows::core::Error::empty)
     }
 }
 
@@ -116,29 +118,29 @@ pub fn list_monitors() -> AppResult<Vec<MonitorInfo>> {
 pub fn capture_all() -> AppResult<Vec<(MonitorInfo, RgbaImage)>> {
     let monitors = enumerate()?;
     let mut shots = Vec::with_capacity(monitors.len());
-    for (monitor, info) in monitors {
-        let image = capture_one(&monitor)?;
+    for (_, info) in monitors {
+        let image = capture_one(&info)?;
         shots.push((info, image));
     }
     Ok(shots)
 }
 
 pub fn capture_monitor(id: MonitorId) -> AppResult<RgbaImage> {
-    let (monitor, _) = enumerate()?
+    let (_, info) = enumerate()?
         .into_iter()
         .find(|(_, info)| info.id == id)
         .ok_or_else(|| AppError::Capture(format!("显示器 {id} 已不存在")))?;
-    capture_one(&monitor)
+    capture_one(&info)
 }
 
 pub fn warm_up() {
     let started = std::time::Instant::now();
-    // D3D 设备和 WGC 初始化是进程级的，抓一块屏就够
+    // 第一次整屏 BitBlt 要多十几毫秒（DWM 那边准备回读），抓一块屏就够；抓完的图随即释放
     let result = enumerate().and_then(|monitors| {
-        let (monitor, _) = monitors
+        let (_, info) = monitors
             .first()
             .ok_or_else(|| AppError::Capture("没有显示器".into()))?;
-        capture_one(monitor).map(|img| img.width())
+        capture_one(info).map(|img| img.width())
     });
     match result {
         Ok(_) => tracing::debug!(
@@ -220,8 +222,8 @@ impl Drop for ScreenRecorder {
 
 /// 注意：WGC 给回来的 alpha 没有语义（常年是 0）。热路径上不逐像素修它 —— 底图层和
 /// BMP 编码都忽略 alpha；真正要输出的裁剪结果由 `imaging::crop_opaque` 统一补成不透明。
-fn capture_one(monitor: &Monitor) -> AppResult<RgbaImage> {
-    Ok(monitor.capture_image()?)
+fn capture_one(info: &MonitorInfo) -> AppResult<RgbaImage> {
+    grab(info.bounds).map_err(|err| AppError::Capture(format!("抓屏失败：{err}")))
 }
 
 fn describe(monitor: &Monitor) -> AppResult<MonitorInfo> {
@@ -285,6 +287,7 @@ mod tests {
         small.save(&out).unwrap();
         println!("saved {out}");
     }
+
 
     #[test]
     #[ignore]

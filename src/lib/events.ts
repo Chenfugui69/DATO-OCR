@@ -13,6 +13,7 @@ import type {
   LongshotStateEvent,
   OcrJob,
   PaddleDownload,
+  PopItem,
   Settings,
   ToastPayload,
   UpdateStatus,
@@ -33,6 +34,13 @@ export interface EventMap {
   'gif-progress': GifProgress;
   /** 录制时按下了一个键（按键显示用）：⌘C、⏎…… */
   'record-key': string;
+  /** 录制准备开始 / 结束：所有遮罩都不压暗、鼠标穿透（monitorId 是录制框所在的屏） */
+  'record-prep': { active: boolean; monitorId: number };
+  /** 录制准备时的鼠标（遮罩穿透了收不到）：位置（本屏局部物理坐标，不在这块屏上是 null）、按着的键、这一拍滚了多少 */
+  'record-prep-pointer': { at: [number, number] | null; buttons: number; scroll: number };
+  /** 自己画的右键菜单：要显示的菜单项（菜单窗口收）/ 选了哪一项（要菜单的窗口收） */
+  'popmenu-items': { owner: string; items: PopItem[] };
+  'popmenu-select': string;
   'clipboard-changed': ClipChanged;
   'clipboard-panel-show': { style: 'bottom' | 'vertical' };
   /** 大预览窗口要显示哪一条 */

@@ -103,12 +103,34 @@ function renderItems(P: Primitive, items: MenuItemSpec[]): ReactNode {
   });
 }
 
-export function ContextMenu({ items, children }: { items: MenuItemSpec[]; children: ReactNode }) {
+export function ContextMenu({
+  items,
+  children,
+  onOpenChange,
+  onClosed,
+}: {
+  items: MenuItemSpec[];
+  children: ReactNode;
+  onOpenChange?: (open: boolean) => void;
+  /** 菜单收起后焦点交给调用方放（默认还给触发的元素） */
+  onClosed?: () => void;
+}) {
   return (
-    <RadixContext.Root>
+    <RadixContext.Root onOpenChange={onOpenChange}>
       <RadixContext.Trigger asChild>{children}</RadixContext.Trigger>
       <RadixContext.Portal>
-        <RadixContext.Content className="cn-menu" collisionPadding={8}>
+        <RadixContext.Content
+          className="cn-menu"
+          collisionPadding={8}
+          onCloseAutoFocus={
+            onClosed
+              ? (e) => {
+                  e.preventDefault();
+                  onClosed();
+                }
+              : undefined
+          }
+        >
           {renderItems(RadixContext, items)}
         </RadixContext.Content>
       </RadixContext.Portal>

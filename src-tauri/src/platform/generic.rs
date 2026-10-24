@@ -37,13 +37,6 @@ pub fn place_window(
     Ok(())
 }
 
-/// Windows 上藏起来的遮罩不按整屏留画面缓冲，直接藏就行。
-pub fn park_overlay(window: &WebviewWindow) {
-    let _ = window.hide();
-}
-
-pub fn unpark_overlay(_window: &WebviewWindow) {}
-
 /// Windows 上拿着键盘的窗口就是系统的前台窗口。
 pub fn is_foreground(window: &WebviewWindow) -> bool {
     super::native_handle(window)

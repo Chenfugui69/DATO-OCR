@@ -72,16 +72,24 @@
 }
 
 /* 二级工具条：和主工具条同一套样子，矮一点；水平位置对准对应的工具按钮（useToolAnchor） */
-/* 磨砂玻璃样式（设置 → 截图 → 工具条样式）。
-   编辑窗口里底下的图就在页面里，直接用模糊滤镜；截图遮罩里底下是原生窗口，模糊由系统的毛玻璃垫在下面（--backed），
-   这里只铺一层很薄的色调，把毛玻璃透出来 */
+/* 工具条样式（设置 → 截图 → 工具条样式）。截图遮罩里的在 capture.css（按 .cap-root[data-toolbar-style]）。
+   磨砂玻璃：编辑窗口里底下的图就在页面里，直接用模糊滤镜 */
 .an-toolbar.an-toolbar--frosted {
   background: color-mix(in srgb, var(--cn-glass-bg-thin) 80%, transparent);
   backdrop-filter: blur(36px) saturate(190%);
 }
-.an-toolbar.an-toolbar--backed {
-  background: color-mix(in srgb, var(--cn-glass-bg-thin) 45%, transparent);
+/* 扁平：不透明、不模糊、没有玻璃高光，阴影也压到最轻。给低配机器和不喜欢玻璃的人 */
+.an-toolbar.an-toolbar--flat,
+.an-flat :is(.an-toolbar, .an-subtoolbar, .an-groupbar) {
+  background: var(--cn-bg-elevated);
   backdrop-filter: none;
+  box-shadow:
+    0 1px 3px rgba(0, 0, 0, 0.18),
+    0 0 0 0.5px var(--cn-separator);
+}
+.an-toolbar.an-toolbar--flat::before,
+.an-flat :is(.an-toolbar, .an-subtoolbar, .an-groupbar)::before {
+  display: none;
 }
 /* 按钮组：右下角一个小三角，表示点了会展开 */
 .an-btn--group {

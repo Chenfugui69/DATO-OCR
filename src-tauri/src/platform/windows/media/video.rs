@@ -537,13 +537,7 @@ fn rgba_to_bgra(frame: &RgbaImage, w: usize, h: usize, out: &mut [u8]) {
     let stride = frame.width() as usize * 4;
     for y in 0..h {
         let from = &src[y * stride..y * stride + w * 4];
-        let to = &mut out[y * w * 4..(y + 1) * w * 4];
-        for (d, s) in to.chunks_exact_mut(4).zip(from.chunks_exact(4)) {
-            d[0] = s[2];
-            d[1] = s[1];
-            d[2] = s[0];
-            d[3] = 255;
-        }
+        crate::imaging::swap_rb_opaque(from, &mut out[y * w * 4..(y + 1) * w * 4]);
     }
 }
 

@@ -48,6 +48,14 @@ describe('财务表格', () => {
     expect(html).toContain(`<td style="mso-number-format:'\\@'">6222021234567890</td>`);
   });
 
+  it('HTML 带上格子的样子；格子里换行不拆行；奇怪的颜色值不写进去', () => {
+    const styled = { ...c('合计\n含税'), style: { color: '#c00000', background: 'rgb(240, 240, 240)', bold: true, italic: true, align: 'right' as const } };
+    const evil = { ...c('x'), style: { color: 'red;" onclick="x', background: 'url(x)' } };
+    const html = toHtmlTable([[styled, evil]]);
+    expect(html).toContain('<td style="color:#c00000;background:rgb(240, 240, 240);font-weight:700;font-style:italic;text-align:right">合计<br style="mso-data-placement:same-cell">含税</td>');
+    expect(html).toContain('<td>x</td>');
+  });
+
   it('数字统一写法', () => {
     expect(numberTokens('收入 1,234.50 元，支出 (300)，增长 12.5%，第 3 季')).toEqual(['1234.50', '300', '12.5']);
     expect(numberTokens('1, 234 和 1 234')).toEqual(['1234', '1234']);

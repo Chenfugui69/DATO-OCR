@@ -35,6 +35,7 @@ mod ocr;
 mod otp;
 mod paths;
 mod pin;
+mod popmenu;
 mod record_edit;
 mod record_fx;
 mod platform;
@@ -181,6 +182,10 @@ pub fn run() {
             if payload.event() == tauri::webview::PageLoadEvent::Started {
                 if let Some(window) = webview.get_webview_window(webview.label()) {
                     platform::unlock_frame_rate(&window);
+                    // 截图遮罩藏着时也要先画好下一次截图的画面，不能停；它藏起来时缩成 1×1 省内存
+                    if !window.label().starts_with(capture::overlay::LABEL_PREFIX) {
+                        platform::track_webview_idle(&window);
+                    }
                 }
             }
         })
@@ -193,10 +198,13 @@ pub fn run() {
             commands::capture::capture_cancel,
             commands::capture::capture_translate,
             commands::capture::clipboard_write_text,
+            commands::capture::clipboard_read_text,
             commands::capture::longshot_set_regions,
             commands::capture::longshot_finish,
             commands::capture::longshot_abort,
             commands::capture::gif_set_regions,
+            commands::capture::gif_set_capturable,
+            commands::capture::capture_record_prep,
             commands::capture::gif_finish,
             commands::capture::gif_move_to,
             commands::capture::record_glyphs,
@@ -216,6 +224,15 @@ pub fn run() {
             commands::capture::pin_ocr,
             commands::capture::pin_text,
             commands::capture::pin_scan_codes,
+            commands::capture::pin_detect_structure,
+            commands::capture::pin_table,
+            commands::capture::pin_structure,
+            commands::capture::pin_region_style,
+            commands::capture::popmenu_open,
+            commands::capture::popmenu_items,
+            commands::capture::popmenu_place,
+            commands::capture::popmenu_pick,
+            commands::capture::popmenu_close,
             commands::capture::pin_transform,
             commands::capture::pin_edit,
             commands::capture::pin_restore_last,
@@ -227,7 +244,7 @@ pub fn run() {
             commands::capture::capture_structure,
             commands::capture::capture_elements_at,
             commands::capture::capture_elements_near,
-            commands::capture::capture_detect_table,
+            commands::capture::capture_detect_structure,
             commands::capture::capture_table,
             commands::capture::capture_region_style,
             commands::capture::capture_overlay_stray,
@@ -236,7 +253,6 @@ pub fn run() {
             commands::capture::editor_finish,
             commands::capture::editor_close,
             commands::capture::editor_open_shot,
-            commands::capture::capture_toolbar_glass,
             commands::clipboard::clipboard_query,
             commands::clipboard::clipboard_get,
             commands::clipboard::clipboard_stats,

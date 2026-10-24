@@ -334,6 +334,16 @@ pub fn unlock_frame_rate(window: &WebviewWindow) {
     sys::effects::unlock_frame_rate(window);
 }
 
+/// 窗口藏起来一阵之后，让里面的网页进入省内存状态，再显示时恢复（Windows：WebView2 自己不知道
+/// 宿主窗口藏起来了，见 `windows/webview_idle.rs`；macOS 的 WKWebView 自己会处理）。
+/// 每个窗口的页面开始加载时调（`lib.rs` 的 `on_page_load`）；截图遮罩不调。
+pub fn track_webview_idle(window: &WebviewWindow) {
+    #[cfg(windows)]
+    sys::webview_idle::track(window);
+    #[cfg(not(windows))]
+    let _ = window;
+}
+
 /// 窗口不抢焦点地置顶显示（toast 之类）。
 /// 让窗口永远不被激活（点它、显示它都不抢焦点）。悬浮按钮这类"浮在别人上面"的窗口用。
 pub fn set_no_activate(window: &WebviewWindow) {

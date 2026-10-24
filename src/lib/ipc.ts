@@ -2,7 +2,9 @@
 
 import { Channel, invoke } from '@tauri-apps/api/core';
 
-import type { AiContext, AppInfo, CaptureIntent, CaptureTable, ChatEvent, ChatRequest, ClipDetail, ClipGroup, ClipPage, ClipQuery, ClipStats, DavDevice, EditorAction, EditorDoc, EngineStatus, FinishAction, HotkeyStatus, MailCodeSettings, MailCodesStatus, McpStatus, MediaAccess, MediaKind, RecordEditInfo, OcrJob, RegionStyle, SmartSuggestion, OcrPage, Permissions, PhysicalRect, PinInfo, PinText, ScannedCode, ProviderInfo, RegionTranslation, SecretsStatus, SessionInfo, Settings, ShotPage, SyncStatus, UpdateStatus, ShotQuery, TranslateRequest, TranslateResult, VisualCapabilities } from './types';
+import type { AiContext, AppInfo, CaptureIntent, CaptureTable, ChatEvent, ChatRequest, ClipDetail, ClipGroup, ClipPage, ClipQuery, ClipStats, DavDevice, EditorAction, EditorDoc, EngineStatus, FinishAction, HotkeyStatus, MailCodeSettings, MailCodesStatus, McpStatus, MediaAccess, MediaKind, RecordEditInfo, OcrJob, RegionStyle, SmartSuggestion, OcrPage, Permissions, PhysicalRect, PinInfo, PinText, ScannedCode, ProviderInfo, RegionTranslation, SecretsStatus, SessionInfo, Settings, ShotPage, SyncStatus, UpdateStatus, ShotQuery, TranslateRequest, TranslateResult, VisualCapabilities,
+  PopItem,
+} from './types';
 
 /** Rust 侧 AppError 的结构化形态。 */
 export class AppError extends Error {
@@ -68,7 +70,6 @@ export const capture = {
   ) => callRaw<void>('capture_finish', meta, annotationPng),
   cancel: (sessionId: number) => call<void>('capture_cancel', { sessionId }),
   /** 截图工具条底下垫 / 撤掉系统的毛玻璃。rect：工具条在窗口里的位置（物理像素 x, y, 宽, 高），null = 撤掉 */
-  toolbarGlass: (rect: [number, number, number, number] | null, radius: number) => call<void>('capture_toolbar_glass', { rect, radius }),
   /** 截图原位翻译：识别选区文字、整批翻译，返回每段的位置和译文。
    *  onLines：识别完、开始翻译前收到要翻的每一行的位置（物理像素 x, y, 宽, 高） */
   translateRegion: (request: { sessionId: number; monitorId: number; rect: PhysicalRect }, onLines?: (lines: [number, number, number, number][]) => void) => {
@@ -77,6 +78,7 @@ export const capture = {
     return call<RegionTranslation>('capture_translate', { request, onLines: channel });
   },
   writeText: (text: string) => call<void>('clipboard_write_text', { text }),
+  readText: () => call<string>('clipboard_read_text'),
   /** 同时写纯文本和 HTML（表格粘贴到 Excel / Word 时保留合并单元格） */
   writeRich: (text: string, html: string) => call<void>('clipboard_write_rich', { text, html }),
   /** 识别选区里的二维码 / 条码 */
@@ -94,7 +96,8 @@ export const capture = {
   structure: (sessionId: number, monitorId: number, rect: PhysicalRect, kind: 'table' | 'formula', engine: 'local' | 'ai' = 'local') =>
     call<string>('capture_structure', { sessionId, monitorId, rect, kind, engine }),
   /** 选区里看起来有没有表格（格子线） */
-  detectTable: (sessionId: number, monitorId: number, rect: PhysicalRect) => call<boolean>('capture_detect_table', { sessionId, monitorId, rect }),
+  detectStructure: (sessionId: number, monitorId: number, rect: PhysicalRect) =>
+    call<'table' | 'formula' | null>('capture_detect_structure', { sessionId, monitorId, rect }),
   /** 本地认出表格，原位显示用：每格的位置、样式，字抹掉的底图和原图 */
   table: (sessionId: number, monitorId: number, rect: PhysicalRect) => call<CaptureTable>('capture_table', { sessionId, monitorId, rect }),
   /** 选区的底色、字色和原图（原位显示公式用） */
@@ -102,7 +105,12 @@ export const capture = {
 };
 
 export const gif = {
+  /** 录制准备、录制中能点的区域（本屏局部物理坐标），别处鼠标穿透 */
   setRegions: (regions: PhysicalRect[]) => call<void>('gif_set_regions', { regions }),
+  /** 进 / 出录制准备：不压暗、露出真实桌面、遮罩只在控制条这些地方收鼠标 */
+  prep: (sessionId: number, monitorId: number, on: boolean) => call<void>('capture_record_prep', { sessionId, monitorId, on }),
+  /** 录制中遮罩能不能被录进去（选区里有演示标注、按键显示时要能） */
+  setCapturable: (on: boolean) => call<void>('gif_set_capturable', { on }),
   finish: () => call<void>('gif_finish'),
   cancel: () => call<void>('gif_cancel'),
   /** 录制中拖了把手：录制区域挪到 rect（本屏局部物理坐标） */
@@ -145,6 +153,22 @@ export const pin = {
   copy: (label: string) => call<void>('pin_copy', { label }),
   save: (label: string) => call<void>('pin_save', { label }),
   ocr: (label: string, translate: boolean) => call<void>('pin_ocr', { label, translate }),
+  /** 贴图看起来是表格还是公式（右下角的小提示） */
+  detectStructure: (label: string) => call<'table' | 'formula' | null>('pin_detect_structure', { label }),
+  /** 贴图里的表格：认出来、量好每格（原位盖在图上像 Excel 一样改） */
+  table: (label: string) => call<CaptureTable>('pin_table', { label }),
+  /** AI 认表格 / 公式 */
+  structure: (label: string, kind: 'table' | 'formula') => call<string>('pin_structure', { label, kind }),
+  regionStyle: (label: string) => call<RegionStyle>('pin_region_style', { label }),
+};
+
+/** 自己画的右键菜单（贴图用）：单独一个小窗口，菜单项交过去，选了哪项发 `popmenu-select` 回来 */
+export const popmenu = {
+  open: (owner: string, items: PopItem[]) => call<void>('popmenu_open', { owner, items }),
+  items: () => call<{ owner: string; items: PopItem[] } | null>('popmenu_items'),
+  place: (width: number, height: number) => call<void>('popmenu_place', { width, height }),
+  pick: (id: string) => call<void>('popmenu_pick', { id }),
+  close: () => call<void>('popmenu_close'),
 };
 
 export const editor = {

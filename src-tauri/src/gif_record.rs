@@ -109,9 +109,15 @@ const CANCEL: u8 = 2;
 
 struct Active {
     monitor: MonitorInfo,
-    /// 控制栏等可点击区域（屏幕物理坐标）
+    /// 录制区域现在在哪（本屏局部物理坐标）：开始时的选区，拖把手挪过就是挪到的地方
+    rect: PhysicalRect,
+    /// 控制栏等可点击区域（本屏局部物理坐标）
     regions: Vec<PhysicalRect>,
     interactive: bool,
+    /// 遮罩现在能不能被录进去（按键显示、演示标注要能）
+    capturable: bool,
+    /// 录制中开了一次截图：遮罩归截图用，不切穿透（见 `suspend_ui`）
+    suspended: bool,
     stop: Arc<AtomicU8>,
     /// 用户拖了把手、录制区域挪到哪（本屏局部物理坐标）；录制线程下一拍取走
     moved: Option<PhysicalRect>,
@@ -208,6 +214,8 @@ pub fn start(
     if is_active() {
         return Err(AppError::msg("已经在录制 GIF 了"));
     }
+    // 准备阶段的穿透和键盘监听先当场收掉，下面换录制自己的
+    crate::capture::record_prep::leave(app, false);
     let local = PhysicalRect::new(
         global.x - monitor.bounds.x,
         global.y - monitor.bounds.y,
@@ -223,8 +231,11 @@ pub fn start(
     let stop = Arc::new(AtomicU8::new(RUNNING));
     *ACTIVE.lock() = Some(Active {
         monitor: monitor.clone(),
+        rect: local,
         regions: Vec::new(),
         interactive: false,
+        capturable: rec.keystrokes,
+        suspended: false,
         stop: stop.clone(),
         moved: None,
     });
@@ -338,6 +349,7 @@ pub fn move_to(rect: PhysicalRect) {
             .y
             .clamp(0, (b.height as i32 - rect.height as i32).max(0));
         a.moved = Some(PhysicalRect::new(x, y, rect.width, rect.height));
+        a.rect = PhysicalRect::new(x, y, rect.width, rect.height);
     }
 }
 
@@ -349,6 +361,24 @@ pub fn set_regions(regions: Vec<PhysicalRect>) {
             .map(|r| PhysicalRect::new(r.x + origin.x, r.y + origin.y, r.width, r.height))
             .collect();
     }
+}
+
+/// 录制中遮罩能不能被录进去：选区里有演示用的标注、或者开了按键显示时要能（不然录不到），
+/// 都没有的时候不能（全屏录制时工具条压在选区里，别把它录进去）
+pub fn set_capturable(app: &AppHandle, on: bool) {
+    {
+        let mut guard = ACTIVE.lock();
+        let Some(a) = guard.as_mut() else { return };
+        a.capturable = on;
+        // 截图占着遮罩：截完 `resume_ui` 再按这个设
+        if a.suspended {
+            return;
+        }
+    }
+    let ui = app.clone();
+    let _ = app.run_on_main_thread(move || {
+        overlay::for_each(&ui, |w| platform::set_overlay_capturable(w, on));
+    });
 }
 
 /// 录完、保存。
@@ -623,11 +653,52 @@ fn run(ctx: &mut RecordCtx, mut recorder: ScreenRecorder) {
     ));
 }
 
+/// 录制中开了一次截图（录 DATO 自己的操作）：录制照常录，控制条先让位，遮罩归截图用
+pub fn suspend_ui() {
+    if let Some(a) = ACTIVE.lock().as_mut() {
+        a.suspended = true;
+        a.interactive = false;
+    }
+}
+
+/// 那次截图结束：遮罩还给录制（穿透、底图藏起来），页面换回录制的界面。**UI 线程。**
+pub fn resume_ui(app: &AppHandle) {
+    let (event, capturable) = {
+        let mut guard = ACTIVE.lock();
+        let Some(a) = guard.as_mut() else { return };
+        a.suspended = false;
+        a.interactive = false;
+        (
+            GifStateEvent {
+                active: true,
+                monitor_id: a.monitor.id.0,
+                rect: a.rect,
+            },
+            a.capturable,
+        )
+    };
+    platform::backdrop::hide_all();
+    overlay::for_each(app, |w| {
+        let _ = w.set_ignore_cursor_events(true);
+        platform::set_overlay_capturable(w, capturable);
+    });
+    let _ = app.emit(events::GIF_STATE, event);
+}
+
 /// 鼠标在控制栏上时关掉遮罩的穿透，按钮才点得到；移开再打开。
 fn update_interactive(app: &AppHandle, cursor: Option<(i32, i32)>) {
     let mut guard = ACTIVE.lock();
     let Some(a) = guard.as_mut() else { return };
-    let inside = cursor.is_some_and(|(x, y)| a.regions.iter().any(|r| r.contains_point(x, y)));
+    if a.suspended {
+        return;
+    }
+    // 区域是本屏局部坐标，鼠标位置是全局的：副屏（原点不在 0,0）上要先换过来
+    let b = a.monitor.bounds;
+    let inside = cursor.is_some_and(|(x, y)| {
+        a.regions
+            .iter()
+            .any(|r| r.contains_point(x - b.x, y - b.y))
+    });
     if inside != a.interactive {
         a.interactive = inside;
         if let Some(w) = app.get_webview_window(&overlay::label_for(a.monitor.id)) {

@@ -839,6 +839,7 @@ dependencies = [
  "tracing-subscriber",
  "url",
  "uuid",
+ "webview2-com",
  "windows 0.62.2",
  "windows-numerics 0.3.1",
  "x25519-dalek",
