@@ -1,4 +1,4 @@
-// 截图框选界面元素（macOS 辅助功能）：遮罩这边的缓存和挑选。
+// 截图框选界面元素（macOS 辅助功能 / Windows UI Automation）：遮罩这边的缓存和挑选。
 //
 // 后端给两种结果：鼠标正下方由里到外的一条链（elementsAt），和附近的元素（elementsNear：同一行的其他格、
 // 其他行……）。两种都存进同一个缓存，挑预选框时在本地找"包含鼠标的、由小到大"的那些框，所以鼠标在
@@ -15,7 +15,12 @@ export interface UiElement {
  * 不拿来当预选框的：文字片段（框住一段字没用，要框的是它外面那一格 / 那个按钮）、表格的整列（竖着一长条，
  * 很少有人要；而且鼠标挪到还没取回来的那一行时它会先冒出来闪一下）、滚动条、认不出是什么的
  */
-const SKIP_ROLES = new Set(['AXStaticText', 'AXInlineTextBox', 'AXTextRun', 'AXColumn', 'AXScrollBar', 'AXValueIndicator', 'AXUnknown']);
+const SKIP_ROLES = new Set([
+  // macOS 辅助功能
+  'AXStaticText', 'AXInlineTextBox', 'AXTextRun', 'AXColumn', 'AXScrollBar', 'AXValueIndicator', 'AXUnknown',
+  // Windows UI Automation
+  'Text', 'ScrollBar', 'Thumb', 'Separator', 'ToolTip',
+]);
 
 export type ElementLevel = 'block' | 'element';
 

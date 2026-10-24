@@ -4,12 +4,16 @@ pub mod app_icon;
 pub mod backdrop;
 pub mod capture;
 pub mod clipboard;
+pub mod codes;
 pub mod cursor;
 pub mod effects;
+pub mod elements;
 pub mod hook;
 pub mod input;
+pub mod media;
 pub mod ocr;
 pub mod process;
+pub mod record_input;
 pub mod secret;
 pub mod selection_hook;
 pub mod system_events;
@@ -19,11 +23,12 @@ pub mod window_enum;
 mod util;
 
 pub use super::generic::{
-    after_silent_start, is_reopen_event, menu_label, permissions, request_permission,
-    scan_codes, sms_supported, start_sms_watcher, VideoWriter, export_video, Camera,
-    media_access, request_media_access, elements_at, elements_near, speak, stop_speaking, is_speaking, voices,
-    record_input,
+    after_silent_start, is_reopen_event, is_speaking, menu_label, permissions, request_permission,
+    sms_supported, speak, start_sms_watcher, stop_speaking, voices,
 };
+pub use codes::scan as scan_codes;
+pub use media::{export_video, media_access, request_media_access, Camera, VideoWriter};
+pub use elements::{elements_at, elements_near};
 use super::types::DefaultHotkeys;
 
 pub const DEFAULT_HOTKEYS: DefaultHotkeys = DefaultHotkeys {

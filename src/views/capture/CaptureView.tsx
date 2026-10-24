@@ -19,7 +19,7 @@ import { CONTENT_INTERVAL, useElementSize, useThrottled } from '@/lib/hooks';
 import { capture, gif, reportError, system } from '@/lib/ipc';
 import { useSettingsStore } from '@/lib/settings';
 import { isMac, shotUrl, windowLabel } from '@/lib/platform';
-import { DEFAULT_GROUPS, MID_ACTIONS, TAIL_ACTIONS, type CaptureIntent, type FinishAction, type FrameStyle, type TailAction } from '@/lib/types';
+import { DEFAULT_GROUPS, MID_ACTIONS, TAIL_ACTIONS, type CaptureIntent, type CaptureTable, type FinishAction, type FrameStyle, type TailAction } from '@/lib/types';
 import { notify } from '@/ui/overlays';
 import { AnnotationEngine, toolOf } from '@/views/annotate/engine';
 import { BRUSH_RANGE, PEN_RANGE, watermarkOf, type Tool } from '@/views/annotate/model';
@@ -56,9 +56,8 @@ import {
 } from './geometry';
 import { CodeBadges, CodeResults } from './CodeResults';
 import { candidatesAt, ElementCache, rectKey, thresholds, type ElementLevel, type UiElement } from './elements';
-import { FormulaInPlace, mergeAiTable, TableInPlace } from './InPlaceResult';
+import { aiTableLayout, FormulaInPlace, mergeAiTable, TableInPlace } from './InPlaceResult';
 import { CameraFrame, Countdown, KeyHud, MoveHandle, RecordHints, RecordToolbar, sendGlyphs } from './RecordUI';
-import { StructuredCard } from './StructuredCard';
 import { rememberSelection, SelectionPanel } from './SelectionPanel';
 import { saveTemplate } from '@/views/annotate/templates';
 import { GifUI } from './GifUI';
@@ -271,9 +270,11 @@ function detect(p: Point, query = false): Rect {
   if (!s?.settings.detectWindows) return screen;
   const hit = windowsLocal.find((w) => contains(w.rect, p));
   if (!hit) return screen;
-  if (s.settings.detectChildWindows && isMac) {
-    if (query) scheduleElements(hit, p);
-    const cands = elementCandidates(hit, p);
+  // 界面元素（macOS 的辅助功能、Windows 的 UI Automation）；Windows 上问不到元素的窗口（没有 UI Automation 的
+  // 老程序）退回按子窗口框
+  const cands = s.settings.detectChildWindows ? elementCandidates(hit, p) : [];
+  if (s.settings.detectChildWindows && query) scheduleElements(hit, p);
+  if (s.settings.detectChildWindows && (isMac || cands.length > 0)) {
     // 换到另一个元素上了：层级回到最里面
     const inner = cands[0] ? rectKey(cands[0]) : '';
     if (inner !== elementInner) {
@@ -574,82 +575,121 @@ async function scanCodes() {
 }
 
 /**
- * 选区识别成表格 / 公式，原位盖在选区上（像截图翻译）：表格默认本地识别（几百毫秒、不联网），公式只有 AI。
- * 识别时选区上扫一道光（和截图翻译同一套）。原位的表格再点「AI 识别」：AI 认出的行列对得上就只换字、
- * 样式和位置不变；对不上就用卡片显示 AI 的结果
+ * 选区识别成表格 / 公式，原位盖在选区上（像截图翻译）：表格默认本地识别（几百毫秒、不联网），本地没认出表格时
+ * 自动换 AI 再认；公式只有 AI。认的时候选区上扫一道光（和截图翻译同一套），不弹卡片。
+ * 原位的表格再点「AI 重新识别」：AI 认出的行列对得上就只换字，样式和位置不变；对不上就按原来的范围画一张表。
+ * 认不出、出错只弹一条提示，选区和别的标注都不动。
  */
 async function recognizeStructure(kind: 'table' | 'formula', wanted?: 'local' | 'ai') {
   const { session, selection, structured } = get();
   if (!session || !selection || structured?.status === 'running') return;
   if (engine.text) engine.commitText();
+  // 和原位翻译盖在同一块地方：先把译文去掉
+  if (engine.hasGroup(TRANSLATION_GROUP)) {
+    engine.removeGroup(TRANSLATION_GROUP);
+    set({ showOriginal: false, moveLabels: false, translatedBlocks: [] });
+  }
   const how = kind === 'formula' ? 'ai' : (wanted ?? 'local');
-  // 原位的表格上再用 AI 认：表格留着（半透明），认完替换
-  const keep = structured?.kind === kind && structured.table ? structured.table : undefined;
+  // 原位的结果上再用 AI 认：结果留着（半透明），认完替换
+  const prev = structured?.kind === kind && structured.status === 'done' ? structured : undefined;
   set({
-    structured: { kind, engine: how, status: 'running', table: keep },
+    structured: { kind, engine: how, status: 'running', table: prev?.table, text: prev?.text, region: prev?.region },
     codes: null,
     sizePanel: false,
     toolbarGroup: null,
     trLoading: { rect: selection, lines: [], done: false },
   });
   const stale = () => get().session?.sessionId !== session.sessionId || get().structured?.kind !== kind || get().selection !== selection;
-  const finish = (next: CaptureStructured) => {
+  const settle = (next: CaptureStructured | null) => {
     if (stale()) return;
     const loading = get().trLoading;
     set({ structured: next, trLoading: loading ? { ...loading, done: true } : null });
   };
+  const message = (err: unknown) => (err instanceof Error ? err.message : String(err));
+  /** 认失败了：结果收掉（或留着原来的），弹一条提示。先看是不是已经过时（收掉之后就判断不了了） */
+  const fail = (err: unknown, keep: CaptureStructured | null) => {
+    if (stale()) return;
+    settle(keep);
+    notify.error(err);
+  };
+  const region = () => capture.regionStyle(session.sessionId, MONITOR_ID, selection).catch(() => undefined);
+  /** AI 认表格，套回原位（对得上就只换字，对不上就按原来的范围画一张） */
+  const askAi = async (base?: CaptureTable) => {
+    const [html, colors] = await Promise.all([capture.structure(session.sessionId, MONITOR_ID, selection, 'table', 'ai'), base ? undefined : region()]);
+    const table = (base && mergeAiTable(base, html)) ?? aiTableLayout(html, selection, colors, base);
+    if (!table) throw new Error(i18n.t('capture.structured.notFound'));
+    return { html, table };
+  };
   try {
     if (kind === 'table' && how === 'local') {
-      const table = await capture.table(session.sessionId, MONITOR_ID, selection);
-      finish({ kind, engine: how, status: 'done', table });
+      let table: CaptureTable;
+      try {
+        table = await capture.table(session.sessionId, MONITOR_ID, selection);
+      } catch (local) {
+        if (stale()) return;
+        // 本地没认出（没有格子线、字太乱）：换 AI 认，光接着扫
+        try {
+          const r = await askAi();
+          settle({ kind, engine: 'ai', status: 'done', text: r.html, table: r.table });
+        } catch (ai) {
+          // AI 也说图里没有表格：就说没认出表格；AI 出错了（超时、没配好）才把原因带上
+          const said = message(ai);
+          const none = !said || said === message(local) || /没有认出表格|no table/i.test(said);
+          fail(new Error(none ? i18n.t('capture.structured.notFound') : i18n.t('capture.structured.bothFailed', { message: said })), null);
+        }
+        return;
+      }
+      settle({ kind, engine: how, status: 'done', table });
     } else if (kind === 'table') {
-      const text = await capture.structure(session.sessionId, MONITOR_ID, selection, kind, how);
-      const merged = keep ? mergeAiTable(keep, text) : null;
-      finish({ kind, engine: how, status: 'done', text, table: merged ?? undefined });
+      const r = await askAi(prev?.table);
+      settle({ kind, engine: how, status: 'done', text: r.html, table: r.table });
     } else {
-      const [text, region] = await Promise.all([
+      const [text, style] = await Promise.all([
         capture.structure(session.sessionId, MONITOR_ID, selection, kind, how),
-        capture.regionStyle(session.sessionId, MONITOR_ID, selection).catch(() => undefined),
+        prev?.region ? prev.region : capture.regionStyle(session.sessionId, MONITOR_ID, selection),
       ]);
-      finish({ kind, engine: how, status: 'done', text, region });
+      settle({ kind, engine: how, status: 'done', text, region: style });
     }
   } catch (err) {
-    finish({ kind, engine: how, status: 'error', error: err instanceof Error ? err.message : String(err) });
+    // 重新认失败：留着原来的结果
+    fail(err, prev ?? null);
   }
 }
 
-/** 识别结果怎么显示：原位的表格 / 公式；正在认（还没有原位结果）只扫光；出错、AI 的表格对不上原位的格子时用卡片 */
+/** 识别结果原位盖在选区上；正在认、还没有结果时只扫光（加载层），不显示别的 */
 function StructuredResultLayer({ state, selection, s, viewport }: { state: CaptureStructured; selection: Rect; s: number; viewport: { width: number; height: number } }) {
   const close = () => set({ structured: null });
-  if (state.table && (state.status === 'done' || state.status === 'running')) {
+  const busy = state.status === 'running';
+  if (state.kind === 'table' && state.table) {
     return (
       <TableInPlace
         data={state.table}
         selection={selection}
         s={s}
         viewport={viewport}
-        busy={state.status === 'running'}
+        busy={busy}
         onAi={() => void recognizeStructure('table', 'ai')}
         onClose={close}
         onDone={cancel}
       />
     );
   }
-  if (state.status === 'running') return null;
-  if (state.kind === 'formula' && state.status === 'done' && state.region && state.text) {
-    return <FormulaInPlace text={state.text} region={state.region} selection={selection} s={s} viewport={viewport} onClose={close} onDone={cancel} />;
+  if (state.kind === 'formula' && state.region && state.text) {
+    return (
+      <FormulaInPlace
+        text={state.text}
+        region={state.region}
+        selection={selection}
+        s={s}
+        viewport={viewport}
+        busy={busy}
+        onAi={() => void recognizeStructure('formula')}
+        onClose={close}
+        onDone={cancel}
+      />
+    );
   }
-  return (
-    <StructuredCard
-      state={state}
-      selection={selection}
-      s={s}
-      viewport={viewport}
-      onClose={close}
-      onRetry={(how) => void recognizeStructure(state.kind, how)}
-      onDone={cancel}
-    />
-  );
+  return null;
 }
 
 /** 译文从上往下依次显现：选区顶上的一行马上开始，最底下的一行晚这么多毫秒 */
@@ -663,7 +703,8 @@ async function translateInPlace() {
   const { session, selection, translating } = get();
   if (!session || !selection || translating) return;
   if (engine.text) engine.commitText();
-  set({ translating: true, trLoading: { rect: selection, lines: [], done: false } });
+  // 和原位的表格 / 公式盖在同一块地方：先去掉
+  set({ translating: true, structured: null, trLoading: { rect: selection, lines: [], done: false } });
   try {
     const r = await capture.translateRegion({ sessionId: session.sessionId, monitorId: MONITOR_ID, rect: selection }, (rows) => {
       if (get().session?.sessionId !== session.sessionId || !get().translating) return;
@@ -1687,6 +1728,7 @@ function Toolbars({
   const pixelsReady = useOverlay((x) => x.pixelsReady);
   const bitmapReady = useOverlay((x) => x.bitmapReady);
   const intent = useOverlay((x) => x.session?.intent ?? 'normal');
+  const hasStructured = useOverlay((x) => !!x.structured);
   const barRef = useRef<HTMLDivElement>(null);
   const subRef = useRef<HTMLDivElement>(null);
   const bar = useElementSize(barRef, { width: 540, height: 40 });
@@ -1835,7 +1877,7 @@ function Toolbars({
       )}
       <TranslationBar css={css} />
       <TranslateLoading s={s} />
-      {intent !== 'normal' && !engine.hasGroup(TRANSLATION_GROUP) && (
+      {intent !== 'normal' && !engine.hasGroup(TRANSLATION_GROUP) && !hasStructured && (
         // 选区左上角是尺寸提示，这条提示靠右上角放；选区太窄就排在尺寸提示右边，不压在它上面
         <div
           ref={intentRef}

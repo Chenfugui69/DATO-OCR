@@ -115,46 +115,6 @@ pub fn menu_label(text: &str, accelerator: &str) -> String {
 
 pub fn after_silent_start() {}
 
-/// 录视频的写入器：Windows 还没做（下一步用 Media Foundation），先报不支持。
-pub struct VideoWriter;
-
-impl VideoWriter {
-    pub fn create(
-        _path: &std::path::Path,
-        _width: u32,
-        _height: u32,
-        _fps: u32,
-        _options: super::types::VideoOptions,
-    ) -> AppResult<Self> {
-        Err(crate::error::AppError::msg("这个系统上暂时还不能录视频"))
-    }
-
-    pub fn start(&mut self, _origin: std::time::Instant) {}
-
-    pub fn warnings(&self) -> &[String] {
-        &[]
-    }
-
-    pub fn push(&mut self, _frame: &image::RgbaImage, _ms: u64) -> AppResult<()> {
-        Ok(())
-    }
-
-    pub fn finish(self, _end_ms: u64) -> AppResult<usize> {
-        Ok(0)
-    }
-}
-
-/// 剪辑 / 混音录好的视频：没有视频编码的平台不支持
-pub fn export_video(
-    _src: &std::path::Path,
-    _dst: &std::path::Path,
-    _edit: super::types::VideoEdit,
-    _encoding: super::types::VideoEncoding,
-    _mix: bool,
-) -> AppResult<()> {
-    Err(crate::error::AppError::msg("这个系统上暂时还不能剪辑视频"))
-}
-
 /// 朗读：没做系统语音的平台报不支持，页面改用浏览器自带的语音合成
 pub fn speak(_text: &str, _lang: &str, _options: &super::types::SpeakOptions) -> AppResult<()> {
     Err(crate::error::AppError::msg("unsupported"))
@@ -169,44 +129,6 @@ pub fn is_speaking() -> bool {
 /// 系统的声音列表：没做的平台给空，设置页改用浏览器的语音列表
 pub fn voices() -> Vec<super::types::Voice> {
     Vec::new()
-}
-
-/// 鼠标下面的界面元素（由里到外）：还没做，截图照旧按窗口 / 子窗口框选
-pub fn elements_at(
-    _window: super::types::WindowHandle,
-    _x: i32,
-    _y: i32,
-) -> AppResult<Vec<super::types::UiElement>> {
-    Ok(Vec::new())
-}
-
-pub fn elements_near(
-    _window: super::types::WindowHandle,
-    _x: i32,
-    _y: i32,
-) -> AppResult<Vec<super::types::UiElement>> {
-    Ok(Vec::new())
-}
-
-/// 摄像头画面：还没做
-pub struct Camera;
-
-impl Camera {
-    pub fn start(_size: u32) -> AppResult<Self> {
-        Err(crate::error::AppError::msg("这个系统上暂时还不能录摄像头"))
-    }
-
-    pub fn latest(&self) -> Option<image::RgbaImage> {
-        None
-    }
-}
-
-pub fn media_access(_kind: super::types::MediaKind) -> super::types::MediaAccess {
-    super::types::MediaAccess::Unsupported
-}
-
-pub fn request_media_access(kind: super::types::MediaKind) -> super::types::MediaAccess {
-    media_access(kind)
 }
 
 /// 纯 Rust 的二维码识别（rqrr），只认二维码。macOS 在 Vision 没认出来时也拿它再试一遍。
@@ -272,21 +194,5 @@ mod tests {
         let codes = super::scan_codes(&image).unwrap();
         println!("{codes:?}");
         assert!(!codes.is_empty());
-    }
-}
-
-/// 录屏时的键盘、滚轮监听：没做的平台什么都不报
-pub mod record_input {
-    pub struct Guard;
-
-    pub fn install(
-        _tx: std::sync::mpsc::Sender<crate::platform::types::RecordInput>,
-    ) -> crate::error::AppResult<Guard> {
-        Ok(Guard)
-    }
-
-    /// 现在按着哪几个鼠标键（没做的平台一直是没按）
-    pub fn mouse_buttons() -> u8 {
-        0
     }
 }

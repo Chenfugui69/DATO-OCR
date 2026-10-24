@@ -49,7 +49,8 @@ const MATHML_TAGS = new Set([
   'munder', 'mover', 'munderover', 'mtable', 'mtr', 'mtd', 'mstyle', 'mpadded', 'mphantom', 'menclose', 'semantics',
   'annotation', 'mmultiscripts', 'mprescripts', 'none',
 ]);
-const MATHML_ATTRS = new Set(['display', 'mathvariant', 'stretchy', 'fence', 'separator', 'accent', 'accentunder', 'columnalign', 'rowspacing', 'columnspacing', 'notation', 'linethickness', 'largeop', 'movablelimits', 'form', 'lspace', 'rspace', 'encoding']);
+// 后面几个是本地把 LaTeX 转成 MathML（temml）时用的间距、字号属性：只是数值，不会带进脚本或链接
+const MATHML_ATTRS = new Set(['display', 'mathvariant', 'stretchy', 'fence', 'separator', 'accent', 'accentunder', 'columnalign', 'rowspacing', 'columnspacing', 'notation', 'linethickness', 'largeop', 'movablelimits', 'form', 'lspace', 'rspace', 'encoding', 'width', 'height', 'depth', 'voffset', 'scriptlevel', 'displaystyle', 'minsize', 'maxsize', 'symmetric', 'mathsize']);
 
 /** 只留 MathML 的标签和几个排版属性，其余（脚本、链接、样式、事件）都去掉。认不出就返回空 */
 export function sanitizeMathml(source: string): string {

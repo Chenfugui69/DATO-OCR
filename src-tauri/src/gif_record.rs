@@ -79,10 +79,10 @@ impl RecordFormat {
         }
     }
 
-    /// 设置里的写法；不认识的、这个系统上录不了的（Windows 还不能录视频）按 GIF
+    /// 设置里的写法；不认识的、这个系统上录不了的按 GIF
     pub fn parse(s: &str) -> Self {
         match s {
-            "mp4" if cfg!(target_os = "macos") => Self::Mp4,
+            "mp4" if cfg!(any(target_os = "macos", windows)) => Self::Mp4,
             "apng" => Self::Apng,
             _ => Self::Gif,
         }

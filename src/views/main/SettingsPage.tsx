@@ -110,7 +110,6 @@ export function SettingsPage({ section }: { section: string | null }) {
   const mediaAccess = useQuery({
     queryKey: ['media-access'],
     queryFn: async () => ({ microphone: await record.mediaAccess('microphone'), camera: await record.mediaAccess('camera') }),
-    enabled: isMac,
     refetchOnWindowFocus: true,
   });
   const permRows = (['screenCapture', 'accessibility'] as (keyof Permissions)[]).filter((k) => perms.data?.[k] != null);
@@ -458,78 +457,76 @@ export function SettingsPage({ section }: { section: string | null }) {
               <Switch checked={rec.editBeforeSave} onChange={(v) => set((d) => void (d.record.editBeforeSave = v))} />
             </Row>
           </Group>
-          {isMac && (
-            <Group id="record-video" title={t('settings.record.videoTitle')} note={t('settings.record.videoNote')}>
-              <Row title={t('settings.record.resolution')} desc={t('settings.record.resolutionDesc')}>
-                <Segmented
-                  value={rec.resolution}
-                  options={[
-                    { value: 'original', label: t('settings.record.original') },
-                    { value: '1080p', label: '1080p' },
-                    { value: '720p', label: '720p' },
-                  ]}
-                  onChange={(v) => set((d) => void (d.record.resolution = v))}
-                />
+          <Group id="record-video" title={t('settings.record.videoTitle')} note={t('settings.record.videoNote')}>
+            <Row title={t('settings.record.resolution')} desc={t('settings.record.resolutionDesc')}>
+              <Segmented
+                value={rec.resolution}
+                options={[
+                  { value: 'original', label: t('settings.record.original') },
+                  { value: '1080p', label: '1080p' },
+                  { value: '720p', label: '720p' },
+                ]}
+                onChange={(v) => set((d) => void (d.record.resolution = v))}
+              />
+            </Row>
+            <Row title={t('settings.record.fps')}>
+              <Segmented
+                value={String(rec.fps)}
+                options={['15', '24', '30', '60'].map((v) => ({ value: v, label: `${v} fps` }))}
+                onChange={(v) => set((d) => void (d.record.fps = Number(v) as Settings['record']['fps']))}
+              />
+            </Row>
+            <Row title={t('settings.record.quality')} desc={t('settings.record.qualityDesc')}>
+              <span className="set-row__value cn-numeric">{rec.quality}</span>
+              <Slider value={rec.quality} min={10} max={100} step={5} onChange={(v) => set((d) => void (d.record.quality = v))} />
+            </Row>
+            <Row title={t('settings.record.codec')} desc={t('settings.record.codecDesc')}>
+              <Segmented
+                value={rec.codec}
+                options={[
+                  { value: 'h264', label: 'H.264' },
+                  { value: 'hevc', label: 'H.265' },
+                ]}
+                onChange={(v) => set((d) => void (d.record.codec = v))}
+              />
+            </Row>
+            <Row title={t('settings.record.maxSeconds')}>
+              <Select
+                value={String(rec.maxSeconds)}
+                options={[60, 180, 300, 600, 1800, 3600].map((v) => ({ value: String(v), label: t('settings.record.minutes', { count: v / 60 }) }))}
+                onChange={(v) => set((d) => void (d.record.maxSeconds = Number(v)))}
+              />
+            </Row>
+            <Row title={t('settings.record.systemAudio')} desc={t('settings.record.systemAudioDesc')}>
+              <Switch checked={rec.systemAudio} onChange={(v) => set((d) => void (d.record.systemAudio = v))} />
+            </Row>
+            <Row title={t('settings.record.microphone')} desc={mediaDesc('microphone')}>
+              <Switch checked={rec.microphone} onChange={(v) => void toggleMedia('microphone', v)} />
+            </Row>
+            {rec.systemAudio && rec.microphone && (
+              <Row title={t('settings.record.separateTracks')} desc={t('settings.record.separateTracksDesc')}>
+                <Switch checked={rec.separateAudioTracks} onChange={(v) => set((d) => void (d.record.separateAudioTracks = v))} />
               </Row>
-              <Row title={t('settings.record.fps')}>
-                <Segmented
-                  value={String(rec.fps)}
-                  options={['15', '24', '30', '60'].map((v) => ({ value: v, label: `${v} fps` }))}
-                  onChange={(v) => set((d) => void (d.record.fps = Number(v) as Settings['record']['fps']))}
-                />
-              </Row>
-              <Row title={t('settings.record.quality')} desc={t('settings.record.qualityDesc')}>
-                <span className="set-row__value cn-numeric">{rec.quality}</span>
-                <Slider value={rec.quality} min={10} max={100} step={5} onChange={(v) => set((d) => void (d.record.quality = v))} />
-              </Row>
-              <Row title={t('settings.record.codec')} desc={t('settings.record.codecDesc')}>
-                <Segmented
-                  value={rec.codec}
-                  options={[
-                    { value: 'h264', label: 'H.264' },
-                    { value: 'hevc', label: 'H.265' },
-                  ]}
-                  onChange={(v) => set((d) => void (d.record.codec = v))}
-                />
-              </Row>
-              <Row title={t('settings.record.maxSeconds')}>
-                <Select
-                  value={String(rec.maxSeconds)}
-                  options={[60, 180, 300, 600, 1800, 3600].map((v) => ({ value: String(v), label: t('settings.record.minutes', { count: v / 60 }) }))}
-                  onChange={(v) => set((d) => void (d.record.maxSeconds = Number(v)))}
-                />
-              </Row>
-              <Row title={t('settings.record.systemAudio')} desc={t('settings.record.systemAudioDesc')}>
-                <Switch checked={rec.systemAudio} onChange={(v) => set((d) => void (d.record.systemAudio = v))} />
-              </Row>
-              <Row title={t('settings.record.microphone')} desc={mediaDesc('microphone')}>
-                <Switch checked={rec.microphone} onChange={(v) => void toggleMedia('microphone', v)} />
-              </Row>
-              {rec.systemAudio && rec.microphone && (
-                <Row title={t('settings.record.separateTracks')} desc={t('settings.record.separateTracksDesc')}>
-                  <Switch checked={rec.separateAudioTracks} onChange={(v) => set((d) => void (d.record.separateAudioTracks = v))} />
+            )}
+            <Row title={t('settings.record.camera')} desc={mediaDesc('camera')}>
+              <Switch checked={rec.camera} onChange={(v) => void toggleMedia('camera', v)} />
+            </Row>
+            {rec.camera && (
+              <>
+                <Row title={t('record.fx.cameraShape')} desc={t('settings.record.cameraPlace')}>
+                  <Segmented
+                    value={rec.cameraShape}
+                    options={(['circle', 'square', 'rounded'] as const).map((v) => ({ value: v, label: t(`record.fx.shape.${v}`) }))}
+                    onChange={(v) => set((d) => void (d.record.cameraShape = v))}
+                  />
                 </Row>
-              )}
-              <Row title={t('settings.record.camera')} desc={mediaDesc('camera')}>
-                <Switch checked={rec.camera} onChange={(v) => void toggleMedia('camera', v)} />
-              </Row>
-              {rec.camera && (
-                <>
-                  <Row title={t('record.fx.cameraShape')} desc={t('settings.record.cameraPlace')}>
-                    <Segmented
-                      value={rec.cameraShape}
-                      options={(['circle', 'square', 'rounded'] as const).map((v) => ({ value: v, label: t(`record.fx.shape.${v}`) }))}
-                      onChange={(v) => set((d) => void (d.record.cameraShape = v))}
-                    />
-                  </Row>
-                  <Row title={t('settings.record.cameraSize')}>
-                    <span className="set-row__value cn-numeric">{rec.cameraPx}px</span>
-                    <Slider value={rec.cameraPx} min={60} max={480} step={10} onChange={(v) => set((d) => void (d.record.cameraPx = v))} />
-                  </Row>
-                </>
-              )}
-            </Group>
-          )}
+                <Row title={t('settings.record.cameraSize')}>
+                  <span className="set-row__value cn-numeric">{rec.cameraPx}px</span>
+                  <Slider value={rec.cameraPx} min={60} max={480} step={10} onChange={(v) => set((d) => void (d.record.cameraPx = v))} />
+                </Row>
+              </>
+            )}
+          </Group>
 
           <Group id="longshot" title={t('settings.section.longshot')} note={t('settings.longshot.note')}>
             <Row title={t('settings.longshot.debounce')} desc={t('settings.longshot.debounceDesc')}>

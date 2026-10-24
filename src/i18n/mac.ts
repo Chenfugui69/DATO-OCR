@@ -54,6 +54,10 @@ export const macZhCN: Overrides = {
     about: {
       privacy: '剪贴板历史、截图和识字记录以明文保存在本机数据目录中，不做加密、不上传；翻译密钥加密保存，主密钥放在钥匙串里。',
     },
+    record: {
+      deniedDesc: '没有权限：到 系统设置 → 隐私与安全性 里允许 DATO OCR 后再打开',
+      denied: '没有{{name}}权限，到 系统设置 → 隐私与安全性 里允许 DATO OCR 后再打开',
+    },
   },
 };
 
@@ -108,6 +112,10 @@ export const macEnUS: Overrides = {
     },
     about: {
       privacy: 'Clipboard history, screenshots and recognition results are stored unencrypted in the local data folder and never uploaded. Translation API keys are encrypted with a key kept in your Keychain.',
+    },
+    record: {
+      deniedDesc: 'No permission: allow DATO OCR in System Settings → Privacy & Security, then turn it on',
+      denied: 'No {{name}} permission. Allow DATO OCR in System Settings → Privacy & Security, then turn it on',
     },
   },
 };

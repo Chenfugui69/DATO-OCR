@@ -345,59 +345,6 @@ html[data-view='capture'] #root {
   width: 280px;
   padding: 6px;
 }
-.cap-struct {
-  position: absolute;
-  left: 0;
-  top: 0;
-  display: flex;
-  flex-direction: column;
-  min-height: 220px;
-  padding: 8px 10px 10px;
-  border-radius: 12px;
-  font: 400 12px/1.4 var(--cn-font-sans);
-  color: var(--cn-label);
-  box-shadow:
-    0 10px 30px rgba(0, 0, 0, 0.25),
-    0 0 0 0.5px rgba(0, 0, 0, 0.25);
-  transition: opacity 120ms;
-}
-/* 按住眼睛：卡片几乎透明，看得见下面的原图 */
-.cap-struct[data-peek] {
-  opacity: 0.08;
-}
-.cap-struct__head {
-  display: flex;
-  align-items: center;
-  gap: 2px;
-  padding: 0 0 6px 2px;
-}
-.cap-struct__title {
-  flex: 1;
-  font: 600 12px/1 var(--cn-font-sans);
-  color: var(--cn-label-secondary);
-}
-.cap-struct__ai {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  height: 22px;
-  padding: 0 8px;
-  margin-right: 4px;
-  border-radius: 6px;
-  color: var(--cn-accent);
-  font: 500 11.5px/1 var(--cn-font-sans);
-}
-.cap-struct__ai:hover {
-  background: var(--cn-bg-hover);
-}
-.cap-struct__content {
-  flex: 1;
-  min-height: 0;
-}
-.cap-struct .ocr-table {
-  user-select: text;
-  -webkit-user-select: text;
-}
 /* 原位显示的表格 / 公式：正好盖在选区上（坐标是选区里的 CSS 像素） */
 .cap-inplace {
   position: absolute;
@@ -408,8 +355,10 @@ html[data-view='capture'] #root {
   animation: cn-fade-in 180ms var(--cn-ease-out);
   transition: opacity 120ms var(--cn-ease-out);
 }
+/* 看原图：结果藏起来，点击也穿过去（照样能挪选区、画标注） */
 .cap-inplace[data-peek] {
   opacity: 0;
+  pointer-events: none;
 }
 .cap-inplace--busy {
   opacity: 0.55;
@@ -432,16 +381,61 @@ html[data-view='capture'] #root {
   z-index: 1;
 }
 .cap-inplace__text {
+  /* 字体、字号、位置都由页面按原图的字量出来写在 style 上（见 InPlaceResult 的 fitCell） */
   position: absolute;
-  font-family: -apple-system, 'Helvetica Neue', Helvetica, Arial, 'PingFang SC', 'Microsoft YaHei', sans-serif;
   outline: none;
   caret-color: var(--cn-accent);
   font-kerning: normal;
 }
+/* AI 认出的表格和原位的格子对不上时：自己画一张表铺满原来的范围（底色、线、字色按原图取） */
+.cap-inplace--plain .cap-inplace__cell {
+  background: var(--cell-bg);
+  box-shadow: inset -1px -1px 0 var(--plain-line);
+}
+.cap-inplace--plain .cap-inplace__frame {
+  position: absolute;
+  pointer-events: none;
+  box-shadow: inset 1px 1px 0 var(--plain-line);
+}
 .cap-inplace--formula {
   display: grid;
   place-items: center;
-  cursor: default;
+  cursor: text;
+}
+.cap-inplace--formula:hover {
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--cn-accent) 45%, transparent);
+}
+.cap-inplace--formula[data-editing] {
+  box-shadow: inset 0 0 0 1.5px var(--cn-accent);
+}
+/* 公式的 LaTeX：贴着选区下沿（放不下就上沿）的一条输入框，改了上面的公式跟着变 */
+.cap-latex {
+  position: absolute;
+  left: 0;
+  top: 0;
+  display: flex;
+  align-items: stretch;
+  padding: 4px;
+  border-radius: var(--cn-radius-lg);
+  animation: cn-fade-in 140ms var(--cn-ease-out);
+}
+.cap-latex textarea {
+  flex: 1;
+  min-height: 30px;
+  max-height: 160px;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: 7px;
+  resize: none;
+  font: 13px/1.5 'Cascadia Mono', Consolas, ui-monospace, Menlo, monospace;
+  color: var(--cn-label);
+  background: transparent;
+  outline: none;
+  user-select: text;
+  -webkit-user-select: text;
+}
+.cap-latex[data-invalid] textarea {
+  color: var(--cn-red, #ff3b30);
 }
 .cap-inplace__math {
   max-width: 100%;
@@ -452,78 +446,6 @@ html[data-view='capture'] #root {
 }
 .cap-inplace__math--latex {
   font-family: ui-monospace, Menlo, monospace;
-}
-/* 原图对照面板：选区左边（或右边），复制、导出的按钮也在这里 */
-.cap-ref {
-  position: absolute;
-  left: 0;
-  top: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  padding: 8px 10px 10px;
-  border-radius: 12px;
-  font: 400 12px/1.4 var(--cn-font-sans);
-  color: var(--cn-label);
-  animation: cn-fade-in 180ms var(--cn-ease-out);
-}
-.cap-ref__head {
-  display: flex;
-  align-items: center;
-  gap: 2px;
-}
-.cap-ref__title {
-  font: 600 12px/1 var(--cn-font-sans);
-  color: var(--cn-label);
-}
-.cap-ref__sub {
-  flex: 1;
-  margin-left: 6px;
-  font: 400 11px/1 var(--cn-font-sans);
-  color: var(--cn-label-tertiary);
-}
-.cap-ref__img {
-  display: block;
-  width: 100%;
-  object-fit: contain;
-  object-position: left top;
-  border-radius: 6px;
-  box-shadow: 0 0 0 0.5px var(--cn-separator);
-  background: var(--cn-fill-quaternary);
-}
-.cap-ref__actions {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 4px;
-}
-.cap-ref__icon {
-  display: grid;
-  place-items: center;
-  width: 28px;
-  height: 28px;
-  border-radius: 7px;
-  color: var(--cn-label-secondary);
-}
-.cap-ref__icon:hover:not(:disabled) {
-  background: var(--cn-bg-hover);
-  color: var(--cn-label);
-}
-.cap-ref__icon:disabled {
-  opacity: 0.4;
-}
-.cap-ref__latex {
-  width: 100%;
-  min-height: 96px;
-  padding: 6px 8px;
-  border-radius: 6px;
-  border: 0;
-  resize: vertical;
-  font: 12px/1.5 ui-monospace, Menlo, monospace;
-  color: var(--cn-label);
-  background: var(--cn-fill-quaternary);
-  box-shadow: inset 0 0 0 0.5px var(--cn-separator);
-  outline: none;
 }
 .cap-codes {
   position: absolute;
@@ -883,6 +805,24 @@ html[data-view='capture'] #root {
 .cap-trbar button.is-on {
   background: var(--cn-accent);
   color: var(--cn-label-on-accent);
+}
+.cap-trbar button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.cap-trbar button:disabled:hover {
+  background: transparent;
+  color: var(--cn-label-secondary);
+}
+/* 表格 / 公式的条：认好之后马上出来（翻译那条要等译文显现到一半） */
+.cap-trbar--structured {
+  animation-delay: 0ms;
+}
+.cap-trbar__spin {
+  display: inline-grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
 }
 .cap-trbar__sep {
   width: 0.5px;

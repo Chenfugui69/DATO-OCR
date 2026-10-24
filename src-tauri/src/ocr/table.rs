@@ -491,16 +491,39 @@ pub fn grid(img: &RgbaImage, blocks: &[OcrBlock]) -> Option<Grid> {
     if rows < 2 || cols < 2 {
         return None;
     }
+    // 没有竖线的"表"靠文字对齐分格：真正的表格大多数行都有两格以上有字。每行只有一段字的
+    // （公式的分子分母、几行说明文字）不是表
+    if !ruled_cols {
+        let multi = cells
+            .iter()
+            .filter(|row| row.iter().filter(|c| !c.is_empty()).count() >= 2)
+            .count();
+        if multi < 2 || multi * 2 < rows {
+            return None;
+        }
+    }
     // 合并单元格（只在有线的表里判断）：两格之间那段竖线（横线）没有，就是合并的。
-    // 两格都有字的不算：线太淡没认出来而已，真合并的格子里字只有一份
+    // 两格都有字的不算：线太淡没认出来而已，真合并的格子里字只有一份。
+    // 例外：同一段字跨过了这条分界（"2025 年" 被按空格拆进了两格），那两格本来就是一格
     let empty = |r: usize, c: usize| cells[r][c].is_empty();
+    let mut crossed = std::collections::HashSet::new();
+    for (b, _) in &boxes {
+        let Some(r) = band(&row_edges, (b.y0 + b.y1) / 2.0) else {
+            continue;
+        };
+        if let (Some(c0), Some(c1)) = (band(&col_edges, b.x0 + 1.0), band(&col_edges, b.x1 - 1.0)) {
+            for c in c0..c1 {
+                crossed.insert((r, c));
+            }
+        }
+    }
     let mut span_right = vec![vec![false; cols]; rows];
     let mut span_down = vec![vec![false; cols]; rows];
     if ruled_cols && ruled_rows {
         for r in 0..rows {
             let (y0, y1) = (row_edges[r] as u32, row_edges[r + 1] as u32);
             for c in 0..cols - 1 {
-                span_right[r][c] = (empty(r, c) || empty(r, c + 1))
+                span_right[r][c] = (empty(r, c) || empty(r, c + 1) || crossed.contains(&(r, c)))
                     && !has_v_segment(img, col_edges[c + 1] as u32, y0, y1);
             }
         }
@@ -673,11 +696,9 @@ pub struct LaidCell {
     pub bold: bool,
     /// left | center | right
     pub align: &'static str,
-    /// 位置、字号是按墨迹量的（不是的话是按识字框估的，不太准）
-    #[serde(skip)]
+    /// 位置、字号是按墨迹量的（不是的话是按识字框估的，不太准）。页面按墨迹的高重新量字号
     pub by_ink: bool,
-    /// 笔画宽 ÷ 字号（判断粗体用）
-    #[serde(skip)]
+    /// 笔画宽 ÷ 字号（判断粗体用；页面按它在半粗 / 全粗之间选）
     pub stroke: Option<f64>,
 }
 
@@ -1091,57 +1112,81 @@ fn glyph_ink(img: &RgbaImage, b: &Box2, bg: Rgb) -> Option<(u32, u32, u32, u32)>
         .map(|(x, y)| dist(rgb(img, x, y), bg) > 45.0)
         .collect();
     let mut seen = vec![false; ww * wh];
-    let mut area: Option<(u32, u32, u32, u32)> = None;
-    for sy in cy0..cy1 {
-        for sx in cx0..cx1 {
-            let start = (sy - wy0) as usize * ww + (sx - wx0) as usize;
-            if !ink[start] || seen[start] {
-                continue;
-            }
-            // 一笔连着的所有像素
-            let (mut x0, mut y0, mut x1, mut y1) = (sx, sy, sx, sy);
-            let mut stack = vec![start];
-            seen[start] = true;
-            while let Some(i) = stack.pop() {
-                let (x, y) = ((i % ww) as u32 + wx0, (i / ww) as u32 + wy0);
-                x0 = x0.min(x);
-                x1 = x1.max(x);
-                y0 = y0.min(y);
-                y1 = y1.max(y);
-                for dy in -1i64..=1 {
-                    for dx in -1i64..=1 {
-                        let (nx, ny) = (i64::from(x) + dx, i64::from(y) + dy);
-                        if nx < i64::from(wx0)
-                            || ny < i64::from(wy0)
-                            || nx >= i64::from(wx1)
-                            || ny >= i64::from(wy1)
-                        {
-                            continue;
-                        }
-                        let j =
-                            (ny - i64::from(wy0)) as usize * ww + (nx - i64::from(wx0)) as usize;
-                        if ink[j] && !seen[j] {
-                            seen[j] = true;
-                            stack.push(j);
-                        }
+    // 从 (sx, sy) 起顺着连在一起的墨迹找完一整笔，给它的范围（含两头）；这里不是墨迹、或者已经找过了给 None
+    let mut fill = |sx: u32, sy: u32| -> Option<(u32, u32, u32, u32)> {
+        let start = (sy - wy0) as usize * ww + (sx - wx0) as usize;
+        if !ink[start] || seen[start] {
+            return None;
+        }
+        let (mut x0, mut y0, mut x1, mut y1) = (sx, sy, sx, sy);
+        let mut stack = vec![start];
+        seen[start] = true;
+        while let Some(i) = stack.pop() {
+            let (x, y) = ((i % ww) as u32 + wx0, (i / ww) as u32 + wy0);
+            x0 = x0.min(x);
+            x1 = x1.max(x);
+            y0 = y0.min(y);
+            y1 = y1.max(y);
+            for dy in -1i64..=1 {
+                for dx in -1i64..=1 {
+                    let (nx, ny) = (i64::from(x) + dx, i64::from(y) + dy);
+                    if nx < i64::from(wx0)
+                        || ny < i64::from(wy0)
+                        || nx >= i64::from(wx1)
+                        || ny >= i64::from(wy1)
+                    {
+                        continue;
+                    }
+                    let j = (ny - i64::from(wy0)) as usize * ww + (nx - i64::from(wx0)) as usize;
+                    if ink[j] && !seen[j] {
+                        seen[j] = true;
+                        stack.push(j);
                     }
                 }
             }
-            let (cw, ch) = (x1 - x0 + 1, y1 - y0 + 1);
-            // 细长的（表格线、下划线以外的长横线）和横穿整个范围的：不是字
-            let thin_line =
-                (cw >= ch * 4 && ch <= 4) || (ch >= cw * 4 && cw <= 4 && f64::from(ch) > h * 1.1);
-            let spans = (x0 == wx0 && x1 + 1 == wx1) || (y0 == wy0 && y1 + 1 == wy1);
-            if thin_line || spans {
+        }
+        Some((x0, y0, x1, y1))
+    };
+    // 细长的（表格线、下划线以外的长横线）和横穿整个范围的：不是字
+    let not_glyph = |(x0, y0, x1, y1): (u32, u32, u32, u32)| {
+        let (cw, ch) = (x1 - x0 + 1, y1 - y0 + 1);
+        let thin_line =
+            (cw >= ch * 4 && ch <= 4) || (ch >= cw * 4 && cw <= 4 && f64::from(ch) > h * 1.1);
+        let spans = (x0 == wx0 && x1 + 1 == wx1) || (y0 == wy0 && y1 + 1 == wy1);
+        thin_line || spans
+    };
+    let mut area: Option<(u32, u32, u32, u32)> = None;
+    for sy in cy0..cy1 {
+        for sx in cx0..cx1 {
+            let Some(c) = fill(sx, sy) else { continue };
+            if not_glyph(c) {
                 continue;
             }
+            let (x0, y0, x1, y1) = c;
             area = Some(match area {
                 None => (x0, y0, x1 + 1, y1 + 1),
                 Some((a, b2, c, d)) => (a.min(x0), b2.min(y0), c.max(x1 + 1), d.max(y1 + 1)),
             });
         }
     }
-    area
+    // 和字身分开、浮在上面的小块也是字的一部分：i / j 的点、重音符号、汉字顶上单独的一点。
+    // 不算进来的话字的高度量矮了（字号偏小），抹字时也会漏掉它们。只认紧挨着字顶、横向落在字的范围里的小块
+    let (ax0, ay0, ax1, ay1) = area?;
+    let ah = f64::from(ay1 - ay0);
+    let reach = ay0.saturating_sub((ah * 0.35).ceil() as u32).max(wy0);
+    let mut top = ay0;
+    for sy in reach..ay0 {
+        for sx in ax0..ax1 {
+            let Some(c) = fill(sx, sy) else { continue };
+            let (x0, y0, x1, y1) = c;
+            let small = f64::from(y1 - y0 + 1) <= ah * 0.4;
+            let attached = y1 + 1 >= ay0 || f64::from(ay0 - (y1 + 1)) <= ah * 0.3;
+            if small && attached && x0 >= ax0.saturating_sub(2) && x1 < ax1 + 2 && !not_glyph(c) {
+                top = top.min(y0);
+            }
+        }
+    }
+    Some((ax0, top, ax1, ay1))
 }
 
 /// 一块区域（公式）的底色和字色 #rrggbb：原位显示公式时铺底、上字
@@ -1263,6 +1308,37 @@ mod tests {
         img
     }
 
+    #[test]
+    fn glyph_ink_counts_the_dot_above_an_i() {
+        // 一竖（字身）加上面隔开两像素的一个点；识字框只框住字身
+        let mut img = RgbaImage::from_pixel(60, 50, image::Rgba([255, 255, 255, 255]));
+        let black = image::Rgba([20, 20, 20, 255]);
+        for y in 18..34 {
+            for x in 28..32 {
+                img.put_pixel(x, y, black);
+            }
+        }
+        for y in 12..16 {
+            for x in 28..32 {
+                img.put_pixel(x, y, black);
+            }
+        }
+        // 离得远的、别的行的字不算
+        for y in 1..4 {
+            for x in 28..32 {
+                img.put_pixel(x, y, black);
+            }
+        }
+        let b = Box2 {
+            x0: 26.0,
+            y0: 18.0,
+            x1: 34.0,
+            y1: 34.0,
+        };
+        let (_, top, _, bottom) = glyph_ink(&img, &b, [255.0; 3]).unwrap();
+        assert_eq!((top, bottom), (12, 34));
+    }
+
     fn block(text: &str, x: f64, y: f64, w: f64, h: f64) -> OcrBlock {
         OcrBlock {
             text: text.into(),
@@ -1329,6 +1405,42 @@ mod tests {
         assert_eq!(t[0].len(), 2);
         assert_eq!(t[0][0].col_span, 2);
         assert_eq!(t[0][0].text, "标题");
+    }
+
+    #[test]
+    fn text_straddling_a_missing_line_is_one_merged_cell() {
+        let mut img = grid(3, 3, 100, 30);
+        // 第一行第二、三格之间没有竖线，"2025 年" 横跨这条分界：按空格拆开会落进两格，其实是一格
+        for y in 11..40 {
+            img.put_pixel(210, y, image::Rgba([255, 255, 255, 255]));
+        }
+        let blocks = [
+            block("地区", 30.0, 18.0, 40.0, 14.0),
+            block("2025 年", 175.0, 18.0, 70.0, 14.0),
+            block("a", 20.0, 48.0, 10.0, 14.0),
+            block("b", 120.0, 48.0, 10.0, 14.0),
+            block("c", 220.0, 48.0, 10.0, 14.0),
+            block("d", 20.0, 78.0, 10.0, 14.0),
+        ];
+        let t = build(&img, &blocks).unwrap();
+        assert_eq!(t[0].len(), 2);
+        assert_eq!(t[0][1].col_span, 2);
+        assert_eq!(t[0][1].text, "2025 年");
+    }
+
+    #[test]
+    fn two_lines_without_vertical_rules_are_not_a_table() {
+        // 公式：分子、分数线、分母，左边一个 "x ="
+        let mut img = RgbaImage::from_pixel(300, 80, image::Rgba([255, 255, 255, 255]));
+        for x in 60..290 {
+            img.put_pixel(x, 40, image::Rgba([20, 20, 20, 255]));
+        }
+        let blocks = [
+            block("x =", 10.0, 32.0, 30.0, 14.0),
+            block("-b ± √b² - 4ac", 70.0, 15.0, 200.0, 18.0),
+            block("2a", 150.0, 50.0, 30.0, 18.0),
+        ];
+        assert!(build(&img, &blocks).is_none());
     }
 
     #[test]

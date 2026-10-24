@@ -857,6 +857,12 @@ export interface LaidCell {
   height: number;
   /** 字所在的范围 [x, y, 宽, 高]；空格子没有 */
   textBox: [number, number, number, number] | null;
+  /** textBox 是按字的墨迹量的（不是的话是识字框，比字大一圈） */
+  byInk?: boolean;
+  /** 笔画宽 ÷ 字号：粗体的按它选半粗还是全粗 */
+  stroke?: number | null;
+  /** 换过字的格子（AI 重新认过）：原图里那段字（墨迹框量的是它） */
+  inkText?: string;
   lines: number;
   /** 字号（像素）：按墨迹高换算 */
   fontPx: number;
@@ -870,9 +876,11 @@ export interface LaidCell {
 
 export interface CaptureTable {
   table: { width: number; height: number; rows: number; cols: number; cells: LaidCell[] };
-  /** 字抹掉的底图、选区原图（图片仓库里的编号，用 shotUrl 取） */
+  /** 字抹掉的底图、选区原图（图片仓库里的编号，用 shotUrl 取）；自己画的表没有底图 */
   background: string;
   source: string;
+  /** 自己画的表（AI 认出的行列和原位的格子对不上时）：铺在哪（选区图的物理像素）、线用什么颜色 */
+  plain?: { x: number; y: number; width: number; height: number; line: string };
 }
 
 /** 选区的底色、字色和原图（原位显示公式用） */

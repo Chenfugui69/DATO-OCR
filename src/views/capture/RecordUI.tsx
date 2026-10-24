@@ -38,7 +38,6 @@ import i18n from '@/i18n';
 import { useEvent } from '@/lib/events';
 import { useElementSize } from '@/lib/hooks';
 import { gif, record, system } from '@/lib/ipc';
-import { isMac } from '@/lib/platform';
 import { useSettings, useSettingsStore } from '@/lib/settings';
 import type { RecordFormat, RecordSettings, Settings } from '@/lib/types';
 import { Select, Slider, Switch } from '@/ui/controls';
@@ -148,7 +147,7 @@ export function RecordToolbar({
           <button
             type="button"
             className={clsx('an-btn', rec?.systemAudio && !mute && 'an-btn--active')}
-            disabled={mute || live || !isMac}
+            disabled={mute || live}
             aria-label={t('settings.record.systemAudio')}
             onClick={() => saveRecord((r) => void (r.systemAudio = !r.systemAudio))}
           >
@@ -254,7 +253,7 @@ function RecordBar({ toolbar, above, viewport }: { toolbar: { x: number; y: numb
   // 弹层往远离工具条的那边开
   const popUp = above || y + size.height + 260 > viewport.height;
   const formats: { value: RecordFormat | 'webp'; label: string; disabled?: boolean }[] = [
-    ...(isMac ? [{ value: 'mp4' as const, label: 'MP4' }] : []),
+    { value: 'mp4', label: 'MP4' },
     { value: 'gif', label: 'GIF' },
     { value: 'apng', label: 'APNG' },
     { value: 'webp', label: 'WebP', disabled: true },
@@ -292,7 +291,7 @@ function RecordBar({ toolbar, above, viewport }: { toolbar: { x: number; y: numb
         )}
       </BarButton>
       <BarButton icon={Keyboard} label={t('record.keys')} active={rec.keystrokes} onClick={() => saveRecord((r) => void (r.keystrokes = !r.keystrokes))} />
-      {isMac && <BarButton icon={Camera} label={t('record.camera')} active={rec.camera} onClick={() => void toggleMedia('camera', !rec.camera)} />}
+      <BarButton icon={Camera} label={t('record.camera')} active={rec.camera} onClick={() => void toggleMedia('camera', !rec.camera)} />
       <BarButton
         icon={Gauge}
         label={silent(rec.format) ? t('record.progress') : t('record.progressAnimOnly')}
@@ -475,47 +474,43 @@ function SettingsPanel({ settings }: { settings: Settings }) {
     <div className="rec-pop rec-pop--panel rec-pop--settings" onPointerDown={stop} onKeyDown={stop}>
       <div className="rec-pop__title">{t('record.settings')}</div>
       <div className="rec-grid">
-        {isMac && (
-          <>
-            <label className="rec-field">
-              <span className="rec-field__label">{t('settings.record.resolution')}</span>
-              <Select
-                value={rec.resolution}
-                options={[
-                  { value: 'original', label: t('settings.record.original') },
-                  { value: '1080p', label: '1080p' },
-                  { value: '720p', label: '720p' },
-                ]}
-                onChange={(v) => saveRecord((r) => void (r.resolution = v))}
-              />
-            </label>
-            <label className="rec-field">
-              <span className="rec-field__label">{t('settings.record.fps')}</span>
-              <Select
-                value={String(rec.fps)}
-                options={['15', '24', '30', '60'].map((v) => ({ value: v, label: v }))}
-                onChange={(v) => saveRecord((r) => void (r.fps = Number(v) as RecordSettings['fps']))}
-              />
-            </label>
-            <label className="rec-field">
-              <span className="rec-field__label">
-                {t('settings.record.quality')} <em className="cn-numeric">{rec.quality}%</em>
-              </span>
-              <Slider value={rec.quality} min={10} max={100} step={5} onChange={(v) => saveRecord((r) => void (r.quality = v))} />
-            </label>
-            <label className="rec-field">
-              <span className="rec-field__label">{t('settings.record.codec')}</span>
-              <Select
-                value={rec.codec}
-                options={[
-                  { value: 'h264', label: 'H.264' },
-                  { value: 'hevc', label: 'H.265' },
-                ]}
-                onChange={(v) => saveRecord((r) => void (r.codec = v))}
-              />
-            </label>
-          </>
-        )}
+        <label className="rec-field">
+          <span className="rec-field__label">{t('settings.record.resolution')}</span>
+          <Select
+            value={rec.resolution}
+            options={[
+              { value: 'original', label: t('settings.record.original') },
+              { value: '1080p', label: '1080p' },
+              { value: '720p', label: '720p' },
+            ]}
+            onChange={(v) => saveRecord((r) => void (r.resolution = v))}
+          />
+        </label>
+        <label className="rec-field">
+          <span className="rec-field__label">{t('settings.record.fps')}</span>
+          <Select
+            value={String(rec.fps)}
+            options={['15', '24', '30', '60'].map((v) => ({ value: v, label: v }))}
+            onChange={(v) => saveRecord((r) => void (r.fps = Number(v) as RecordSettings['fps']))}
+          />
+        </label>
+        <label className="rec-field">
+          <span className="rec-field__label">
+            {t('settings.record.quality')} <em className="cn-numeric">{rec.quality}%</em>
+          </span>
+          <Slider value={rec.quality} min={10} max={100} step={5} onChange={(v) => saveRecord((r) => void (r.quality = v))} />
+        </label>
+        <label className="rec-field">
+          <span className="rec-field__label">{t('settings.record.codec')}</span>
+          <Select
+            value={rec.codec}
+            options={[
+              { value: 'h264', label: 'H.264' },
+              { value: 'hevc', label: 'H.265' },
+            ]}
+            onChange={(v) => saveRecord((r) => void (r.codec = v))}
+          />
+        </label>
         <label className="rec-field">
           <span className="rec-field__label">{t('settings.record.gifResolution')}</span>
           <Select
@@ -548,7 +543,7 @@ function SettingsPanel({ settings }: { settings: Settings }) {
       </div>
       <div className="rec-switches">
         <PopSwitch label={t('settings.record.gifLoop')} checked={rec.gifLoop} onChange={(v) => saveRecord((r) => void (r.gifLoop = v))} />
-        {isMac && <PopSwitch label={t('settings.record.separateTracks')} checked={rec.separateAudioTracks} onChange={(v) => saveRecord((r) => void (r.separateAudioTracks = v))} />}
+        <PopSwitch label={t('settings.record.separateTracks')} checked={rec.separateAudioTracks} onChange={(v) => saveRecord((r) => void (r.separateAudioTracks = v))} />
         <PopSwitch label={t('settings.record.cursor')} checked={settings.capture.gifCursor} onChange={(v) => saveRecord((_, all) => void (all.capture.gifCursor = v))} />
         <PopSwitch label={t('record.autoHide')} checked={rec.autoHideToolbar} onChange={(v) => saveRecord((r) => void (r.autoHideToolbar = v))} />
         <PopSwitch label={t('settings.record.editBeforeSave')} checked={rec.editBeforeSave} onChange={(v) => saveRecord((r) => void (r.editBeforeSave = v))} />

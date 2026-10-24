@@ -475,7 +475,22 @@ pub async fn structure_image(
         "formula" => (FORMULA_PROMPT, "Transcribe the mathematics in this image."),
         _ => return Err(AppError::msg("不认识的识别类型")),
     };
-    let out = crate::ai::complete_with_image(app, system, user, image, 4096).await?;
+    let started = Instant::now();
+    tracing::info!(kind, width = image.width(), height = image.height(), "AI 看图识别开始");
+    // 整个请求最多等 90 秒：流式回答每来一段就重新计时，模型对着一张没有表格 / 公式的图"想"很久时会一直不结束
+    let out = tokio::time::timeout(
+        std::time::Duration::from_secs(90),
+        crate::ai::complete_with_image(app, system, user, image, 4096),
+    )
+    .await
+    .map_err(|_| AppError::msg("AI 识别超时（90 秒没有认完），可以换个模型再试"));
+    tracing::info!(
+        kind,
+        elapsed_ms = started.elapsed().as_millis() as u64,
+        ok = matches!(out, Ok(Ok(_))),
+        "AI 看图识别结束"
+    );
+    let out = out??;
     let out = strip_fence(out.trim());
     if out.is_empty() {
         return Err(AppError::msg(if kind == "table" {
