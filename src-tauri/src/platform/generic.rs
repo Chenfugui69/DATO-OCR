@@ -42,6 +42,8 @@ pub fn park_overlay(window: &WebviewWindow) {
     let _ = window.hide();
 }
 
+pub fn unpark_overlay(_window: &WebviewWindow) {}
+
 /// Windows 上拿着键盘的窗口就是系统的前台窗口。
 pub fn is_foreground(window: &WebviewWindow) -> bool {
     super::native_handle(window)
@@ -147,8 +149,43 @@ pub fn export_video(
     _src: &std::path::Path,
     _dst: &std::path::Path,
     _edit: super::types::VideoEdit,
+    _encoding: super::types::VideoEncoding,
+    _mix: bool,
 ) -> AppResult<()> {
     Err(crate::error::AppError::msg("这个系统上暂时还不能剪辑视频"))
+}
+
+/// 朗读：没做系统语音的平台报不支持，页面改用浏览器自带的语音合成
+pub fn speak(_text: &str, _lang: &str, _options: &super::types::SpeakOptions) -> AppResult<()> {
+    Err(crate::error::AppError::msg("unsupported"))
+}
+
+pub fn stop_speaking() {}
+
+pub fn is_speaking() -> bool {
+    false
+}
+
+/// 系统的声音列表：没做的平台给空，设置页改用浏览器的语音列表
+pub fn voices() -> Vec<super::types::Voice> {
+    Vec::new()
+}
+
+/// 鼠标下面的界面元素（由里到外）：还没做，截图照旧按窗口 / 子窗口框选
+pub fn elements_at(
+    _window: super::types::WindowHandle,
+    _x: i32,
+    _y: i32,
+) -> AppResult<Vec<super::types::UiElement>> {
+    Ok(Vec::new())
+}
+
+pub fn elements_near(
+    _window: super::types::WindowHandle,
+    _x: i32,
+    _y: i32,
+) -> AppResult<Vec<super::types::UiElement>> {
+    Ok(Vec::new())
 }
 
 /// 摄像头画面：还没做
@@ -235,5 +272,21 @@ mod tests {
         let codes = super::scan_codes(&image).unwrap();
         println!("{codes:?}");
         assert!(!codes.is_empty());
+    }
+}
+
+/// 录屏时的键盘、滚轮监听：没做的平台什么都不报
+pub mod record_input {
+    pub struct Guard;
+
+    pub fn install(
+        _tx: std::sync::mpsc::Sender<crate::platform::types::RecordInput>,
+    ) -> crate::error::AppResult<Guard> {
+        Ok(Guard)
+    }
+
+    /// 现在按着哪几个鼠标键（没做的平台一直是没按）
+    pub fn mouse_buttons() -> u8 {
+        0
     }
 }

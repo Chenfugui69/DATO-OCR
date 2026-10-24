@@ -142,6 +142,12 @@ fn restore_main(app: &AppHandle, focus: bool) {
     if !state(app).capture.take_main_stashed() {
         return;
     }
+    // 这期间用户把主窗口收进了程序坞：别给它还原出来
+    if tauri::Manager::get_webview_window(app, wm::MAIN)
+        .is_some_and(|w| w.is_minimized().unwrap_or(false))
+    {
+        return;
+    }
     if cfg!(windows) {
         if let Some(main) = tauri::Manager::get_webview_window(app, wm::MAIN) {
             platform::set_exclude_from_capture(&main, false);
@@ -508,6 +514,8 @@ pub enum FinishAction {
     Gif,
     /// 录制选区为视频（MP4）
     Video,
+    /// 录制选区，格式按设置（录制栏里选的 MP4 / GIF / APNG）
+    Record,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -549,11 +557,14 @@ pub fn finish(app: &AppHandle, meta: FinishMeta, annotation_png: Vec<u8>) -> App
     if meta.action == FinishAction::Longshot {
         return longshot::start(app, session.clone(), monitor, global);
     }
-    if meta.action == FinishAction::Gif || meta.action == FinishAction::Video {
-        let format = if meta.action == FinishAction::Gif {
-            crate::gif_record::RecordFormat::Gif
-        } else {
-            crate::gif_record::RecordFormat::Mp4
+    if matches!(
+        meta.action,
+        FinishAction::Gif | FinishAction::Video | FinishAction::Record
+    ) {
+        let format = match meta.action {
+            FinishAction::Gif => crate::gif_record::RecordFormat::Gif,
+            FinishAction::Video => crate::gif_record::RecordFormat::Mp4,
+            _ => crate::gif_record::RecordFormat::parse(&st.settings.read().record.format),
         };
         return crate::gif_record::start(app, session.clone(), monitor, global, format);
     }
@@ -691,7 +702,8 @@ pub(crate) fn perform(
             );
             add_to_library();
         }
-        FinishAction::Longshot | FinishAction::Gif | FinishAction::Video => {}
+        FinishAction::Longshot | FinishAction::Gif | FinishAction::Video | FinishAction::Record => {
+        }
     }
     Ok(())
 }

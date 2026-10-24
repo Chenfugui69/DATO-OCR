@@ -164,8 +164,13 @@ pub async fn ocr_export_xlsx(
 
 /// 用 AI 把识字的图识别成表格 / 公式（kind：table | formula）
 #[tauri::command]
-pub async fn ocr_structure(app: AppHandle, job_id: String, kind: String) -> AppResult<String> {
-    ocr::structure(&app, &job_id, &kind).await
+pub async fn ocr_structure(
+    app: AppHandle,
+    job_id: String,
+    kind: String,
+    engine: Option<String>,
+) -> AppResult<String> {
+    ocr::structure(&app, &job_id, &kind, engine.as_deref().unwrap_or("local")).await
 }
 
 #[tauri::command]

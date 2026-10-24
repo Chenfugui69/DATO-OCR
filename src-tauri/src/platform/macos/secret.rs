@@ -23,6 +23,11 @@ const ITEM_NOT_FOUND: i32 = -25300;
 static MASTER_KEY: Mutex<Option<[u8; 32]>> = Mutex::new(None);
 
 fn master_key() -> AppResult<[u8; 32]> {
+    // 测试实例（`CHENOCR_TEST_DATA_DIR`，数据放在别处、用完就扔）不碰用户的钥匙串：
+    // 否则一启动（生成 MCP 令牌要存密钥）就弹钥匙串密码框，自动化测试卡在那里等人点
+    if std::env::var_os("CHENOCR_TEST_DATA_DIR").is_some() {
+        return Ok(*b"chenocr-test-master-key-32bytes!");
+    }
     let mut cached = MASTER_KEY.lock();
     if let Some(key) = *cached {
         return Ok(key);

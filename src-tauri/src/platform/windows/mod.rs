@@ -21,7 +21,8 @@ mod util;
 pub use super::generic::{
     after_silent_start, is_reopen_event, menu_label, permissions, request_permission,
     scan_codes, sms_supported, start_sms_watcher, VideoWriter, export_video, Camera,
-    media_access, request_media_access,
+    media_access, request_media_access, elements_at, elements_near, speak, stop_speaking, is_speaking, voices,
+    record_input,
 };
 use super::types::DefaultHotkeys;
 

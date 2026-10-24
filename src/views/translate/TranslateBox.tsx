@@ -15,6 +15,7 @@ import { useSettings } from '@/lib/settings';
 import type { ProviderInfo, TranslateResult } from '@/lib/types';
 import { Button, IconButton, Select, Skeleton } from '@/ui/controls';
 import { notify } from '@/ui/overlays';
+import { SpeakButton } from '@/ui/SpeakButton';
 
 import { ProviderLogo } from './ProviderLogo';
 
@@ -183,6 +184,7 @@ function ProviderCard({
         <span className="tr-card__peek">{collapsed && result ? result.text : ''}</span>
         <span className="tr-card__tools" onClick={(e) => e.stopPropagation()}>
           {error && <IconButton icon={RotateCw} size="sm" label={t('common.retry')} onClick={() => void run()} />}
+          <SpeakButton text={result?.text ?? ''} lang={result?.to} />
           <IconButton
             icon={copied ? Check : Copy}
             size="sm"
@@ -272,6 +274,7 @@ function SingleResult({
             onChange={setProvider}
           />
         )}
+        <SpeakButton text={result?.text ?? ''} lang={result?.to} />
         <Button size="sm" icon={Copy} disabled={!result} onClick={() => result && copyText(result.text, t('translate.copied'))}>
           {t('translate.copy')}
         </Button>

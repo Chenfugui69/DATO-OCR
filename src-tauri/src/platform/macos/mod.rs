@@ -16,6 +16,7 @@ pub mod messages;
 pub mod ocr;
 pub mod permissions;
 pub mod process;
+pub mod record_input;
 pub mod secret;
 pub mod selection_hook;
 pub mod system_events;
@@ -24,11 +25,15 @@ pub mod window_enum;
 
 mod alloc;
 mod codes;
+mod elements;
 mod ffi;
 mod media;
+mod speech;
 mod video;
 
+pub use elements::{elements_at, elements_near};
 pub use media::{media_access, request_media_access, Camera};
+pub use speech::{is_speaking, speak, stop_speaking, voices};
 pub use video::{export as export_video, VideoWriter};
 mod geometry;
 mod util;

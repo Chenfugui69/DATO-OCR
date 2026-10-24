@@ -5,7 +5,7 @@
 // 模型的回答不直接塞进页面：表格只取单元格的文字和合并信息，用 React 重新生成；公式的 MathML 只留
 // 数学相关的标签和少数几个属性。复制给别的程序用的是纯文本（制表符分隔 / Markdown / LaTeX / MathML）。
 
-import { ArrowLeft, Copy, FileSearch, FileSpreadsheet, RotateCw } from 'lucide-react';
+import { ArrowLeft, Copy, FileSearch, FileSpreadsheet, RotateCw, Sparkles } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
@@ -20,9 +20,14 @@ export type StructuredKind = 'table' | 'formula';
 export interface StructuredState {
   kind: StructuredKind;
   status: 'running' | 'done' | 'error';
+  /** 表格：local = 本地识别（快、不联网）| ai = AI 看图；公式只有 AI */
+  engine?: 'local' | 'ai';
   text?: string;
   error?: string;
 }
+
+/** 本地识别的表格可以再用 AI 认一遍（合并单元格多、表格线不清楚时 AI 更准） */
+export const canAskAi = (s: StructuredState) => s.kind === 'table' && s.engine !== 'ai' && s.status !== 'running';
 
 /** 从模型给的 HTML 里取出表格：每行的单元格（文字、是不是表头、合并了几行几列） */
 export function parseTable(html: string): Cell[][] {
@@ -86,7 +91,8 @@ export function StructuredResult({
   /** 本地识字（不经过 AI）的全部文字：表格里的数字拿它对照 */
   ocrText: string;
   onBack: () => void;
-  onRetry: () => void;
+  /** 再识别一次；`engine` = ai 时换 AI 看图 */
+  onRetry: (engine?: 'local' | 'ai') => void;
 }) {
   const { t } = useTranslation();
   const copy = (text: string) =>
@@ -103,6 +109,11 @@ export function StructuredResult({
           {t('ocr.structured.back')}
         </Button>
         <span className="ocr-struct__title">{title}</span>
+        {canAskAi(state) && (
+          <Button size="sm" variant="ghost" icon={Sparkles} onClick={() => onRetry('ai')}>
+            {t('ocr.structured.askAi')}
+          </Button>
+        )}
       </div>
       {state.status === 'running' ? (
         <div className="ocr-struct__loading">
@@ -115,7 +126,7 @@ export function StructuredResult({
           title={t('ocr.structured.failed')}
           description={state.error ?? ''}
           action={
-            <Button icon={RotateCw} onClick={onRetry}>
+            <Button icon={RotateCw} onClick={() => onRetry(state.engine)}>
               {t('common.retry')}
             </Button>
           }

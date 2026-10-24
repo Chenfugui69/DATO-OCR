@@ -77,6 +77,8 @@ pub fn current_reserve() -> f64 {
 static WATCH: Mutex<Option<SelectionWatchGuard>> = Mutex::new(None);
 /// 悬浮按钮那颗圆点当前的位置（屏幕物理坐标，不含窗口四周的留边）；None = 没显示
 static BUTTON: Mutex<Option<PhysicalRect>> = Mutex::new(None);
+/// 弹按钮时系统告诉我们的选中文字（问得到时才有）。点按钮时模拟 ⌘C 没取到字（有的程序 ⌘C 不响应），就用它
+static BUTTON_TEXT: Mutex<Option<String>> = Mutex::new(None);
 /// 按钮的窗口这会儿是不是真的摆在屏幕上（藏起来是排到主线程上做的，比 BUTTON 清空晚一点）
 static BUTTON_ON_SCREEN: AtomicBool = AtomicBool::new(false);
 /// 按钮窗口的句柄：抓它底下的画面时用（0 = 还没建）
@@ -96,6 +98,15 @@ pub struct TranslatePopup {
     pub reserve: f64,
     /// 设置页里调外观时的预览：摆在主窗口旁边，不抢焦点，点外面也不收起
     pub preview: bool,
+    /// 输入翻译：没有原文，面板上显示输入框让用户自己打字
+    pub input: bool,
+}
+
+/// 面板这会儿是不是输入翻译（页面刚加载完主动来问时用）
+static INPUT: AtomicBool = AtomicBool::new(false);
+
+pub fn is_input() -> bool {
+    INPUT.load(Ordering::SeqCst)
 }
 
 /// 面板这会儿是不是设置页的预览
@@ -151,14 +162,22 @@ pub fn trigger(app: &AppHandle) {
 
 /// 取选中文字并弹出翻译气泡。`at` 为气泡左上角附近的点（屏幕物理坐标），None = 鼠标旁边。
 fn translate_selection(app: &AppHandle, at: Option<(i32, i32)>) {
+    translate_selection_or(app, at, None);
+}
+
+/// 同上；`known` 是弹按钮时就问到的选中文字：模拟 ⌘C 没取到（或者出错）时用它
+fn translate_selection_or(app: &AppHandle, at: Option<(i32, i32)>, known: Option<String>) {
     let app = app.clone();
-    std::thread::spawn(move || match grab_selection(&app) {
-        Ok(Some(text)) => {
-            tracing::debug!(chars = text.chars().count(), ?at, "划词取到文字");
-            show_popup(&app, text, at);
+    std::thread::spawn(move || {
+        let grabbed = grab_selection(&app);
+        match (grabbed, known) {
+            (Ok(Some(text)), _) | (Ok(None) | Err(_), Some(text)) => {
+                tracing::debug!(chars = text.chars().count(), ?at, "划词取到文字");
+                show_popup(&app, text, at);
+            }
+            (Ok(None), None) => wm::toast(&app, "info", "没有选中文字"),
+            (Err(err), None) => wm::toast(&app, "error", format!("读取选中文字失败：{err}")),
         }
-        Ok(None) => wm::toast(&app, "info", "没有选中文字"),
-        Err(err) => wm::toast(&app, "error", format!("读取选中文字失败：{err}")),
     });
 }
 
@@ -280,7 +299,14 @@ fn prewarm_button(app: &AppHandle) {
 }
 
 pub fn show_popup(app: &AppHandle, text: String, at: Option<(i32, i32)>) {
+    INPUT.store(false, Ordering::SeqCst);
     open_popup(app, text, at, false);
+}
+
+/// 输入翻译（热键 / 托盘菜单）：在鼠标旁边弹出空的翻译面板，光标在输入框里
+pub fn show_input(app: &AppHandle) {
+    INPUT.store(true, Ordering::SeqCst);
+    open_popup(app, String::new(), None, false);
 }
 
 fn open_popup(app: &AppHandle, text: String, at: Option<(i32, i32)>, preview: bool) {
@@ -352,6 +378,7 @@ fn open_popup(app: &AppHandle, text: String, at: Option<(i32, i32)>, preview: bo
                     text,
                     reserve,
                     preview,
+                    input: !preview && INPUT.load(Ordering::SeqCst),
                 },
             );
             if preview {
@@ -482,15 +509,76 @@ fn on_event(app: &AppHandle, event: SelectionEvent) {
             ctrl,
             text,
         } => on_selected(app, anchor, end, alt, ctrl, text.as_deref()),
-        SelectionEvent::ButtonClicked => {
-            let rect = *BUTTON.lock();
+        SelectionEvent::ButtonClicked => button_clicked(app),
+        SelectionEvent::Dismiss => {
             hide_button(app);
-            // 气泡出现在按钮下方
-            let at = rect.map(|r| (r.x, r.bottom()));
-            translate_selection(app, at);
+            reconcile_button(app);
         }
-        SelectionEvent::Dismiss => hide_button(app),
-        SelectionEvent::PointerDown => outside_click(app),
+        SelectionEvent::PointerDown => {
+            outside_click(app);
+            reconcile_button(app);
+        }
+    }
+}
+
+/// 系统的语言（zh、en、ja……，取系统首选语言的语言部分）
+pub fn system_language() -> String {
+    sys_locale::get_locale()
+        .and_then(|l| l.split(['-', '_']).next().map(str::to_ascii_lowercase))
+        .unwrap_or_else(|| "en".into())
+}
+
+/// 选中的文字是这种语言时要不要不弹按钮
+fn skip_language(sel: &crate::settings::SelectionTranslateSettings, lang: &str) -> bool {
+    (sel.skip_system_language && system_language() == lang)
+        || sel.skip_languages.iter().any(|l| l == lang)
+}
+
+/// 点了圆点：收起圆点，在它下面弹翻译面板
+fn button_clicked(app: &AppHandle) {
+    let rect = *BUTTON.lock();
+    hide_button(app);
+    // 气泡出现在按钮下方
+    let at = rect.map(|r| (r.x, r.bottom()));
+    let known = BUTTON_TEXT.lock().take();
+    translate_selection_or(app, at, known);
+}
+
+/// 对一下账：圆点已经收起了（`BUTTON` 是空的），窗口却还亮着 —— 就再藏一次。
+///
+/// 正常不会这样，但用户遇到过：圆点一直留在桌面上，点它没反应（监听那边已经当它收起了，不认这次点击），
+/// 点别处也收不掉。每次鼠标按下都对一下，残留的圆点在下一次点击时就消失。
+fn reconcile_button(app: &AppHandle) {
+    if BUTTON.lock().is_some() {
+        return;
+    }
+    let ui = app.clone();
+    let _ = app.run_on_main_thread(move || {
+        if BUTTON.lock().is_some() {
+            return;
+        }
+        let Some(window) = ui.get_webview_window(BUTTON_WINDOW) else {
+            return;
+        };
+        // 不看"窗口显示着没有"：那个状态有时和屏幕上看到的对不上（用户遇到过它说藏了、圆点却还在）。
+        // 藏一个已经藏起来的窗口什么也不会发生，直接再藏一次最稳
+        if BUTTON_ON_SCREEN.swap(false, Ordering::SeqCst) || window.is_visible().unwrap_or(false) {
+            tracing::info!("划词按钮已经收起，窗口却还在，再藏一次");
+        }
+        wm::conceal_floating(&window);
+        platform::hide_window(&window);
+        let _ = window.hide();
+    });
+}
+
+/// 圆点页面自己收到了点击：正常情况下圆点上的点击在监听那边就被拦下了，到不了页面；到了说明两边
+/// 对不上（监听不知道圆点在这）。圆点该在就照常弹翻译，不该在就把它收起来
+pub fn button_pressed_in_page(app: &AppHandle) {
+    if BUTTON.lock().is_some() {
+        tracing::warn!("划词按钮的点击没被监听认出来，按点了按钮处理");
+        button_clicked(app);
+    } else {
+        reconcile_button(app);
     }
 }
 
@@ -549,6 +637,15 @@ fn on_selected(
             hide_button(app);
             return;
         }
+        // 设置里说了这种语言不弹（问不到选中的字时不知道是什么语言，照弹）
+        if let Some(t) = text {
+            let lang = super::detect::detect(t);
+            if skip_language(&sel, lang) {
+                tracing::debug!(lang, "划词：这种语言设置成不弹");
+                hide_button(app);
+                return;
+            }
+        }
         // 按下的那个点：包围盒上和松开点相对的那个角
         let start = (
             if end.0 == anchor.x {
@@ -562,6 +659,7 @@ fn on_selected(
                 anchor.y
             },
         );
+        *BUTTON_TEXT.lock() = text.map(str::to_string);
         show_button(app, start, end, &sel);
     }
 }
@@ -615,7 +713,12 @@ fn show_button(
     let below = Some(BUTTON_HANDLE.load(Ordering::SeqCst))
         .filter(|&h| h != 0 && BUTTON_ON_SCREEN.load(Ordering::SeqCst))
         .map(WindowHandle);
-    let patch = platform::screen_patch(rect, below);
+    // 纯色样式不透出底下的画面，也就不用抓（抓屏是弹按钮最费时的一步）
+    let patch = if sel.button_style == "solid" {
+        None
+    } else {
+        platform::screen_patch(rect, below)
+    };
     let dark = patch.as_ref().map(|p| brightness(p) < 0.5);
     let backdrop = patch.as_ref().and_then(png_data_url);
     // 能点的、算"鼠标停在上面"的只有圆点，四周的留边不算
@@ -643,6 +746,7 @@ fn show_button(
             let _ = platform::show_without_activate(&window);
             BUTTON_ON_SCREEN.store(true, Ordering::SeqCst);
             wm::reveal_floating(ui, &window);
+            tracing::info!(generation, "划词按钮显示");
         });
     });
 
@@ -688,7 +792,8 @@ fn hide_button(app: &AppHandle) {
     if BUTTON.lock().take().is_none() {
         return;
     }
-    BUTTON_GEN.fetch_add(1, Ordering::SeqCst);
+    let generation = BUTTON_GEN.fetch_add(1, Ordering::SeqCst) + 1;
+    tracing::info!(generation, "划词按钮收起");
     platform::set_selection_button_rect(None);
     let ui = app.clone();
     let _ = app.run_on_main_thread(move || {
@@ -703,5 +808,11 @@ fn hide_button(app: &AppHandle) {
                 BUTTON_ON_SCREEN.store(false, Ordering::SeqCst);
             }
         }
+    });
+    // 稍后再对一次账：万一有还没执行的显示排在了这次隐藏后面
+    let later = app.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(400));
+        reconcile_button(&later);
     });
 }

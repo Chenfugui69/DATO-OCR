@@ -18,8 +18,17 @@ pub fn label_for(monitor: MonitorId) -> String {
     format!("{LABEL_PREFIX}{}", monitor.0)
 }
 
-/// 启动时预建所有遮罩窗口和底图窗口。**必须在 UI 线程调用。**
+/// 启动时（和插拔屏之后）预建所有遮罩窗口和底图窗口。**必须在 UI 线程调用。**
+///
+/// 只建缺的、清掉拔掉的屏的，已有的遮罩不去摆：摆位置是截图开始时 `arrange` 的事。以前这里把已有的
+/// 遮罩也按整屏摆一遍，截图刚结束、遮罩正在收起时碰上屏幕参数变化，遮罩就被铺回整屏留在了屏幕上。
+/// 截图、长截图、录制进行中不动（遮罩正在用），等下次截图时 `arrange` 再对齐。
 pub fn prewarm(app: &AppHandle) {
+    let st = crate::state::state(app);
+    if st.capture.current().is_some() || st.longshot.is_active() || crate::gif_record::is_active() {
+        tracing::debug!("截图进行中，跳过预建遮罩");
+        return;
+    }
     let started = std::time::Instant::now();
     let monitors = match platform::list_monitors() {
         Ok(m) => m,
@@ -38,8 +47,10 @@ pub fn prewarm(app: &AppHandle) {
     let ids: Vec<MonitorId> = monitors.iter().map(|m| m.id).collect();
     platform::backdrop::retain(&ids);
     for info in &monitors {
-        if let Err(err) = ensure_one(app, info) {
-            tracing::warn!(monitor = %info.id, "预建遮罩窗口失败：{err}");
+        if app.get_webview_window(&label_for(info.id)).is_none() {
+            if let Err(err) = ensure_one(app, info) {
+                tracing::warn!(monitor = %info.id, "预建遮罩窗口失败：{err}");
+            }
         }
         if let Err(err) = platform::backdrop::ensure(info.id) {
             tracing::warn!(monitor = %info.id, "预建底图窗口失败：{err}");
@@ -71,7 +82,11 @@ pub fn arrange(app: &AppHandle, monitors: &[MonitorInfo]) -> AppResult<()> {
     let mut usable = 0;
     for info in monitors {
         match ensure_one(app, info) {
-            Ok(_) => usable += 1,
+            Ok(window) => {
+                // 上次截图收起时排着的"稍后藏起来"作废，别把这次要用的遮罩藏掉
+                platform::unpark_overlay(&window);
+                usable += 1;
+            }
             Err(err) => tracing::error!(monitor = %info.id, "准备遮罩窗口失败：{err}"),
         }
     }
@@ -134,6 +149,7 @@ pub fn show_with_backdrop(app: &AppHandle, monitor: MonitorId, focus: bool) -> A
         .get_webview_window(&label)
         .ok_or_else(|| AppError::msg(format!("遮罩窗口 {label} 不存在")))?;
     let handle = platform::native_handle(&window)?;
+    platform::unpark_overlay(&window);
     platform::backdrop::show_below(monitor, handle)?;
     window.show()?;
     platform::set_overlay_capturable(&window, true);

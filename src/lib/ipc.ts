@@ -2,7 +2,7 @@
 
 import { Channel, invoke } from '@tauri-apps/api/core';
 
-import type { AiContext, AppInfo, CaptureIntent, ChatEvent, ChatRequest, ClipDetail, ClipGroup, ClipPage, ClipQuery, ClipStats, DavDevice, EditorAction, EditorDoc, EngineStatus, FinishAction, HotkeyStatus, MailCodeSettings, MailCodesStatus, McpStatus, MediaAccess, MediaKind, RecordEditInfo, OcrJob, SmartSuggestion, OcrPage, Permissions, PhysicalRect, PinInfo, PinText, ScannedCode, ProviderInfo, RegionTranslation, SecretsStatus, SessionInfo, Settings, ShotPage, SyncStatus, UpdateStatus, ShotQuery, TranslateRequest, TranslateResult, VisualCapabilities } from './types';
+import type { AiContext, AppInfo, CaptureIntent, CaptureTable, ChatEvent, ChatRequest, ClipDetail, ClipGroup, ClipPage, ClipQuery, ClipStats, DavDevice, EditorAction, EditorDoc, EngineStatus, FinishAction, HotkeyStatus, MailCodeSettings, MailCodesStatus, McpStatus, MediaAccess, MediaKind, RecordEditInfo, OcrJob, RegionStyle, SmartSuggestion, OcrPage, Permissions, PhysicalRect, PinInfo, PinText, ScannedCode, ProviderInfo, RegionTranslation, SecretsStatus, SessionInfo, Settings, ShotPage, SyncStatus, UpdateStatus, ShotQuery, TranslateRequest, TranslateResult, VisualCapabilities } from './types';
 
 /** Rust 侧 AppError 的结构化形态。 */
 export class AppError extends Error {
@@ -81,18 +81,34 @@ export const capture = {
   writeRich: (text: string, html: string) => call<void>('clipboard_write_rich', { text, html }),
   /** 识别选区里的二维码 / 条码 */
   scanCodes: (sessionId: number, monitorId: number, rect: PhysicalRect) => call<ScannedCode[]>('capture_scan_codes', { sessionId, monitorId, rect }),
+  /** 这个遮罩收到了点击 / 按键，可页面上没有截图会话：没在截图的话后端把它收起来 */
+  strayOverlay: () => call<void>('capture_overlay_stray'),
+  /** 鼠标（屏幕物理坐标）下面的界面元素，由里到外（macOS 辅助功能） */
+  elementsAt: (handle: number, x: number, y: number) => call<{ rect: PhysicalRect; role: string }[]>('capture_elements_at', { handle, x, y }),
+  /** 鼠标附近的界面元素（同一行的其他格、其他行……），先存着 */
+  elementsNear: (handle: number, x: number, y: number) => call<{ rect: PhysicalRect; role: string }[]>('capture_elements_near', { handle, x, y }),
   /** 鼠标下的颜色贴到屏幕上（本屏局部物理坐标），截图随之结束 */
   pinColor: (sessionId: number, monitorId: number, x: number, y: number, rgb: [number, number, number]) =>
     call<void>('capture_pin_color', { sessionId, monitorId, x, y, rgb }),
   /** 选区识别成表格 / 公式（AI） */
-  structure: (sessionId: number, monitorId: number, rect: PhysicalRect, kind: 'table' | 'formula') =>
-    call<string>('capture_structure', { sessionId, monitorId, rect, kind }),
+  structure: (sessionId: number, monitorId: number, rect: PhysicalRect, kind: 'table' | 'formula', engine: 'local' | 'ai' = 'local') =>
+    call<string>('capture_structure', { sessionId, monitorId, rect, kind, engine }),
+  /** 选区里看起来有没有表格（格子线） */
+  detectTable: (sessionId: number, monitorId: number, rect: PhysicalRect) => call<boolean>('capture_detect_table', { sessionId, monitorId, rect }),
+  /** 本地认出表格，原位显示用：每格的位置、样式，字抹掉的底图和原图 */
+  table: (sessionId: number, monitorId: number, rect: PhysicalRect) => call<CaptureTable>('capture_table', { sessionId, monitorId, rect }),
+  /** 选区的底色、字色和原图（原位显示公式用） */
+  regionStyle: (sessionId: number, monitorId: number, rect: PhysicalRect) => call<RegionStyle>('capture_region_style', { sessionId, monitorId, rect }),
 };
 
 export const gif = {
   setRegions: (regions: PhysicalRect[]) => call<void>('gif_set_regions', { regions }),
   finish: () => call<void>('gif_finish'),
   cancel: () => call<void>('gif_cancel'),
+  /** 录制中拖了把手：录制区域挪到 rect（本屏局部物理坐标） */
+  moveTo: (rect: PhysicalRect) => call<void>('gif_move_to', { rect }),
+  /** 播放时间用的字形（页面画好传过去） */
+  glyphs: (png: string, chars: string, xs: number[], widths: number[]) => call<void>('record_glyphs', { png, chars, xs, widths }),
 };
 
 export const record = {
@@ -226,7 +242,7 @@ export const library = {
 
 export const ocr = {
   /** 用 AI 把识字的图识别成表格（HTML）/ 公式（LaTeX + MathML） */
-  structure: (jobId: string, kind: 'table' | 'formula') => call<string>('ocr_structure', { jobId, kind }),
+  structure: (jobId: string, kind: 'table' | 'formula', engine: 'local' | 'ai' = 'local') => call<string>('ocr_structure', { jobId, kind, engine }),
   /** 表格导出成 .xlsx（先问存哪），返回存好的路径；取消返回 null */
   exportXlsx: (rows: { text: string; header: boolean; rowSpan: number; colSpan: number }[][]) => call<string | null>('ocr_export_xlsx', { rows }),
   currentJob: () => call<OcrJob | null>('ocr_current_job'),
@@ -250,6 +266,12 @@ export const translate = {
   setField: (provider: string, field: string, value: string | null) => call<void>('translate_set_field', { provider, field, value }),
   detect: (text: string) => call<string>('translate_detect', { text }),
   popupText: () => call<string | null>('translate_popup_text'),
+  /** 面板这会儿是不是输入翻译 */
+  popupInput: () => call<boolean>('translate_popup_input'),
+  /** 划词圆点的页面自己收到了点击（后端监听没认出来时） */
+  buttonPressed: () => call<void>('selection_button_pressed'),
+  /** 系统的语言（zh、en、ja……） */
+  systemLanguage: () => call<string>('system_language'),
   /** 划词面板上方预留了多高（逻辑像素） */
   popupReserve: () => call<number>('translate_popup_reserve'),
   /** 设置页调面板外观时的预览：在主窗口旁边亮出真的面板 / 收起 */
@@ -278,6 +300,8 @@ export const ai = {
 };
 
 export const system = {
+  /** 让某个浮层（截图遮罩、划词面板）拿键盘焦点，不激活整个应用（页面的 setFocus() 会把主窗口也带到最前面） */
+  takeFocus: (label: string) => call<void>('window_take_focus', { label }),
   /** 调用方窗口是不是前台窗口 */
   /** 窗口的位置和所在屏的可用区域（逻辑像素）；null = 直接读 window.screenX / screen.avail* */
   placement: () =>
@@ -308,6 +332,12 @@ export const system = {
   hideToast: () => call<void>('toast_hide'),
   /** 右下角的 toast（截图遮罩关掉之后还要提示一句时用） */
   toast: (kind: 'success' | 'info' | 'error', message: string) => call<void>('toast_show', { kind, message }),
+  /** 朗读（macOS 系统语音）；平台没做时报 "unsupported" */
+  speak: (text: string, lang: string) => call<void>('speak', { text, lang }),
+  speakStop: () => call<void>('speak_stop'),
+  speakStatus: () => call<boolean>('speak_status'),
+  /** 系统里装好的朗读声音（macOS）；别的平台为空 */
+  speakVoices: () => call<{ id: string; name: string; lang: string; quality: number }[]>('speak_voices'),
   /** 要用户手动授予的系统权限（macOS）；别的平台两项都是 null */
   permissions: () => call<Permissions>('permissions_status'),
   /** 弹系统的授权引导并打开对应的系统设置页 */

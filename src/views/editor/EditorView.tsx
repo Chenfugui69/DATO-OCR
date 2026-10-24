@@ -14,7 +14,7 @@ import { useElementSize } from '@/lib/hooks';
 import { editor } from '@/lib/ipc';
 import { shotUrl } from '@/lib/platform';
 import { useSettings } from '@/lib/settings';
-import { MID_ACTIONS, TAIL_ACTIONS, type EditorAction, type EditorDoc } from '@/lib/types';
+import { DEFAULT_GROUPS, MID_ACTIONS, TAIL_ACTIONS, type EditorAction, type EditorDoc } from '@/lib/types';
 import { Spinner } from '@/ui/controls';
 import { notify } from '@/ui/overlays';
 import { TitleBar } from '@/ui/TitleBar';
@@ -24,18 +24,26 @@ import { saveTemplate } from '@/views/annotate/templates';
 import { bitmapSource } from '@/views/annotate/pixels';
 import { canPick, handleCursor, SelectionOverlay, toolCursor } from '@/views/annotate/SelectionOverlay';
 import { TextEditor, useEngineVersion } from '@/views/annotate/TextEditor';
-import { SubToolbar, TOOL_KEYS, Toolbar, useToolAnchor, type ActionId } from '@/views/annotate/Toolbar';
+import { GroupBar, SubToolbar, TOOL_KEYS, Toolbar, useToolAnchor, type ActionId } from '@/views/annotate/Toolbar';
 
 const engine = new AnnotationEngine();
 const PAD = 24;
 const TOO_LONG_TO_PASTE = 8000;
 
+/** 只在截图时有用的按钮（编辑一张已有的图没有长截图、录制、识别选区） */
+const CAPTURE_ONLY = ['longshot', 'record', 'qr', 'table', 'formula'];
+
 export default function EditorView() {
   const { t } = useTranslation();
   const cfg = useSettings()?.capture;
+  const groups = cfg?.toolbarGroups ?? DEFAULT_GROUPS;
+  // 这些只在截图时有用（编辑一张已有的图没有长截图、录制、识别选区）；组里全是这些的组也就不显示了
+  const editorHidden = [...(cfg?.toolbarHidden ?? []), ...CAPTURE_ONLY];
   useEngineVersion(engine);
   const [doc, setDoc] = useState<EditorDoc | null>(null);
   const [tool, setTool] = useState<Tool | null>(null);
+  /** 开着二级条的按钮组 */
+  const [openGroup, setOpenGroup] = useState<string | null>(null);
   const [options, setOptions] = useState<ToolOptions>(defaultToolOptions);
   // 水印跟着选项走，画在标注层上一起导出
   useEffect(() => {
@@ -172,7 +180,7 @@ export default function EditorView() {
   const onAction = (id: ActionId) => {
     if (id === 'cancel') void getCurrentWindow().close();
     else if (id === 'done') void done();
-    else if (id !== 'longshot' && id !== 'gif' && id !== 'video' && id !== 'undo' && id !== 'qr' && id !== 'table' && id !== 'formula') void finish(id);
+    else if (id !== 'longshot' && id !== 'record' && id !== 'undo' && id !== 'qr' && id !== 'table' && id !== 'formula') void finish(id);
   };
 
   useEffect(() => {
@@ -309,7 +317,22 @@ export default function EditorView() {
         </div>
       </div>
       <footer className="ed-dock">
-        {(pickedTool ?? tool) && (
+        {openGroup && groups.find((g) => g.id === openGroup) && (
+          <GroupBar
+            style={{ position: 'static' }}
+            group={groups.find((g) => g.id === openGroup)!}
+            tool={tool}
+            hidden={editorHidden}
+            onTool={(next) => {
+              if (engine.text) engine.commitText();
+              engine.select(null);
+              setTool(next);
+            }}
+            onAction={onAction}
+            onClose={() => setOpenGroup(null)}
+          />
+        )}
+        {!openGroup && (pickedTool ?? tool) && (
           <SubToolbar
             ref={subRef}
             style={{ transform: `translateX(${subShift}px)` }}
@@ -344,8 +367,11 @@ export default function EditorView() {
           onUndo={() => engine.undo()}
           // 顺序跟截图工具条用同一份设置；这里没有长截图和 GIF
           tools={cfg?.toolbarTools}
-          hidden={cfg?.toolbarHidden}
-          actions={[(cfg?.toolbarActions?.length ? cfg.toolbarActions : MID_ACTIONS).filter((a) => a !== 'longshot' && a !== 'gif' && a !== 'video' && a !== 'qr' && a !== 'table' && a !== 'formula'), cfg?.toolbarOrder?.length ? cfg.toolbarOrder : TAIL_ACTIONS]}
+          hidden={editorHidden}
+          groups={groups}
+          openGroup={openGroup}
+          onGroup={setOpenGroup}
+          actions={[cfg?.toolbarActions?.length ? cfg.toolbarActions : MID_ACTIONS, cfg?.toolbarOrder?.length ? cfg.toolbarOrder : TAIL_ACTIONS]}
           onAction={onAction}
           disabledTools={{ mosaic: !ready }}
           disabledActions={{ done: busy, save: busy }}

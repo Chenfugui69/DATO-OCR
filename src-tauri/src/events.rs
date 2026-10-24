@@ -12,6 +12,8 @@ pub const LONGSHOT_PROGRESS: &str = "longshot-progress";
 pub const LONGSHOT_STATE: &str = "longshot-state";
 pub const GIF_STATE: &str = "gif-state";
 pub const GIF_PROGRESS: &str = "gif-progress";
+/// 录制时按下了一个键（按键显示用），带显示的写法：⌘C、⏎……
+pub const RECORD_KEY: &str = "record-key";
 /// 剪辑窗口：有一段新录的要剪（负载是这段的 id）
 pub const RECORD_EDIT: &str = "record-edit";
 

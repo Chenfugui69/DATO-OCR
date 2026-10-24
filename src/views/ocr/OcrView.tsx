@@ -197,13 +197,15 @@ export default function OcrView() {
   const [structured, setStructured] = useState<StructuredState | null>(null);
   const structJob = useRef<string | null>(null);
   const runStructure = useCallback(
-    (kind: StructuredKind) => {
+    (kind: StructuredKind, wanted?: 'local' | 'ai') => {
       if (!job) return;
       structJob.current = job.id;
-      setStructured({ kind, status: 'running' });
-      ocr.structure(job.id, kind).then(
-        (text) => structJob.current === job.id && setStructured({ kind, status: 'done', text }),
-        (err: unknown) => structJob.current === job.id && setStructured({ kind, status: 'error', error: err instanceof Error ? err.message : String(err) }),
+      // 表格默认本地识别；公式只有 AI
+      const engine = kind === 'formula' ? 'ai' : (wanted ?? 'local');
+      setStructured({ kind, engine, status: 'running' });
+      ocr.structure(job.id, kind, engine).then(
+        (text) => structJob.current === job.id && setStructured({ kind, engine, status: 'done', text }),
+        (err: unknown) => structJob.current === job.id && setStructured({ kind, engine, status: 'error', error: err instanceof Error ? err.message : String(err) }),
       );
     },
     [job],
@@ -285,7 +287,7 @@ export default function OcrView() {
                   // 拼成行的文字和原始文字块都给：拼行时相邻两块偶尔会粘在一起（数字连成一串），
                   // 原始块里长数字又偶尔被拆成几块。数字在任何一份里找得到就算对上
                   ocrText={job.result ? `${job.result.rawText}\n${job.result.blocks.map((b) => b.text).join('\n')}` : fullText}
-                  onBack={() => setStructured(null)} onRetry={() => runStructure(structured.kind)} />
+                  onBack={() => setStructured(null)} onRetry={(engine) => runStructure(structured.kind, engine)} />
               ) : job.status === 'running' ? (
                 <div className="ocr-text__loading">
                   <Skeleton />

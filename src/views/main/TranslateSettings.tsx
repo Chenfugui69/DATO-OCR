@@ -9,15 +9,21 @@ import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import { useEvent } from '@/lib/events';
-import { translate } from '@/lib/ipc';
+import { system, translate } from '@/lib/ipc';
 import { accelLabel, isMac } from '@/lib/platform';
-import type { Settings } from '@/lib/types';
+import type { GlassTuning, Settings } from '@/lib/types';
 import { Button, Segmented, Select, Slider, Switch, TextField } from '@/ui/controls';
 import { notify } from '@/ui/overlays';
+import { SpeakButton } from '@/ui/SpeakButton';
 import { LANGS } from '@/views/translate/TranslateBox';
 
+import { GlassPreview } from './GlassPreview';
 import { Group, Row } from './settingsParts';
 import { TranslateProviderList } from './TranslateProviders';
+
+/** 自定义玻璃的滑块（顺序就是设置页里的顺序）和默认值（就是"液态玻璃"的样子，和 Rust 的 GlassTuning::default 一致） */
+const GLASS_KEYS = ['dispersion', 'blur', 'refraction', 'magnify', 'veil', 'tint', 'highlight'] as const satisfies readonly (keyof GlassTuning)[];
+const DEFAULT_GLASS: GlassTuning = { dispersion: 35, blur: 0, refraction: 48, magnify: 20, veil: 88, tint: 10, highlight: 70 };
 
 /**
  * 悬浮预览：调面板外观时，在主窗口旁边把真的翻译面板亮出来（就是平时弹出来的那个窗口），大小、材质、圆角、
@@ -66,6 +72,7 @@ export function TranslateSettingsGroups({ settings, set }: { settings: Settings;
   const net = settings.network;
   const pop = tr.popup;
   const providers = useQuery({ queryKey: ['translate-providers'], queryFn: translate.providers });
+  const systemLang = useQuery({ queryKey: ['system-language'], queryFn: translate.systemLanguage, staleTime: Infinity });
 
   return (
     <>
@@ -113,10 +120,71 @@ export function TranslateSettingsGroups({ settings, set }: { settings: Settings;
             options={[
               { value: 'liquid', label: t('settings.selection.liquid') },
               { value: 'frosted', label: t('settings.selection.frosted') },
+              { value: 'solid', label: t('settings.selection.solid') },
+              { value: 'custom', label: t('settings.selection.custom') },
             ]}
             onChange={(v) => set((d) => void (d.translate.selection.buttonStyle = v))}
           />
         </Row>
+        <div className="set-row set-row--stack">
+          <div className="set-row__label">
+            <div className="set-row__title">{t('settings.selection.preview')}</div>
+            <div className="set-row__desc">{t('settings.selection.previewDesc')}</div>
+          </div>
+          <div className="glass-tune">
+            <GlassPreview style={sel.buttonStyle} tuning={sel.glass} size={sel.buttonSize} />
+            {sel.buttonStyle === 'custom' && (
+              <div className="glass-tune__sliders">
+                {GLASS_KEYS.map((k) => (
+                  <label key={k} className="glass-tune__row">
+                    <span className="glass-tune__name">{t(`settings.selection.glass.${k}`)}</span>
+                    <Slider value={sel.glass[k]} min={0} max={100} step={1} onChange={(v) => set((d) => void (d.translate.selection.glass[k] = v))} />
+                    <span className="glass-tune__value cn-numeric">{sel.glass[k]}</span>
+                  </label>
+                ))}
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  icon={RotateCcw}
+                  onClick={() => set((d) => void (d.translate.selection.glass = { ...DEFAULT_GLASS }))}
+                >
+                  {t('settings.selection.glassReset')}
+                </Button>
+              </div>
+            )}
+          </div>
+        </div>
+        <Row title={t('settings.selection.skipSystem')} desc={t('settings.selection.skipSystemDesc', { lang: systemLang.data ? t(`lang.${systemLang.data}`, { defaultValue: systemLang.data }) : '' })}>
+          <Switch checked={sel.skipSystemLanguage} disabled={!sel.showButton} onChange={(v) => set((d) => void (d.translate.selection.skipSystemLanguage = v))} />
+        </Row>
+        <div className="set-row set-row--stack">
+          <div className="set-row__label">
+            <div className="set-row__title">{t('settings.selection.skipLanguages')}</div>
+            <div className="set-row__desc">{t('settings.selection.skipLanguagesDesc')}</div>
+          </div>
+          <div className="set-chips">
+            {SKIP_LANGS.map((l) => {
+              const on = sel.skipLanguages.includes(l);
+              return (
+                <button
+                  key={l}
+                  type="button"
+                  className="set-chip"
+                  data-on={on || undefined}
+                  disabled={!sel.showButton}
+                  onClick={() =>
+                    set((d) => {
+                      const list = d.translate.selection.skipLanguages;
+                      d.translate.selection.skipLanguages = on ? list.filter((x) => x !== l) : [...list, l];
+                    })
+                  }
+                >
+                  {t(`lang.${l}`)}
+                </button>
+              );
+            })}
+          </div>
+        </div>
         <Row title={t('settings.selection.buttonSize')}>
           <span className="set-row__value cn-numeric">{sel.buttonSize}px</span>
           <Slider value={sel.buttonSize} min={20} max={48} step={1} onChange={(v) => set((d) => void (d.translate.selection.buttonSize = v))} />
@@ -213,6 +281,8 @@ export function TranslateSettingsGroups({ settings, set }: { settings: Settings;
         </Row>
       </Group>
 
+      <SpeechGroup settings={settings} set={set} />
+
       <Group id="network" title={t('settings.section.network')} note={t('settings.network.note')}>
         <Row title={t('settings.network.proxy')}>
           <Segmented
@@ -237,5 +307,95 @@ export function TranslateSettingsGroups({ settings, set }: { settings: Settings;
         )}
       </Group>
     </>
+  );
+}
+
+/** "这些语言不弹"能选的：本地能认出来的几种（别的拉丁字母语言都算英文） */
+const SKIP_LANGS = ['zh', 'en', 'ja', 'ko', 'ru', 'ar', 'th'];
+
+/** 朗读设置里能单独选声音的语言 */
+const SPEECH_LANGS = ['zh', 'zh-TW', 'en', 'ja', 'ko'] as const;
+const SPEECH_SAMPLES: Record<(typeof SPEECH_LANGS)[number], string> = {
+  zh: '你好，这是朗读的效果。',
+  'zh-TW': '你好，這是朗讀的效果。',
+  en: 'Hello, this is how it sounds.',
+  ja: 'こんにちは、読み上げのサンプルです。',
+  ko: '안녕하세요, 읽어 주기 예시입니다.',
+};
+
+type VoiceOption = { id: string; name: string; lang: string; quality: number };
+const SYSTEM_VOICE = '__system__';
+
+/** 系统的声音（macOS 后端给）；别的平台用浏览器的语音列表 */
+function useVoices(): VoiceOption[] {
+  const [voices, setVoices] = useState<VoiceOption[]>([]);
+  useEffect(() => {
+    let alive = true;
+    const fromWeb = () =>
+      typeof window.speechSynthesis === 'undefined'
+        ? []
+        : window.speechSynthesis.getVoices().map((v) => ({ id: v.voiceURI, name: v.name, lang: v.lang.replace('_', '-'), quality: 1 }));
+    void system
+      .speakVoices()
+      .then((list) => {
+        if (!alive) return;
+        if (list.length) return setVoices(list);
+        setVoices(fromWeb());
+        window.speechSynthesis?.addEventListener('voiceschanged', () => alive && setVoices(fromWeb()));
+      })
+      .catch(() => alive && setVoices(fromWeb()));
+    return () => {
+      alive = false;
+    };
+  }, []);
+  return voices;
+}
+
+/** 某种语言能用的声音：繁体中文认 zh-TW / zh-HK，其他按语言部分 */
+function voicesFor(voices: VoiceOption[], lang: string) {
+  return voices.filter((v) => {
+    const l = v.lang.toLowerCase();
+    if (lang === 'zh-TW') return l === 'zh-tw' || l === 'zh-hk';
+    if (lang === 'zh') return l === 'zh-cn' || l === 'zh';
+    return l.split('-')[0] === lang;
+  });
+}
+
+function SpeechGroup({ settings, set }: { settings: Settings; set: (mutate: (d: Settings) => void) => void }) {
+  const { t } = useTranslation();
+  const sp = settings.translate.speech;
+  const voices = useVoices();
+  const quality = (q: number) => (q >= 3 ? ` · ${t('settings.speech.premium')}` : q === 2 ? ` · ${t('settings.speech.enhanced')}` : '');
+  return (
+    <Group id="speech" title={t('settings.speech.title')} note={t('settings.speech.note')}>
+      <Row title={t('settings.speech.rate')}>
+        <span className="set-row__value cn-numeric">{sp.rate.toFixed(1)}×</span>
+        <Slider value={Math.round(sp.rate * 10)} min={5} max={20} onChange={(v) => set((d) => void (d.translate.speech.rate = v / 10))} />
+      </Row>
+      <Row title={t('settings.speech.pitch')}>
+        <span className="set-row__value cn-numeric">{sp.pitch.toFixed(1)}×</span>
+        <Slider value={Math.round(sp.pitch * 10)} min={5} max={20} onChange={(v) => set((d) => void (d.translate.speech.pitch = v / 10))} />
+      </Row>
+      {SPEECH_LANGS.map((lang) => {
+        const list = voicesFor(voices, lang);
+        return (
+          <Row key={lang} title={t('settings.speech.voiceFor', { lang: t(`lang.${lang}`) })}>
+            <Select
+              // 下拉框不收空值，"系统默认"用一个占位的值
+              value={sp.voices[lang] && list.some((v) => v.id === sp.voices[lang]) ? sp.voices[lang] : SYSTEM_VOICE}
+              width={220}
+              options={[{ value: SYSTEM_VOICE, label: t('settings.speech.systemVoice') }, ...list.map((v) => ({ value: v.id, label: `${v.name}${quality(v.quality)}` }))]}
+              onChange={(v) =>
+                set((d) => {
+                  if (v !== SYSTEM_VOICE) d.translate.speech.voices[lang] = v;
+                  else delete d.translate.speech.voices[lang];
+                })
+              }
+            />
+            <SpeakButton text={SPEECH_SAMPLES[lang]} lang={lang} label={t('settings.speech.try')} />
+          </Row>
+        );
+      })}
+    </Group>
   );
 }

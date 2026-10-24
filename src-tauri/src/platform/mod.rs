@@ -121,12 +121,47 @@ pub fn capture_monitor(id: MonitorId) -> AppResult<RgbaImage> {
 pub use sys::capture::ScreenRecorder;
 /// 录视频（MP4）的写入器：`create` → `start`（第 0 毫秒）→ 每帧 `push` → `finish`。只在一个线程上用
 pub use sys::VideoWriter;
+/// 朗读一段文字（`lang` 是翻译用的语言代码，`auto` 按文字猜）。平台没做时返回错误 "unsupported"
+pub fn speak(text: &str, lang: &str, options: &SpeakOptions) -> AppResult<()> {
+    sys::speak(text, lang, options)
+}
+
+pub fn stop_speaking() {
+    sys::stop_speaking()
+}
+
+pub fn is_speaking() -> bool {
+    sys::is_speaking()
+}
+
+/// 系统里装好的朗读声音；平台没做时为空
+pub fn voices() -> Vec<Voice> {
+    sys::voices()
+}
+
+/// 截图框选界面元素：`window` 里屏幕物理坐标 `(x, y)` 下面的元素，由里到外（最后是窗口本身）。
+/// 没权限、平台没做时返回空
+pub fn elements_at(window: WindowHandle, x: i32, y: i32) -> AppResult<Vec<UiElement>> {
+    sys::elements_at(window, x, y)
+}
+
+/// `(x, y)` 附近的界面元素（链上往上几层的子元素），给遮罩先存着，鼠标挪到旁边时不用等
+pub fn elements_near(window: WindowHandle, x: i32, y: i32) -> AppResult<Vec<UiElement>> {
+    sys::elements_near(window, x, y)
+}
+
 /// 摄像头画面（录视频时叠在角落）：`start(边长)` 之后 `latest` 随时取最新一帧（正方形、已镜像）
 pub use sys::Camera;
 
-/// 剪辑录好的视频：取一段、变速，几条音轨混成一条
-pub fn export_video(src: &std::path::Path, dst: &std::path::Path, edit: VideoEdit) -> AppResult<()> {
-    sys::export_video(src, dst, edit)
+/// 剪辑录好的视频：取一段、变速，按 `encoding` 重新编码；`mix` 时几条音轨混成一条，否则各自保留
+pub fn export_video(
+    src: &std::path::Path,
+    dst: &std::path::Path,
+    edit: VideoEdit,
+    encoding: VideoEncoding,
+    mix: bool,
+) -> AppResult<()> {
+    sys::export_video(src, dst, edit, encoding, mix)
 }
 
 /// 麦克风 / 摄像头的授权状态
@@ -286,6 +321,11 @@ pub fn set_overlay_capturable(window: &WebviewWindow, visible: bool) {
 /// 将近 190MB）。下次截图摆窗口时（`place_window`）会铺回整屏。
 pub fn park_overlay(window: &WebviewWindow) {
     sys::effects::park_overlay(window)
+}
+
+/// 遮罩要拿来截图了：作废之前的 `park_overlay`（它稍后才真的藏窗口）
+pub fn unpark_overlay(window: &WebviewWindow) {
+    sys::effects::unpark_overlay(window)
 }
 
 /// 让这个窗口里的页面按屏幕的刷新率刷新（macOS 上网页默认压在 60 帧上下，高刷屏上拖动不跟手）。
@@ -504,8 +544,26 @@ pub fn install_input_hook(tx: Sender<HookEvent>) -> AppResult<InputHookGuard> {
 pub struct InputHookGuard(#[allow(dead_code)] sys::hook::Guard);
 
 /// 安装常驻的划词监听钩子（只看鼠标，只吞悬浮按钮上的点击）。守卫 drop 时卸载。
+/// 录屏时监听键盘和滚轮（按键显示、滚动箭头）。返回的守卫丢掉就停
+pub fn start_record_input(tx: Sender<RecordInput>) -> AppResult<RecordInputGuard> {
+    sys::record_input::install(tx).map(RecordInputGuard)
+}
+
+pub struct RecordInputGuard(#[allow(dead_code)] sys::record_input::Guard);
+
+/// 现在按着哪几个鼠标键：第 0 位左键、第 1 位右键、第 2 位中键
+pub fn mouse_buttons() -> u8 {
+    sys::record_input::mouse_buttons()
+}
+
 pub fn start_selection_watch(tx: Sender<SelectionEvent>) -> AppResult<SelectionWatchGuard> {
     sys::selection_hook::install(tx).map(SelectionWatchGuard)
+}
+
+/// 调试版：现在问前台程序"选中了什么"会得到什么（`--demo=selection`，看划词判断用）
+#[cfg(debug_assertions)]
+pub fn probe_selection() -> String {
+    sys::selection_hook::probe()
 }
 
 pub struct SelectionWatchGuard(#[allow(dead_code)] sys::selection_hook::Guard);

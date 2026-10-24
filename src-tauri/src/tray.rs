@@ -46,6 +46,13 @@ pub fn build(app: &AppHandle) -> AppResult<()> {
         None::<&str>,
     )?;
     let ai = MenuItem::with_id(app, "ai", label(&tr("AI 对话"), &hk.ai), true, None::<&str>)?;
+    let input_tr = MenuItem::with_id(
+        app,
+        "input-translate",
+        label(&tr("输入翻译"), &hk.input_translate),
+        true,
+        None::<&str>,
+    )?;
     let pin_clip = MenuItem::with_id(
         app,
         "pin-clipboard",
@@ -76,6 +83,7 @@ pub fn build(app: &AppHandle) -> AppResult<()> {
             &longshot,
             &ocr,
             &clip,
+            &input_tr,
             &ai,
             &sep_pins,
             &pin_clip,
@@ -109,6 +117,7 @@ pub fn build(app: &AppHandle) -> AppResult<()> {
             "clipboard" => hotkeys::dispatch(app, HotkeyAction::Clipboard),
             "ai" => hotkeys::dispatch(app, HotkeyAction::Ai),
             "pin-clipboard" => hotkeys::pin_clipboard(app),
+            "input-translate" => hotkeys::dispatch(app, HotkeyAction::InputTranslate),
             "restore-pin" => {
                 if !matches!(crate::pin::restore_last(app), Ok(true)) {
                     wm::toast(app, "info", "没有刚关闭的贴图");

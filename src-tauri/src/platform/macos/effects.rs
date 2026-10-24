@@ -358,24 +358,49 @@ pub fn set_overlay_capturable(window: &WebviewWindow, visible: bool) {
 /// 先缩后藏：页面要按小尺寸画过一帧，WebKit 才放掉整屏大小的图层；藏着的窗口不画，
 /// 直接藏起来再缩的话，那几块缓冲有时一直留着（实测 5K 屏的遮罩截完图停在 230MB）。
 /// 1×1 的透明窗口看不见，多留这一会儿没关系。
+///
+/// 稍后那一下"藏"认的是这次收起的编号，不看窗口大小：以前看"还是不是 1×1"，收起后紧跟着的屏幕参数变化
+/// （遮罩一藏菜单栏回来了）会把遮罩重新铺回整屏，这一下就不藏了 —— 结果是一张没有截图会话的遮罩
+/// 带着上次的暗色蒙版留在屏幕上，点哪儿、按 Esc 都没反应。真要再截图时 `unpark_overlay` 作废这次收起。
 pub fn park_overlay(window: &WebviewWindow) {
-    with_window(window, |ns, _| {
-        // 刚摆过的窗口下一轮还会按整屏再摆一次（见 `place_window`），不撤掉的话这里白缩
-        PENDING_FRAME.with_borrow_mut(|pending| pending.remove(&ns.windowNumber()));
+    let generation = PARK_SEQ.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
+    let shrink = |ns: &NSWindow| {
         let mut frame = ns.frame();
+        if frame.size.width <= 1.0 && frame.size.height <= 1.0 {
+            return;
+        }
         frame.origin.y += frame.size.height - 1.0;
         frame.size = objc2_foundation::NSSize::new(1.0, 1.0);
         ns.setFrame_display(frame, false);
+    };
+    with_window(window, move |ns, _| {
+        // 刚摆过的窗口下一轮还会按整屏再摆一次（见 `place_window`），不撤掉的话这里白缩
+        PENDING_FRAME.with_borrow_mut(|pending| pending.remove(&ns.windowNumber()));
+        PARKED.with_borrow_mut(|parked| parked.insert(ns.windowNumber(), generation));
+        // 先一下子变成全透明再缩：直接缩的话，系统会把遮罩上一帧的暗色画面往左上角缩过去，
+        // 看着像程序在退出（按 Esc 取消截图时最明显）。下次截图 `unpark_overlay` 再恢复
+        ns.setAlphaValue(0.0);
+        shrink(ns);
     });
     let window = window.clone();
     std::thread::spawn(move || {
         std::thread::sleep(std::time::Duration::from_millis(200));
-        with_window(&window, |ns, _| {
-            // 这中间又开始截图、铺回整屏了就别藏
-            if ns.frame().size.width <= 1.0 {
+        with_window(&window, move |ns, _| {
+            // 这中间又开始截图了（unpark 过）就别藏
+            let current = PARKED.with_borrow(|parked| parked.get(&ns.windowNumber()).copied());
+            if current == Some(generation) {
+                shrink(ns);
                 ns.orderOut(None);
             }
         });
+    });
+}
+
+/// 遮罩要拿来截图了：作废之前的收起（别让稍后那一下"藏"把正在用的遮罩藏掉）
+pub fn unpark_overlay(window: &WebviewWindow) {
+    with_window(window, |ns, _| {
+        PARKED.with_borrow_mut(|parked| parked.remove(&ns.windowNumber()));
+        ns.setAlphaValue(1.0);
     });
 }
 
@@ -536,13 +561,45 @@ fn rounded_mask(radius: f64) -> Option<Retained<NSImage>> {
     Some(image)
 }
 
-/// 窗口大小变了：背板靠自动布局跟着变，不用做事。
-pub fn resize_backdrop(_window: &WebviewWindow) -> bool {
+/// 窗口大小变了：背板一般靠自动布局跟着变（见 `set_backdrop_rect`）。再兜一层底：背板要是比窗口还大，
+/// 裁回窗口里面 —— 背板伸出窗口的话，伸出去的那截连同它的圆角被窗口边切掉，面板的角就成了方的。
+pub fn resize_backdrop(window: &WebviewWindow) -> bool {
+    with_window(window, |ns, _| {
+        let Some(content) = ns.contentView() else {
+            return;
+        };
+        let Some(view) = find_backdrop(&content) else {
+            return;
+        };
+        let bounds = content.bounds();
+        let frame = view.frame();
+        let x0 = frame.origin.x.max(bounds.origin.x);
+        let y0 = frame.origin.y.max(bounds.origin.y);
+        let x1 = (frame.origin.x + frame.size.width).min(bounds.origin.x + bounds.size.width);
+        let y1 = (frame.origin.y + frame.size.height).min(bounds.origin.y + bounds.size.height);
+        if x1 - x0 < 1.0 || y1 - y0 < 1.0 {
+            return;
+        }
+        let fitted = geometry::rect(x0, y0, x1 - x0, y1 - y0);
+        if fitted != frame {
+            tracing::debug!(label = window.label(), "毛玻璃背板比窗口大，裁回窗口里");
+            view.setFrame(fitted);
+        }
+    });
     true
 }
 
 /// 背板出场 / 收起的淡入淡出：macOS 的面板出场交给系统，不做。
 pub fn fade_backdrop(_window: &WebviewWindow, _visible: bool, _ms: u32) {}
+
+/// 背板底边离窗口底边还有多远（点）。`y` 是已经换成视图坐标的原点
+fn y_px_bottom(y: f64, h: f64, flipped: bool, height: f64) -> f64 {
+    if flipped {
+        height - (y + h)
+    } else {
+        y
+    }
+}
 
 /// 背板只铺在窗口里的一块（物理像素 x, y, w, h，原点在窗口左上角），`ms` > 0 时用和页面一样的
 /// 缓动曲线动画过去；`None` = 恢复铺满整个窗口。
@@ -567,16 +624,23 @@ pub fn set_backdrop_rect(window: &WebviewWindow, rect: Option<(f32, f32, f32, f3
                 } else {
                     bounds.size.height - y - h
                 };
-                // 窗口变大小时这一块离窗口左上角的距离和大小都不变（范围由页面管）
-                let below = if flipped {
+                // 窗口变大小时这一块离窗口左上角的距离不变；一直铺到窗口底边 / 右边的，跟着窗口一起伸缩
+                // （面板顶上有预留时就是这样：背板从预留下面一直铺到窗口底）。别的情况大小不变，范围由页面管
+                let to_bottom = y_px_bottom(y, h, flipped, bounds.size.height).abs() < 0.5;
+                let to_right = (x + w - bounds.size.width).abs() < 0.5;
+                let vertical = if to_bottom {
+                    NSAutoresizingMaskOptions::ViewHeightSizable
+                } else if flipped {
                     NSAutoresizingMaskOptions::ViewMaxYMargin
                 } else {
                     NSAutoresizingMaskOptions::ViewMinYMargin
                 };
-                (
-                    geometry::rect(x, y, w, h),
-                    NSAutoresizingMaskOptions::ViewMaxXMargin | below,
-                )
+                let horizontal = if to_right && x < 0.5 {
+                    NSAutoresizingMaskOptions::ViewWidthSizable
+                } else {
+                    NSAutoresizingMaskOptions::ViewMaxXMargin
+                };
+                (geometry::rect(x, y, w, h), horizontal | vertical)
             }
             None => (bounds, fill_mask()),
         };
@@ -716,7 +780,12 @@ fn region_tick(mtm: MainThreadMarker) -> bool {
 thread_local! {
     /// 刚建好的窗口：下一轮事件循环还要再摆一次的位置（见 `place_window`）
     static PENDING_FRAME: RefCell<HashMap<isize, CGRect>> = RefCell::new(HashMap::new());
+    /// 收起中的遮罩（窗口号 → 这次收起的编号），见 `park_overlay`
+    static PARKED: RefCell<HashMap<isize, u64>> = RefCell::new(HashMap::new());
 }
+
+/// 遮罩收起的编号（每收一次加一）
+static PARK_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 /// 外框左上角 + 内容区大小（全局点坐标）→ 系统要的窗口外框。
 fn frame_for(ns: &NSWindow, points: CGRect) -> CGRect {

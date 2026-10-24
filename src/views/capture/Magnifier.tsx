@@ -13,6 +13,8 @@ import { placeMagnifier, type Point } from './geometry';
 const SAMPLE = 20;
 const BOX = 120;
 const INFO_H = 62;
+/** 多一行"滚轮换层级"的提示时 */
+const HINT_H = 14;
 
 export function Magnifier({
   pixels,
@@ -21,6 +23,7 @@ export function Magnifier({
   scale,
   viewport,
   format,
+  levelHint,
 }: {
   pixels: PixelSource;
   /** 本屏局部物理坐标 */
@@ -30,6 +33,8 @@ export function Magnifier({
   scale: number;
   viewport: { width: number; height: number };
   format: 'hex' | 'rgb' | 'hsl';
+  /** 鼠标下面有好几层界面元素可选：提示滚轮切换 */
+  levelHint?: boolean;
 }) {
   const { t } = useTranslation();
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -61,7 +66,7 @@ export function Magnifier({
   }, [pixels, cx, cy]);
 
   const color = pixels.get(cx, cy) ?? [0, 0, 0];
-  const pos = placeMagnifier({ x: cursor.x / scale, y: cursor.y / scale }, { width: BOX, height: BOX + INFO_H }, viewport);
+  const pos = placeMagnifier({ x: cursor.x / scale, y: cursor.y / scale }, { width: BOX, height: BOX + INFO_H + (levelHint ? HINT_H : 0) }, viewport);
   const cell = BOX / SAMPLE;
 
   return (
@@ -81,6 +86,7 @@ export function Magnifier({
           {formatColor(color, format)}
         </div>
         <div className="cap-magnifier__keys">{t('capture.colorKeys')}</div>
+        {levelHint && <div className="cap-magnifier__keys">{t('capture.levelKeys')}</div>}
       </div>
     </div>
   );

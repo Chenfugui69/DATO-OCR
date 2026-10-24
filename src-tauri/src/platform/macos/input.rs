@@ -24,9 +24,16 @@ pub fn focus_window(window: WindowHandle) -> AppResult<()> {
         let number = handle_window(window.0) as isize;
         on_main(move |mtm| {
             let app = NSApplication::sharedApplication(mtm);
-            if let Some(w) = app.windowWithWindowNumber(number) {
-                w.makeKeyAndOrderFront(None);
-            }
+            // 记下的是"我们自己、但没有具体窗口"（比如用户刚把主窗口收进程序坞，前台还是我们）：什么都不做。
+            // 激活整个应用的话，开着"把窗口最小化为应用程序图标"时系统会把收起的窗口一起还原出来；
+            // 收进程序坞的窗口也不去"放到最前"（那等于把它还原）
+            let Some(w) = app
+                .windowWithWindowNumber(number)
+                .filter(|w| !w.isMiniaturized())
+            else {
+                return;
+            };
+            w.makeKeyAndOrderFront(None);
             #[allow(deprecated)]
             app.activateIgnoringOtherApps(true);
         });

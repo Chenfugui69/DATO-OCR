@@ -5,7 +5,9 @@
 //!
 //! 声音：系统声音、麦克风各是一条 AAC 音轨，样本在各自的队列上直接写进文件（时间戳是主机时钟，
 //! 和画面的时间对齐：`start` 时告诉写入器"第 0 毫秒"是主机时钟的哪一刻）。两条音轨大多数播放器
-//! 只放第一条，所以录完要是有两条，`export` 再导出一遍混成一条（剪辑时顺带完成）。
+//! 只放第一条，所以录完要是有两条（又没开"独立音轨"），`export` 再导出一遍混成一条（剪辑时顺带完成）。
+//!
+//! 画面编码（H.264 / H.265、码率）按设置里的画质来，导出时也用同一套：`video_settings`。
 
 use std::path::Path;
 use std::ptr::NonNull;
@@ -18,14 +20,15 @@ use block2::RcBlock;
 use image::RgbaImage;
 use objc2::rc::Retained;
 use objc2::runtime::AnyObject;
-use objc2::AllocAnyThread;
 use objc2_av_foundation::{
-    AVAssetExportPresetHighestQuality, AVAssetExportSession, AVAssetExportSessionStatus,
-    AVAssetWriter, AVAssetWriterInput, AVAssetWriterInputPixelBufferAdaptor, AVAssetWriterStatus,
-    AVAudioTimePitchAlgorithmSpectral, AVFileTypeMPEG4, AVMediaTypeAudio, AVMediaTypeVideo,
-    AVMutableComposition, AVURLAsset, AVVideoAverageBitRateKey, AVVideoCodecKey,
-    AVVideoCodecTypeH264, AVVideoCompressionPropertiesKey, AVVideoExpectedSourceFrameRateKey,
-    AVVideoHeightKey, AVVideoWidthKey,
+    AVAssetReader, AVAssetReaderAudioMixOutput, AVAssetReaderOutput, AVAssetReaderStatus,
+    AVAssetReaderTrackOutput, AVAssetTrack, AVAssetWriter, AVAssetWriterInput,
+    AVAssetWriterInputPixelBufferAdaptor, AVAssetWriterStatus, AVAudioTimePitchAlgorithmSpectral,
+    AVFileTypeMPEG4, AVMediaTypeAudio, AVMediaTypeVideo, AVMutableComposition, AVURLAsset,
+    AVVideoAverageBitRateKey, AVVideoCodecKey, AVVideoCodecTypeH264, AVVideoCodecTypeHEVC,
+    AVVideoCompressionPropertiesKey, AVVideoExpectedSourceFrameRateKey, AVVideoHeightKey,
+    AVVideoMaxKeyFrameIntervalDurationKey, AVVideoProfileLevelH264HighAutoLevel,
+    AVVideoProfileLevelKey, AVVideoWidthKey,
 };
 use objc2_core_foundation::CFRetained;
 use objc2_core_media::{CMSampleBuffer, CMTimeRange};
@@ -34,17 +37,23 @@ use objc2_core_video::{
     CVPixelBufferGetBytesPerRow, CVPixelBufferLockBaseAddress, CVPixelBufferLockFlags,
     CVPixelBufferUnlockBaseAddress,
 };
-use objc2_foundation::{NSDictionary, NSNumber, NSString, NSURL};
+use objc2_foundation::{NSArray, NSDictionary, NSNumber, NSString, NSURL};
 use parking_lot::Mutex;
 
 use super::media::{self, CaptureSource, SampleSink, SystemAudio};
 use crate::error::{AppError, AppResult};
-use crate::platform::types::{VideoEdit, VideoOptions};
+use crate::platform::types::{VideoEdit, VideoEncoding, VideoOptions};
 
 /// 编码器暂时收不下（`isReadyForMoreMediaData` 为假）时最多等多久
 const READY_WAIT: Duration = Duration::from_secs(2);
 /// 'aac '
 const AAC: u32 = 0x6161_6320;
+/// 'lpcm'
+const LPCM: u32 = 0x6c70_636d;
+/// '420v'：解码出来直接是编码器要的格式，省一次转换
+const YUV420V: u32 = 0x3432_3076;
+/// 导出时编码器多久没收下一个样本就算卡死
+const STALL: Duration = Duration::from_secs(20);
 
 /// 一条音轨。样本在声音的队列上写，结束时在编码线程上收尾，所以包一层锁
 struct AudioTrack {
@@ -128,7 +137,7 @@ fn number(v: u32) -> Retained<NSNumber> {
     NSNumber::new_u32(v)
 }
 
-fn audio_input(channels: u32) -> Option<Retained<AVAssetWriterInput>> {
+fn audio_input(channels: u32, realtime: bool) -> Option<Retained<AVAssetWriterInput>> {
     // SAFETY: AVFoundation 导出的常量
     let audio = unsafe { AVMediaTypeAudio }?;
     let settings = NSDictionary::<NSString, AnyObject>::from_slices(
@@ -151,8 +160,65 @@ fn audio_input(channels: u32) -> Option<Retained<AVAssetWriterInput>> {
             audio,
             Some(&settings),
         );
-        input.setExpectsMediaDataInRealTime(true);
+        input.setExpectsMediaDataInRealTime(realtime);
         Some(input)
+    }
+}
+
+/// 画面的编码设置：H.264（High）或 H.265，码率按画质算，关键帧最多隔 5 秒
+fn video_settings(
+    width: u32,
+    height: u32,
+    enc: VideoEncoding,
+) -> AppResult<Retained<NSDictionary<NSString, AnyObject>>> {
+    let bitrate = enc.bitrate(width, height);
+    // SAFETY: 都是 AVFoundation 导出的键和值，进程里一直有效
+    unsafe {
+        let (
+            Some(codec_key),
+            Some(width_key),
+            Some(height_key),
+            Some(props_key),
+            Some(bitrate_key),
+            Some(fps_key),
+            Some(keyframe_key),
+            Some(h264),
+            Some(hevc),
+        ) = (
+            AVVideoCodecKey,
+            AVVideoWidthKey,
+            AVVideoHeightKey,
+            AVVideoCompressionPropertiesKey,
+            AVVideoAverageBitRateKey,
+            AVVideoExpectedSourceFrameRateKey,
+            AVVideoMaxKeyFrameIntervalDurationKey,
+            AVVideoCodecTypeH264,
+            AVVideoCodecTypeHEVC,
+        )
+        else {
+            return Err(AppError::msg("系统不支持 H.264 编码"));
+        };
+        let rate = number(bitrate);
+        let fps = number(enc.fps.max(1));
+        let keyframe = NSNumber::new_f64(5.0);
+        let mut keys: Vec<&NSString> = vec![bitrate_key, fps_key, keyframe_key];
+        let mut values: Vec<&AnyObject> = vec![rate.as_ref(), fps.as_ref(), keyframe.as_ref()];
+        if !enc.hevc {
+            if let (Some(profile_key), Some(high)) =
+                (AVVideoProfileLevelKey, AVVideoProfileLevelH264HighAutoLevel)
+            {
+                keys.push(profile_key);
+                values.push(high.as_ref());
+            }
+        }
+        let props = NSDictionary::<NSString, AnyObject>::from_slices(&keys, &values);
+        let codec: &NSString = if enc.hevc { hevc } else { h264 };
+        let w = number(width);
+        let h = number(height);
+        Ok(NSDictionary::<NSString, AnyObject>::from_slices(
+            &[codec_key, width_key, height_key, props_key],
+            &[codec.as_ref(), w.as_ref(), h.as_ref(), props.as_ref()],
+        ))
     }
 }
 
@@ -180,43 +246,14 @@ impl VideoWriter {
         let writer = unsafe { AVAssetWriter::assetWriterWithURL_fileType_error(&url, file_type) }
             .map_err(|e| av_err("创建视频文件失败", Some(e)))?;
 
-        // 码率：屏幕内容按每像素每秒约 0.1 比特 × 帧率给，1080p30 大约 6 Mbps
-        let bitrate = (u64::from(width) * u64::from(height) * u64::from(fps.max(1)) / 10)
-            .clamp(1_000_000, 40_000_000) as u32;
-        // SAFETY: 都是 AVFoundation 导出的键
-        let settings = unsafe {
-            let keys = (
-                AVVideoCodecKey,
-                AVVideoWidthKey,
-                AVVideoHeightKey,
-                AVVideoCompressionPropertiesKey,
-                AVVideoAverageBitRateKey,
-                AVVideoExpectedSourceFrameRateKey,
-                AVVideoCodecTypeH264,
-            );
-            let (
-                Some(codec_key),
-                Some(width_key),
-                Some(height_key),
-                Some(props_key),
-                Some(bitrate_key),
-                Some(fps_key),
-                Some(h264),
-            ) = keys
-            else {
-                return Err(AppError::msg("系统不支持 H.264 编码"));
-            };
-            let props = NSDictionary::<NSString, AnyObject>::from_slices(
-                &[bitrate_key, fps_key],
-                &[number(bitrate).as_ref(), number(fps).as_ref()],
-            );
-            let w = number(width);
-            let h = number(height);
-            NSDictionary::<NSString, AnyObject>::from_slices(
-                &[codec_key, width_key, height_key, props_key],
-                &[h264.as_ref(), w.as_ref(), h.as_ref(), props.as_ref()],
-            )
-        };
+        let settings = video_settings(
+            width,
+            height,
+            VideoEncoding {
+                fps,
+                ..options.encoding
+            },
+        )?;
         // SAFETY: 设置字典的键值都是 AVFoundation 认的类型
         let input = unsafe {
             AVAssetWriterInput::assetWriterInputWithMediaType_outputSettings(
@@ -242,7 +279,7 @@ impl VideoWriter {
             if !on {
                 continue;
             }
-            let Some(track) = audio_input(channels) else {
+            let Some(track) = audio_input(channels, true) else {
                 continue;
             };
             // SAFETY: 还没开始写
@@ -453,15 +490,33 @@ impl Drop for VideoWriter {
     }
 }
 
-/// 剪辑 / 混音：从 `src` 取 `[start, end)` 一段、按倍速，导出到 `dst`。几条音轨混成一条；
-/// 变速时声音保持原来的音调。画面重新编码（系统的最高质量预设）。
+/// 剪辑 / 混音：从 `src` 取 `[start, end)` 一段、按倍速，重新编码到 `dst`。
+///
+/// 不用 AVAssetExportSession：它的预设只有"最高质量"这类，码率很高，剪一刀文件反而比原来大好几倍。
+/// 这里自己读（AVAssetReader，读组合好的那一段，变速由组合完成）、自己写（AVAssetWriter，
+/// 画面编码和录制时一样按 `encoding`）。`mix` 时几条音轨混成一条，否则每条各自保留；
+/// 变速时声音保持原来的音调。
 // 同步读轨道的老接口（新接口是异步回调），这里本来就在后台线程上等结果，用老的简单
 #[allow(deprecated)]
-pub fn export(src: &Path, dst: &Path, edit: VideoEdit) -> AppResult<()> {
+pub fn export(
+    src: &Path,
+    dst: &Path,
+    edit: VideoEdit,
+    encoding: VideoEncoding,
+    mix: bool,
+) -> AppResult<()> {
     let _ = std::fs::remove_file(dst);
     let src_url = NSURL::fileURLWithPath(&NSString::from_str(&src.to_string_lossy()));
     let dst_url = NSURL::fileURLWithPath(&NSString::from_str(&dst.to_string_lossy()));
-    // SAFETY: 常量有效；组合、轨道操作都在这个线程上，参数是刚建好的对象
+    // SAFETY: AVFoundation 导出的常量
+    let (Some(video_type), Some(audio_type), Some(file_type)) = (
+        unsafe { AVMediaTypeVideo },
+        unsafe { AVMediaTypeAudio },
+        unsafe { AVFileTypeMPEG4 },
+    ) else {
+        return Err(AppError::msg("系统不支持导出视频"));
+    };
+    // SAFETY: 组合、读写器都在这个线程上建和用，参数是刚建好的对象；样本缓冲只在这一轮里用
     unsafe {
         let asset = AVURLAsset::URLAssetWithURL_options(&src_url, None);
         let total = media::to_ns(asset.duration());
@@ -471,10 +526,7 @@ pub fn export(src: &Path, dst: &Path, edit: VideoEdit) -> AppResult<()> {
             return Err(AppError::msg("剪出来的片段太短了"));
         }
         let comp = AVMutableComposition::composition();
-        for (media_type, is_video) in [(AVMediaTypeVideo, true), (AVMediaTypeAudio, false)] {
-            let Some(media_type) = media_type else {
-                continue;
-            };
+        for media_type in [video_type, audio_type] {
             for track in asset.tracksWithMediaType(media_type).iter() {
                 // 这条轨道和要的那一段重叠的部分（声音可能比画面晚开始一点）
                 let range = track.timeRange();
@@ -501,9 +553,6 @@ pub fn export(src: &Path, dst: &Path, edit: VideoEdit) -> AppResult<()> {
                         err.localizedDescription()
                     )));
                 }
-                if is_video {
-                    dest.setPreferredTransform(track.preferredTransform());
-                }
             }
         }
         let length = end - start;
@@ -517,31 +566,174 @@ pub fn export(src: &Path, dst: &Path, edit: VideoEdit) -> AppResult<()> {
                 media::ns_time((length as f64 / speed) as i64),
             );
         }
-        let Some(session) = AVAssetExportSession::initWithAsset_presetName(
-            AVAssetExportSession::alloc(),
-            &comp,
-            AVAssetExportPresetHighestQuality,
-        ) else {
-            return Err(AppError::msg("系统不支持导出视频"));
+
+        // ── 读：画面解码成 420v，声音解码成 48k 立体声 PCM（几条混成一条，或各自一路） ──
+        let reader = AVAssetReader::assetReaderWithAsset_error(&comp)
+            .map_err(|e| av_err("读取视频失败", Some(e)))?;
+        let videos = comp.tracksWithMediaType(video_type);
+        let Some(vtrack) = videos.iter().next() else {
+            return Err(AppError::msg("视频里没有画面"));
         };
-        session.setOutputURL(Some(&dst_url));
-        session.setOutputFileType(AVFileTypeMPEG4);
-        if let Some(spectral) = AVAudioTimePitchAlgorithmSpectral {
-            session.setAudioTimePitchAlgorithm(spectral);
+        let size = vtrack.naturalSize();
+        let (w, h) = (
+            ((size.width.round() as u32) & !1).max(2),
+            ((size.height.round() as u32) & !1).max(2),
+        );
+        let pixel = NSDictionary::<NSString, AnyObject>::from_slices(
+            &[&*NSString::from_str("PixelFormatType")],
+            &[number(YUV420V).as_ref()],
+        );
+        let vout = AVAssetReaderTrackOutput::assetReaderTrackOutputWithTrack_outputSettings(
+            &vtrack,
+            Some(&pixel),
+        );
+        vout.setAlwaysCopiesSampleData(false);
+        reader.addOutput(&vout);
+
+        let pcm = NSDictionary::<NSString, AnyObject>::from_slices(
+            &[
+                &*NSString::from_str("AVFormatIDKey"),
+                &*NSString::from_str("AVSampleRateKey"),
+                &*NSString::from_str("AVNumberOfChannelsKey"),
+                &*NSString::from_str("AVLinearPCMBitDepthKey"),
+                &*NSString::from_str("AVLinearPCMIsFloatKey"),
+                &*NSString::from_str("AVLinearPCMIsBigEndianKey"),
+                &*NSString::from_str("AVLinearPCMIsNonInterleaved"),
+            ],
+            &[
+                number(LPCM).as_ref(),
+                NSNumber::new_f64(48_000.0).as_ref(),
+                number(2).as_ref(),
+                number(16).as_ref(),
+                NSNumber::new_bool(false).as_ref(),
+                NSNumber::new_bool(false).as_ref(),
+                NSNumber::new_bool(false).as_ref(),
+            ],
+        );
+        let audios = comp.tracksWithMediaType(audio_type);
+        let audio_tracks: Vec<Retained<AVAssetTrack>> = audios
+            .iter()
+            .map(|t| Retained::into_super(Retained::into_super(t)))
+            .collect();
+        let groups: Vec<Vec<&AVAssetTrack>> = if audio_tracks.is_empty() {
+            Vec::new()
+        } else if mix {
+            vec![audio_tracks.iter().map(|t| &**t).collect()]
+        } else {
+            audio_tracks.iter().map(|t| vec![&**t]).collect()
+        };
+        let mut aouts = Vec::new();
+        for group in groups {
+            let out =
+                AVAssetReaderAudioMixOutput::assetReaderAudioMixOutputWithAudioTracks_audioSettings(
+                    &NSArray::from_slice(&group),
+                    Some(&pcm),
+                );
+            out.setAlwaysCopiesSampleData(false);
+            if let Some(spectral) = AVAudioTimePitchAlgorithmSpectral {
+                out.setAudioTimePitchAlgorithm(spectral);
+            }
+            if reader.canAddOutput(&out) {
+                reader.addOutput(&out);
+                aouts.push(Retained::into_super(out));
+            }
+        }
+
+        // ── 写：画面按 encoding 编码，声音 AAC ──
+        let writer = AVAssetWriter::assetWriterWithURL_fileType_error(&dst_url, file_type)
+            .map_err(|e| av_err("创建视频文件失败", Some(e)))?;
+        let settings = video_settings(w, h, encoding)?;
+        let vin = AVAssetWriterInput::assetWriterInputWithMediaType_outputSettings(
+            video_type,
+            Some(&settings),
+        );
+        vin.setExpectsMediaDataInRealTime(false);
+        vin.setTransform(vtrack.preferredTransform());
+        writer.addInput(&vin);
+        let mut pairs: Vec<(
+            Retained<AVAssetReaderOutput>,
+            Retained<AVAssetWriterInput>,
+            bool,
+        )> = vec![(Retained::into_super(vout), vin, false)];
+        for out in aouts {
+            let Some(ain) = audio_input(2, false) else {
+                continue;
+            };
+            if writer.canAddInput(&ain) {
+                writer.addInput(&ain);
+                pairs.push((out, ain, false));
+            }
+        }
+        if !writer.startWriting() {
+            return Err(av_err("开始写视频失败", writer.error()));
+        }
+        if !reader.startReading() {
+            writer.cancelWriting();
+            return Err(av_err("读取视频失败", reader.error()));
+        }
+        writer.startSessionAtSourceTime(media::ns_time(0));
+
+        // 一个线程轮流喂：哪路编码器收得下就往哪路塞（写入器要画面、声音交错着来，只喂一路会卡住）
+        let mut last_progress = Instant::now();
+        loop {
+            let mut progressed = false;
+            let mut pending = false;
+            for (out, input, done) in pairs.iter_mut() {
+                if *done {
+                    continue;
+                }
+                pending = true;
+                while input.isReadyForMoreMediaData() {
+                    match out.copyNextSampleBuffer() {
+                        Some(buffer) => {
+                            if !input.appendSampleBuffer(&buffer) {
+                                reader.cancelReading();
+                                return Err(av_err("导出视频失败", writer.error()));
+                            }
+                        }
+                        None => {
+                            input.markAsFinished();
+                            *done = true;
+                        }
+                    }
+                    progressed = true;
+                    if *done {
+                        break;
+                    }
+                }
+            }
+            if !pending {
+                break;
+            }
+            if reader.status() == AVAssetReaderStatus::Failed {
+                writer.cancelWriting();
+                return Err(av_err("读取视频失败", reader.error()));
+            }
+            if writer.status() == AVAssetWriterStatus::Failed {
+                reader.cancelReading();
+                return Err(av_err("导出视频失败", writer.error()));
+            }
+            if progressed {
+                last_progress = Instant::now();
+            } else if last_progress.elapsed() > STALL {
+                reader.cancelReading();
+                writer.cancelWriting();
+                return Err(AppError::msg("导出视频卡住了"));
+            } else {
+                std::thread::sleep(Duration::from_millis(2));
+            }
         }
         let (tx, rx) = mpsc::channel::<()>();
         let done = RcBlock::new(move || {
             let _ = tx.send(());
         });
-        session.exportAsynchronouslyWithCompletionHandler(&done);
-        // 导出比录的时长快得多；给足时间（一小时的视频也够）
-        if rx.recv_timeout(Duration::from_secs(1800)).is_err() {
-            session.cancelExport();
-            return Err(AppError::msg("导出视频超时"));
+        writer.finishWritingWithCompletionHandler(&done);
+        if rx.recv_timeout(Duration::from_secs(60)).is_err() {
+            return Err(AppError::msg("写视频文件超时"));
         }
-        match session.status() {
-            AVAssetExportSessionStatus::Completed => Ok(()),
-            _ => Err(av_err("导出视频失败", session.error())),
+        match writer.status() {
+            AVAssetWriterStatus::Completed => Ok(()),
+            _ => Err(av_err("导出视频失败", writer.error())),
         }
     }
 }
@@ -565,6 +757,7 @@ mod tests {
             VideoOptions {
                 system_audio: true,
                 microphone: false,
+                encoding: VideoEncoding::default(),
             },
         )
         .unwrap();
@@ -590,8 +783,27 @@ mod tests {
                 end_ms: 1500,
                 speed: 2.0,
             },
+            VideoEncoding::default(),
+            true,
         )
         .unwrap();
-        println!("ok: {} {}", raw.display(), cut.display());
+        // H.265、音轨不混
+        let hevc = dir.join("cut-hevc.mp4");
+        export(
+            &raw,
+            &hevc,
+            VideoEdit {
+                start_ms: 0,
+                end_ms: 2000,
+                speed: 1.0,
+            },
+            VideoEncoding {
+                hevc: true,
+                ..VideoEncoding::default()
+            },
+            false,
+        )
+        .unwrap();
+        println!("ok: {} {} {}", raw.display(), cut.display(), hevc.display());
     }
 }

@@ -57,6 +57,7 @@ pub async fn capture_structure(
     monitor_id: u64,
     rect: PhysicalRect,
     kind: String,
+    engine: Option<String>,
 ) -> AppResult<String> {
     let image = {
         let app = app.clone();
@@ -73,7 +74,127 @@ pub async fn capture_structure(
         })
         .await?
     };
+    // 表格默认本地识别（快、不联网）；要 AI 时页面传 engine = ai
+    if kind == "table" && engine.as_deref() != Some("ai") {
+        return blocking(move || crate::ocr::table_local(&app, &image)).await;
+    }
     crate::ocr::structure_image(&app, &image, &kind).await
+}
+
+/// 选区里看起来有没有表格（有格子线）：截图工具条的「识别」按钮换成表格图标、亮个小点
+#[tauri::command]
+pub async fn capture_detect_table(
+    app: AppHandle,
+    session_id: u64,
+    monitor_id: u64,
+    rect: PhysicalRect,
+) -> AppResult<bool> {
+    blocking(move || {
+        let session = state(&app)
+            .capture
+            .current()
+            .filter(|s| s.id == session_id)
+            .ok_or_else(|| AppError::msg("截图会话已结束"))?;
+        let shot = session
+            .monitor(MonitorId(monitor_id))
+            .ok_or_else(|| AppError::msg("显示器不存在"))?;
+        // 不缩小：一像素的表格线缩一半就淡得认不出了。逐像素比一遍，几百万像素也就几十毫秒
+        let image = crate::imaging::crop_opaque(&shot.image, rect)?;
+        Ok(crate::ocr::table::looks_like_table(&image))
+    })
+    .await
+}
+
+/// 截图会话里一块屏上的选区原图
+fn selection_image(
+    app: &AppHandle,
+    session_id: u64,
+    monitor_id: u64,
+    rect: PhysicalRect,
+) -> AppResult<image::RgbaImage> {
+    let session = state(app)
+        .capture
+        .current()
+        .filter(|s| s.id == session_id)
+        .ok_or_else(|| AppError::msg("截图会话已结束"))?;
+    let shot = session
+        .monitor(MonitorId(monitor_id))
+        .ok_or_else(|| AppError::msg("显示器不存在"))?;
+    crate::imaging::crop_opaque(&shot.image, rect)
+}
+
+/// 原位识别出来的表格：每格的位置和样式，加上底图（字抹掉的选区）和原图在图片仓库里的编号
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CaptureTable {
+    pub table: ocr::table::LaidTable,
+    pub background: String,
+    pub source: String,
+}
+
+/// 截图界面里「识别表格」：本地认出表格，原位盖在原来的表格上（像截图翻译那样）。
+/// 两张图的编号以 `cap-<会话>-` 开头，截图结束时跟着冻结的画面一起清掉
+#[tauri::command]
+pub async fn capture_table(
+    app: AppHandle,
+    session_id: u64,
+    monitor_id: u64,
+    rect: PhysicalRect,
+) -> AppResult<CaptureTable> {
+    static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    blocking(move || {
+        let image = selection_image(&app, session_id, monitor_id, rect)?;
+        let (table, background) = ocr::table_layout(&app, &image)?;
+        let n = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let (bg_id, src_id) = (
+            format!("cap-{session_id}-table{n}-bg"),
+            format!("cap-{session_id}-table{n}-src"),
+        );
+        let st = state(&app);
+        st.images
+            .put(bg_id.clone(), std::sync::Arc::new(background));
+        st.images.put(src_id.clone(), std::sync::Arc::new(image));
+        Ok(CaptureTable {
+            table,
+            background: bg_id,
+            source: src_id,
+        })
+    })
+    .await
+}
+
+/// 选区的底色和字色（原位显示公式用），再把选区原图放进图片仓库（左边给用户对照）
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RegionStyle {
+    pub background: String,
+    pub color: String,
+    pub source: String,
+}
+
+#[tauri::command]
+pub async fn capture_region_style(
+    app: AppHandle,
+    session_id: u64,
+    monitor_id: u64,
+    rect: PhysicalRect,
+) -> AppResult<RegionStyle> {
+    static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    blocking(move || {
+        let image = selection_image(&app, session_id, monitor_id, rect)?;
+        let (background, color) = ocr::table::region_colors(&image);
+        let n = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let source = format!("cap-{session_id}-region{n}-src");
+        state(&app)
+            .images
+            .put(source.clone(), std::sync::Arc::new(image));
+        Ok(RegionStyle {
+            background,
+            color,
+            source,
+        })
+    })
+    .await
 }
 
 /// 截图时把鼠标下的颜色贴到屏幕上（颜色贴图）。`x`、`y` 是这块屏的局部物理坐标。
@@ -98,6 +219,44 @@ pub async fn capture_pin_color(
     pin::create_color(&app, rgb, at, shot.info.scale_factor)?;
     capture::end_session(&app, session_id, true);
     Ok(())
+}
+
+/// 遮罩收到了点击 / 按键，页面上却没有截图会话：没在截图（也没在长截图、录制）的话把它收起来。
+/// 正常不会发生；万一遮罩被留在了屏幕上，点一下就能自己消失，不用再按一次截图热键。
+#[tauri::command]
+pub async fn capture_overlay_stray(app: AppHandle, window: tauri::WebviewWindow) -> AppResult<()> {
+    let st = state(&app);
+    if st.capture.current().is_some() || st.longshot.is_active() || crate::gif_record::is_active() {
+        return Ok(());
+    }
+    tracing::warn!(label = window.label(), "没有截图会话的遮罩还在屏幕上，收起");
+    app.run_on_main_thread(move || {
+        let _ = window.set_ignore_cursor_events(false);
+        platform::set_overlay_capturable(&window, false);
+        platform::park_overlay(&window);
+        platform::backdrop::release_all();
+    })?;
+    Ok(())
+}
+
+/// 截图框选界面元素：鼠标（屏幕物理坐标）下面的元素，由里到外
+#[tauri::command]
+pub async fn capture_elements_at(
+    handle: u64,
+    x: i32,
+    y: i32,
+) -> AppResult<Vec<platform::UiElement>> {
+    blocking(move || platform::elements_at(WindowHandle(handle), x, y)).await
+}
+
+/// 鼠标附近的界面元素（同一行的其他格、其他行……），遮罩先存着
+#[tauri::command]
+pub async fn capture_elements_near(
+    handle: u64,
+    x: i32,
+    y: i32,
+) -> AppResult<Vec<platform::UiElement>> {
+    blocking(move || platform::elements_near(WindowHandle(handle), x, y)).await
 }
 
 /// 识别选区里的二维码 / 条码。位置换成这块屏的局部坐标（和选区一样）。
@@ -197,6 +356,37 @@ pub async fn longshot_set_regions(app: AppHandle, regions: Vec<PhysicalRect>) ->
 #[tauri::command]
 pub async fn gif_set_regions(regions: Vec<PhysicalRect>) -> AppResult<()> {
     crate::gif_record::set_regions(regions);
+    Ok(())
+}
+
+/// 录制中拖了选区右下角的把手：录制区域挪到 `rect`（本屏局部物理坐标）
+#[tauri::command]
+pub async fn gif_move_to(rect: PhysicalRect) -> AppResult<()> {
+    crate::gif_record::move_to(rect);
+    Ok(())
+}
+
+/// 页面画好的一排字形（`0123456789:/` 这些，PNG 的 base64）：动图底下画播放时间时用。
+/// `chars` 里每个字在图里的横向位置 `xs`、宽度 `widths`
+#[tauri::command]
+pub async fn record_glyphs(
+    png: String,
+    chars: String,
+    xs: Vec<u32>,
+    widths: Vec<u32>,
+) -> AppResult<()> {
+    use base64::Engine;
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(png.trim_start_matches("data:image/png;base64,"))
+        .map_err(|e| AppError::msg(format!("字形图不对：{e}")))?;
+    let atlas = crate::imaging::decode(&bytes)?;
+    let chars = chars
+        .chars()
+        .zip(xs)
+        .zip(widths)
+        .map(|((c, x), w)| (c, x, w))
+        .collect();
+    crate::record_fx::set_glyphs(crate::record_fx::Glyphs { atlas, chars });
     Ok(())
 }
 

@@ -1,7 +1,8 @@
 //! 录完先剪辑（设置 → 录制 → 录完先剪辑）：录好的 GIF / 视频先放在临时目录，打开剪辑窗口，
 //! 用户掐头去尾、选倍速后再保存。
 //!
-//! - 视频：系统的 AVAssetExportSession 取一段、变速（声音保持音调），两条音轨顺带混成一条
+//! - 视频：取一段、变速（声音保持音调），按设置里的画质 / 编码器重新编码；两条音轨顺带混成一条
+//!   （设置里开了"独立音轨"就各自保留）
 //! - GIF：解码、只留那一段、按倍速改帧间隔，重新编码
 //!
 //! 剪辑窗口直接关掉 = 按原样保存（录好的东西不会因为手滑丢掉）；要扔掉得点"不要了"。
@@ -17,6 +18,7 @@ use tauri::{AppHandle, Emitter, Manager, WindowEvent};
 use crate::error::{AppError, AppResult};
 use crate::gif_record::{self, RecordFormat, Stats};
 use crate::platform::{self, VideoEdit};
+use crate::state::state;
 use crate::{events, wm};
 
 pub const WINDOW: &str = "recedit";
@@ -188,7 +190,8 @@ fn close_window(app: &AppHandle) {
     });
 }
 
-/// 收尾：要剪辑的先剪，视频有两条音轨的混成一条，然后保存。出错就提示，原文件尽量照样保存。
+/// 收尾：要剪辑的先剪，视频有两条音轨的混成一条（开了"独立音轨"就不混），动图要画进度条 / 播放时间的
+/// 重新编码一遍，然后保存。出错就提示，原文件尽量照样保存。
 pub fn finalize(
     app: &AppHandle,
     tmp: &Path,
@@ -200,7 +203,15 @@ pub fn finalize(
     let edit = edit.filter(|e| {
         e.start_ms > 0 || e.end_ms + 50 < stats.duration_ms || (e.speed - 1.0).abs() > 0.001
     });
-    let needs_export = edit.is_some() || (format == RecordFormat::Mp4 && stats.audio_tracks > 1);
+    let rec = state(app).settings.read().record.clone();
+    let mix = !rec.separate_audio_tracks;
+    let decor = format
+        .is_animation()
+        .then(|| crate::record_fx::Decor::from_settings(&rec))
+        .flatten();
+    let needs_export = edit.is_some()
+        || decor.is_some()
+        || (format == RecordFormat::Mp4 && stats.audio_tracks > 1 && mix);
     if !needs_export {
         report(app, gif_record::save(app, tmp, stats, format), format);
         return;
@@ -217,16 +228,35 @@ pub fn finalize(
             .unwrap_or_default(),
         format.ext()
     ));
-    wm::toast(app, "info", "正在导出…");
+    if edit.start_ms > 0
+        || (edit.speed - 1.0).abs() > 0.001
+        || edit.end_ms + 50 < stats.duration_ms
+        || format == RecordFormat::Mp4
+    {
+        wm::toast(app, "info", "正在导出…");
+    }
     let started = std::time::Instant::now();
     let result = match format {
-        RecordFormat::Mp4 => platform::export_video(tmp, &out, edit).map(|()| Stats {
-            duration_ms: ((edit.end_ms.min(stats.duration_ms)
-                - edit.start_ms.min(stats.duration_ms)) as f64
-                / edit.speed.clamp(0.25, 4.0)) as u64,
-            ..stats.clone()
-        }),
-        RecordFormat::Gif => gif_record::edit_gif(tmp, &out, edit),
+        RecordFormat::Mp4 => {
+            platform::export_video(tmp, &out, edit, gif_record::video_encoding(&rec), mix).map(
+                |()| Stats {
+                    duration_ms: ((edit.end_ms.min(stats.duration_ms)
+                        - edit.start_ms.min(stats.duration_ms))
+                        as f64
+                        / edit.speed.clamp(0.25, 4.0)) as u64,
+                    ..stats.clone()
+                },
+            )
+        }
+        _ => gif_record::rework_animation(
+            tmp,
+            &out,
+            format,
+            edit,
+            stats.duration_ms,
+            rec.gif_loop,
+            decor,
+        ),
     };
     tracing::info!(
         elapsed_ms = started.elapsed().as_millis() as u64,

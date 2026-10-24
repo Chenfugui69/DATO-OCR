@@ -2,7 +2,7 @@
 // 表格的格子能直接改，改完复制 / 导出；按住眼睛按钮能看一眼原图。
 // 复制完就结束截图（和二维码卡片一样），导出前先结束截图，保存对话框才不会被遮罩挡住。
 
-import { Eye, FileSearch, RotateCw, X } from 'lucide-react';
+import { Eye, FileSearch, RotateCw, Sparkles, X } from 'lucide-react';
 import { useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
@@ -10,7 +10,7 @@ import { useElementSize } from '@/lib/hooks';
 import { capture, system } from '@/lib/ipc';
 import { Button, EmptyState, Spinner } from '@/ui/controls';
 import { notify } from '@/ui/overlays';
-import { FormulaView, TableView, type StructuredHooks, type StructuredState } from '@/views/ocr/StructuredResult';
+import { canAskAi, FormulaView, TableView, type StructuredHooks, type StructuredState } from '@/views/ocr/StructuredResult';
 
 import type { Rect } from './geometry';
 
@@ -31,7 +31,8 @@ export function StructuredCard({
   s: number;
   viewport: { width: number; height: number };
   onClose: () => void;
-  onRetry: () => void;
+  /** 再识别一次；`engine` = ai 时换 AI 看图 */
+  onRetry: (engine?: 'local' | 'ai') => void;
   /** 复制完 / 要导出：结束这次截图 */
   onDone: () => void;
 }) {
@@ -44,7 +45,8 @@ export function StructuredCard({
   const width = Math.min(Math.max(sel.width, MIN_W), viewport.width - 16);
   const x = Math.max(8, Math.min(sel.x, viewport.width - size.width - 8));
   const y = Math.max(8, Math.min(sel.y, viewport.height - size.height - 8));
-  const maxHeight = Math.max(MIN_H, Math.min(viewport.height - 16, Math.max(sel.height, viewport.height * 0.6)));
+  // 不比选区高（表格在卡片里滚动），免得盖住选区下面的工具条；选区太矮时至少 MIN_H
+  const maxHeight = Math.max(MIN_H, Math.min(viewport.height - 16, sel.height));
 
   const hooks: StructuredHooks = {
     onCopied: (message) => {
@@ -67,6 +69,12 @@ export function StructuredCard({
     >
       <div className="cap-struct__head">
         <span className="cap-struct__title">{title}</span>
+        {canAskAi(state) && (
+          <button type="button" className="cap-struct__ai" title={t('ocr.structured.askAiTip')} onClick={() => onRetry('ai')}>
+            <Sparkles size={12} strokeWidth={1.75} />
+            {t('ocr.structured.askAi')}
+          </button>
+        )}
         {state.status === 'done' && (
           <button
             type="button"
@@ -96,7 +104,7 @@ export function StructuredCard({
             title={t('ocr.structured.failed')}
             description={state.error ?? ''}
             action={
-              <Button size="sm" icon={RotateCw} onClick={onRetry}>
+              <Button size="sm" icon={RotateCw} onClick={() => onRetry(state.engine)}>
                 {t('common.retry')}
               </Button>
             }

@@ -385,7 +385,7 @@ pub fn close_all(app: &AppHandle) {
 /// 颜色贴图的窗口标签前缀；后面跟 6 位十六进制颜色和一个随机后缀，页面从标签里读颜色
 pub const COLOR_PREFIX: &str = "pin-color-";
 /// 颜色贴图收起时的大小（逻辑像素，含阴影的留边）
-const COLOR_SIZE: (f64, f64) = (176.0, 60.0);
+const COLOR_SIZE: (f64, f64) = (200.0, 60.0);
 
 /// 颜色贴图（截图时取色，按 P）：屏幕上一张小卡片，色块 + HEX，点开看 RGB / HSL、复制。
 /// `at`：卡片左上角的屏幕物理坐标（鼠标位置）。

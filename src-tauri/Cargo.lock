@@ -800,6 +800,7 @@ dependencies = [
  "objc2",
  "objc2-app-kit",
  "objc2-av-foundation",
+ "objc2-avf-audio",
  "objc2-core-foundation",
  "objc2-core-graphics",
  "objc2-core-media",
@@ -809,6 +810,7 @@ dependencies = [
  "objc2-screen-capture-kit",
  "objc2-vision",
  "parking_lot",
+ "png 0.18.1",
  "qrcode",
  "rand_core 0.6.4",
  "reqwest 0.12.28",
@@ -3378,6 +3380,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "objc2-audio-toolbox"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6948501a91121d6399b79abaa33a8aa4ea7857fe019f341b8c23ad6e81b79b08"
+dependencies = [
+ "bitflags 2.13.1",
+ "block2",
+ "objc2",
+ "objc2-foundation",
+]
+
+[[package]]
 name = "objc2-av-foundation"
 version = "0.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3406,7 +3420,11 @@ version = "0.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "13a380031deed8e99db00065c45937da434ca987c034e13b87e4441f9e4090be"
 dependencies = [
+ "bitflags 2.13.1",
+ "block2",
  "objc2",
+ "objc2-audio-toolbox",
+ "objc2-core-audio-types",
  "objc2-foundation",
 ]
 

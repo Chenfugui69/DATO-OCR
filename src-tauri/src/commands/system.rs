@@ -289,6 +289,40 @@ pub async fn show_main(app: AppHandle, page: Option<String>) -> AppResult<()> {
     Ok(())
 }
 
+/// 朗读（翻译面板的小喇叭）。返回错误 "unsupported" 时页面改用浏览器的语音合成
+#[tauri::command]
+pub async fn speak(app: AppHandle, text: String, lang: String) -> AppResult<()> {
+    let sp = crate::state::state(&app)
+        .settings
+        .read()
+        .translate
+        .speech
+        .clone();
+    let options = crate::platform::SpeakOptions {
+        rate: sp.rate,
+        pitch: sp.pitch,
+        voices: sp.voices,
+    };
+    crate::platform::speak(&text, &lang, &options)
+}
+
+#[tauri::command]
+pub async fn speak_stop() -> AppResult<()> {
+    crate::platform::stop_speaking();
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn speak_status() -> AppResult<bool> {
+    Ok(crate::platform::is_speaking())
+}
+
+/// 系统里装好的朗读声音（设置页选声音用）
+#[tauri::command]
+pub async fn speak_voices() -> AppResult<Vec<crate::platform::Voice>> {
+    Ok(crate::platform::voices())
+}
+
 /// 前端要在截图遮罩关掉之后再提示一句（遮罩里的提示随遮罩一起没了）：走右下角的 toast。
 #[tauri::command]
 pub async fn toast_show(app: AppHandle, kind: String, message: String) -> AppResult<()> {
@@ -412,6 +446,19 @@ pub async fn window_placement(
     window: tauri::WebviewWindow,
 ) -> AppResult<Option<crate::platform::WindowPlacement>> {
     Ok(crate::platform::window_placement(&window))
+}
+
+/// 让某个浮层（截图遮罩、划词面板……）当键盘焦点窗口。页面别用 `setFocus()`：它会激活整个应用，
+/// 主窗口开着的话也会跟着跑到最前面；浮层是不激活应用的面板，这里只让它自己拿焦点。
+#[tauri::command]
+pub async fn window_take_focus(app: AppHandle, label: String) -> AppResult<()> {
+    use tauri::Manager;
+    if let Some(w) = app.get_webview_window(&label) {
+        if w.is_visible().unwrap_or(false) {
+            crate::platform::take_focus(&w)?;
+        }
+    }
+    Ok(())
 }
 
 /// 鼠标已经按在窗口边上：跟着鼠标改大小。返回 false = 页面改用 Tauri 的 `startResizeDragging`。

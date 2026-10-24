@@ -1,6 +1,8 @@
 // 划词翻译面板：鼠标 / 划词按钮旁边弹出，点外面或 Esc 关闭。
 //
 // - 顶部默认不显示原文（设置里可开），语言那一行右侧是"问 AI"和关闭；底部一条"问 AI"输入框
+// - 输入翻译（热键 / 托盘）：同一个面板，顶上是输入框，打字停一下就翻；默认钉住（点外面不收，免得打的字没了）
+// - 原文、译文旁边都有小喇叭，点一下朗读
 // - 外观（宽高、字号、不透明度、圆角、毛玻璃）按设置；右下角手柄拖拽改大小，改完记进设置
 // - 问 AI 有两种展开方式（设置里选）：
 //   - 抽屉（默认）：面板往下长高，对话区像一张卡片从底部往上滑出来，压在翻译上面；
@@ -25,8 +27,10 @@ import { useEvent } from '@/lib/events';
 import { isMac } from '@/lib/platform';
 import { ai, system, translate } from '@/lib/ipc';
 import { useSettings, useSettingsStore } from '@/lib/settings';
+import { stopSpeaking } from '@/lib/speech';
 import type { ChatTurn } from '@/lib/types';
 import { IconButton } from '@/ui/controls';
+import { SpeakButton } from '@/ui/SpeakButton';
 import { AiChat } from '@/views/ai/AiChat';
 
 import { TranslateBox } from './TranslateBox';
@@ -182,6 +186,9 @@ export default function TranslatePopup() {
   const [question, setQuestion] = useState('');
   /** 原文在编辑：点原文那一栏就变成输入框，改完自动重翻 */
   const [editingSource, setEditingSource] = useState(false);
+  /** 输入翻译：原文一直是输入框 */
+  const [inputMode, setInputMode] = useState(false);
+  const sourceRef = useRef<HTMLTextAreaElement>(null);
   const [pendingAsk, setPendingAsk] = useState<{ id: number; text: string } | null>(null);
   /** 侧边：翻译卡片宽度；抽屉：翻译区高度（逻辑像素） */
   const [transW, setTransW] = useState(440);
@@ -241,6 +248,19 @@ export default function TranslatePopup() {
     setQuestion('');
     setPendingAsk(null);
   }, []);
+  /** 进入 / 退出输入翻译。进入时钉住面板、光标放进输入框 */
+  const inputRef = useRef(false);
+  const enterInput = useCallback((on: boolean) => {
+    // 从输入翻译换成划词翻译：输入翻译时自动加的钉住拿掉
+    if (inputRef.current && !on) setPinned(false);
+    inputRef.current = on;
+    setInputMode(on);
+    if (on) {
+      setEditingSource(true);
+      setPinned(true);
+      window.setTimeout(() => sourceRef.current?.focus(), 30);
+    }
+  }, []);
   // 设置页里的预览：点外面、失焦都不收起（用户正在主窗口里调设置），由设置页来收
   const previewRef = useRef(false);
   // 出场 / 收起（Windows）：面板是同一个窗口藏了又显示，CSS 的入场动画只在页面第一次挂上时播一遍，
@@ -271,6 +291,7 @@ export default function TranslatePopup() {
     setTopSpace(p.reserve ?? 0);
     setSheet(null);
     adopt(p.text);
+    enterInput(!!p.input);
     appear();
   });
   // 面板第一次出现时页面可能还没加载完、错过了事件，加载好后主动取一次
@@ -280,13 +301,19 @@ export default function TranslatePopup() {
       .then((current) => current && adopt(current))
       .catch(() => undefined);
     translate
+      .popupInput()
+      .then((input) => input && enterInput(true))
+      .catch(() => undefined);
+    translate
       .popupReserve()
       .then(setTopSpace)
       .catch(() => undefined);
-  }, [adopt]);
+  }, [adopt, enterInput]);
 
   // 设置页的预览是原生"显示但不激活"亮出来的，Tauri 的 hide() 藏不掉它；交给后端收（顺便让设置页把开关拨回去）
   const hide = useCallback(() => {
+    // 收起面板时正在读的也停下（窗口只是藏起来，按钮还在，不会自己停）
+    stopSpeaking();
     if (previewRef.current) {
       shownRef.current = false;
       void translate.popupPreview(false).catch(() => undefined);
@@ -318,10 +345,10 @@ export default function TranslatePopup() {
     window.clearTimeout(moveTimer.current);
     moveTimer.current = window.setTimeout(() => {
       userMoving.current = false;
-      // 拖完把焦点要回来，之后点外面才能照常收起
+      // 拖完把焦点要回来，之后点外面才能照常收起。不用 setFocus()：它会激活整个应用，主窗口也跟着跑到最前面
       const w = getCurrentWindow();
       void (async () => {
-        if (!(await w.isFocused()) && (await w.isVisible())) await w.setFocus();
+        if (!(await w.isFocused()) && (await w.isVisible())) await system.takeFocus(w.label);
       })();
     }, ms);
   }, []);
@@ -713,28 +740,35 @@ export default function TranslatePopup() {
           key={seq}
           style={paneStyle}
         >
-          {popup?.showSource &&
-            (editingSource ? (
-              <textarea
-                className="pop__source pop__source--edit"
-                autoFocus
-                value={text}
-                onChange={(e) => setText(e.target.value)}
-                onBlur={() => setEditingSource(false)}
-                onKeyDown={(e) => {
-                  // Esc 只退出编辑，不关面板
-                  if (e.key === 'Escape') {
-                    e.stopPropagation();
-                    setEditingSource(false);
-                  }
-                }}
-              />
-            ) : (
-              <div className="pop__source" title={t('translate.editSource')} onPointerDown={dragBySource} onClick={() => setEditingSource(true)}>
-                {text}
-              </div>
-            ))}
+          {(popup?.showSource || inputMode) && (
+            <div className="pop__source-wrap">
+              {editingSource || inputMode ? (
+                <textarea
+                  ref={sourceRef}
+                  className={`pop__source pop__source--edit${inputMode ? ' pop__source--input' : ''}`}
+                  autoFocus
+                  value={text}
+                  placeholder={inputMode ? t('translate.inputPlaceholder') : undefined}
+                  onChange={(e) => setText(e.target.value)}
+                  onBlur={() => !inputMode && setEditingSource(false)}
+                  onKeyDown={(e) => {
+                    // 输入翻译里 Esc 照常关面板；编辑划词原文时 Esc 只退出编辑
+                    if (e.key === 'Escape' && !inputMode) {
+                      e.stopPropagation();
+                      setEditingSource(false);
+                    }
+                  }}
+                />
+              ) : (
+                <div className="pop__source" title={t('translate.editSource')} onPointerDown={dragBySource} onClick={() => setEditingSource(true)}>
+                  {text}
+                </div>
+              )}
+              {text.trim() && <SpeakButton className="pop__speak" text={text} label={t('translate.speakSource')} />}
+            </div>
+          )}
           <div className="pop__body">
+            {inputMode && !text.trim() && <div className="pop__input-hint">{t('translate.inputHint')}</div>}
             {text && (
               <TranslateBox
                 text={text}
@@ -932,6 +966,13 @@ html:not([data-platform='mac'])[data-theme='light'] .pop-shell.is-blur {
 .pop__source::before { content: ''; position: absolute; left: 6px; top: 1px; bottom: 1px; width: 2.5px; border-radius: 2px; background: var(--cn-accent); opacity: 0.75; }
 .pop__source:hover { background: var(--cn-fill-tertiary); }
 .pop__source--edit { width: calc(100% - 24px); padding: 7px 10px; border-width: 0; box-shadow: inset 0 0 0 1.5px var(--cn-accent); background: var(--cn-bg-elevated); }
+/* 原文外面一层：右上角放朗读按钮，原文给它让出位置 */
+.pop__source-wrap { position: relative; flex: none; }
+.pop__source-wrap .pop__source { padding-right: 32px; }
+.pop__speak { position: absolute; top: 12px; right: 16px; }
+/* 输入翻译：输入框大一点、字正常大小 */
+.pop__source--input { min-height: 64px; max-height: 160px; font: var(--cn-text-body); }
+.pop__input-hint { padding: 18px 16px; color: var(--cn-label-tertiary); font: var(--cn-text-callout); }
 /* 语言：两颗胶囊，中间的对调按钮点一下转半圈 */
 .pop-pane--translate .tr-box__langs { gap: 2px; }
 .pop-pane--translate .tr-box__langs .cn-select-trigger { height: 28px; padding: 0 7px 0 12px; border-radius: 999px; background: var(--cn-fill-quaternary);

@@ -18,6 +18,7 @@ import {
   Plus,
   Ruler,
   ScanQrCode,
+  ScanSearch,
   Shapes,
   Stamp,
   ScanText,
@@ -28,7 +29,6 @@ import {
   Undo2,
   Sigma,
   Table2,
-  Video,
   ZoomIn,
   X,
   type LucideIcon,
@@ -59,10 +59,10 @@ import {
 import { deleteTemplate, listTemplates, type AnnotationTemplate } from './templates';
 
 /** `undo` 放进哪一组，撤销按钮就排在那一组里；哪组都没有就单独排在绘制工具后面 */
-export type ActionId = 'ocr' | 'translate' | 'qr' | 'table' | 'formula' | 'ai' | 'longshot' | 'gif' | 'video' | 'pin' | 'save' | 'cancel' | 'done' | 'undo';
+export type ActionId = 'ocr' | 'translate' | 'qr' | 'table' | 'formula' | 'ai' | 'longshot' | 'record' | 'pin' | 'save' | 'cancel' | 'done' | 'undo';
 
 type IconProps = { size?: number | string; strokeWidth?: number | string; absoluteStrokeWidth?: boolean };
-type ActionIcon = React.ComponentType<IconProps>;
+export type ActionIcon = React.ComponentType<IconProps>;
 
 // 识字、长截图、GIF 原来三个图标都是"方框里几道线"，挤在一起很容易点错。长截图和 GIF 是自己画的，
 // 画法跟 lucide 一致（24 的画布、同样粗细的圆头线条、占位接近正方形），放在一排里不显得是另一套：
@@ -90,7 +90,7 @@ const LongshotIcon: ActionIcon = ({ size = 18, strokeWidth = 1.5 }) => (
 );
 
 /** GIF：方框里用线条写的 G、I、F */
-const GifIcon: ActionIcon = ({ size = 18, strokeWidth = 1.5 }) => (
+export const GifIcon: ActionIcon = ({ size = 18, strokeWidth = 1.5 }) => (
   <svg {...svgProps(size, strokeWidth)}>
     <rect x="3" y="3" width="18" height="18" rx="3" />
     <path d="M9.6 10.2a2.1 2.1 0 1 0 .4 3.3V12H8.8M12.6 9.6v4.8M15.4 14.4V9.6h2.4M15.4 12.1h1.9" />
@@ -120,6 +120,15 @@ export const TOOL_ICONS: Record<Tool, LucideIcon | ActionIcon> = {
   eraser: Eraser,
 };
 
+/** 录屏：一块屏幕，中间一个录制的圆点 */
+const RecordIcon: ActionIcon = ({ size = 18, strokeWidth = 1.5 }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={strokeWidth} strokeLinecap="round" strokeLinejoin="round">
+    <rect x="2.5" y="4.5" width="19" height="13" rx="2.5" />
+    <circle cx="12" cy="11" r="3" fill="currentColor" stroke="none" />
+    <path d="M8.5 20.5h7" />
+  </svg>
+);
+
 export const TOOL_KEYS: Record<Tool, string> = {
   rect: 'R',
   ellipse: 'O',
@@ -144,8 +153,7 @@ export const ACTION_ICONS: Record<ActionId, ActionIcon> = {
   formula: Sigma,
   ai: Sparkles,
   longshot: LongshotIcon,
-  gif: GifIcon,
-  video: Video,
+  record: RecordIcon,
   pin: Pin,
   save: Download,
   cancel: X,
@@ -162,8 +170,7 @@ const ACTION_KEYS: Record<ActionId, string> = {
   formula: '',
   ai: '',
   longshot: 'F2',
-  gif: 'Ctrl+G',
-  video: '',
+  record: 'Ctrl+G',
   pin: 'Ctrl+P',
   save: 'Ctrl+S',
   cancel: 'Esc',
@@ -179,6 +186,9 @@ function ToolButton({
   primary,
   danger,
   toolId,
+  groupId,
+  members,
+  hint,
   onClick,
 }: {
   icon: LucideIcon | ActionIcon;
@@ -190,6 +200,11 @@ function ToolButton({
   danger?: boolean;
   /** 绘制工具按钮：二级工具条按它对齐 */
   toolId?: Tool;
+  /** 按钮组：组名和组里的按钮（组里的工具的二级工具条也对准这个按钮） */
+  groupId?: string;
+  members?: string[];
+  /** 截图里识别到了这个组能处理的东西（二维码、表格）：按钮上亮一个小点提示 */
+  hint?: boolean;
   onClick: () => void;
 }) {
   return (
@@ -197,7 +212,10 @@ function ToolButton({
       <button
         type="button"
         data-tool={toolId}
-        className={clsx('an-btn', active && 'an-btn--active', primary && 'an-btn--primary', danger && 'an-btn--danger')}
+        data-group-id={groupId}
+        data-members={members?.join(' ')}
+        data-hint={hint || undefined}
+        className={clsx('an-btn', active && 'an-btn--active', primary && 'an-btn--primary', danger && 'an-btn--danger', groupId && 'an-btn--group')}
         disabled={disabled}
         aria-label={label}
         aria-pressed={active}
@@ -213,43 +231,128 @@ function ToolButton({
 const Sep = () => <span className="an-sep" />;
 
 export interface ToolbarProps {
-  /** 绘制工具的顺序（设置里可调），不给就是默认顺序 */
-  tools?: Tool[];
+  /** 绘制工具的顺序（设置里可调），不给就是默认顺序；可以有按钮组（`group:组名`） */
+  tools?: string[];
   tool: Tool | null;
   onTool: (t: Tool | null) => void;
   canUndo: boolean;
   onUndo: () => void;
-  actions: ActionId[][];
+  /** 按钮组的顺序；可以有按钮组（`group:组名`） */
+  actions: string[][];
   onAction: (a: ActionId) => void;
   disabledTools?: Partial<Record<Tool, boolean>>;
   disabledActions?: Partial<Record<ActionId, boolean>>;
   /** 设置里藏起来的按钮 */
   hidden?: string[];
+  /** 按钮组（顺序里写作 `group:组名`） */
+  groups?: ToolbarGroup[];
+  /** 开着二级工具条的那个组 */
+  openGroup?: string | null;
+  onGroup?: (id: string | null) => void;
+  /** 组按钮换个图标（识别组：截图里有二维码就显示二维码图标，有表格就显示表格图标） */
+  groupIcons?: Record<string, ActionIcon>;
+  /** 组按钮亮小点提示 */
+  groupHints?: Record<string, boolean>;
   className?: string;
   style?: React.CSSProperties;
 }
 
+/** 工具条上的一个按钮组 */
+export interface ToolbarGroup {
+  id: string;
+  name: string;
+  items: string[];
+}
+
+export const GROUP_PREFIX = 'group:';
+
+/** 内置组的图标（用户新建的组用组里第一个按钮的图标） */
+const GROUP_ICONS: Record<string, ActionIcon> = { recognize: ScanSearch };
+
+/** 组的名字：用户起的；没起就用内置的叫法（识别），再不然用组里第一个按钮的名字 */
+export function groupLabel(g: ToolbarGroup, t: (k: string) => string): string {
+  if (g.name.trim()) return g.name.trim();
+  if (g.id === 'recognize') return t('actions.recognize');
+  const first = g.items[0] ?? '';
+  return (TOOLS as string[]).includes(first) ? t(`tools.${first}`) : t(`actions.${first}`);
+}
+
+/** 组里某个按钮的图标 */
+export function itemIcon(id: string): ActionIcon {
+  return (TOOLS as string[]).includes(id) ? TOOL_ICONS[id as Tool] : (ACTION_ICONS[id as ActionId] ?? Square);
+}
+
+export function groupIcon(g: ToolbarGroup): ActionIcon {
+  return GROUP_ICONS[g.id] ?? itemIcon(g.items[0] ?? '');
+}
+
 export const Toolbar = forwardRef<HTMLDivElement, ToolbarProps>(function Toolbar(
-  { tools, tool, onTool, canUndo, onUndo, actions: allActions, onAction, disabledTools, disabledActions, hidden, className, style },
+  {
+    tools,
+    tool,
+    onTool,
+    canUndo,
+    onUndo,
+    actions: allActions,
+    onAction,
+    disabledTools,
+    disabledActions,
+    hidden,
+    groups,
+    openGroup,
+    onGroup,
+    groupIcons,
+    groupHints,
+    className,
+    style,
+  },
   ref,
 ) {
   const { t } = useTranslation();
-  const shown = (id: string) => !hidden?.includes(id);
-  const actions = allActions.map((g) => g.filter(shown)).filter((g) => g.length > 0);
+  const groupOf = (entry: string) => (entry.startsWith(GROUP_PREFIX) ? groups?.find((g) => GROUP_PREFIX + g.id === entry) : undefined);
+  // 组里的按钮全藏了，组也不显示
+  const shown = (id: string) => {
+    if (hidden?.includes(id)) return false;
+    if (!id.startsWith(GROUP_PREFIX)) return true;
+    const g = groupOf(id);
+    return !!g && g.items.some((i) => !hidden?.includes(i));
+  };
+  const actions = (allActions as string[][]).map((g) => g.filter(shown)).filter((g) => g.length > 0);
+  const groupButton = (entry: string) => {
+    const g = groupOf(entry)!;
+    // 组里的工具正在用：组按钮显示那个工具、算按下
+    const current = tool && g.items.includes(tool) ? tool : null;
+    return (
+      <ToolButton
+        key={entry}
+        icon={current ? TOOL_ICONS[current] : (groupIcons?.[g.id] ?? groupIcon(g))}
+        label={groupLabel(g, t)}
+        active={openGroup === g.id || !!current}
+        groupId={g.id}
+        members={g.items}
+        hint={groupHints?.[g.id]}
+        onClick={() => onGroup?.(openGroup === g.id ? null : g.id)}
+      />
+    );
+  };
   return (
     <div ref={ref} className={clsx('an-toolbar cn-glass', className)} style={style} onPointerDown={(e) => e.stopPropagation()}>
-      {(tools?.length ? tools : TOOLS).filter(shown).map((id) => (
-        <ToolButton
-          key={id}
-          icon={TOOL_ICONS[id]}
-          label={t(`tools.${id}`)}
-          shortcut={TOOL_KEYS[id]}
-          active={tool === id}
-          disabled={disabledTools?.[id]}
-          toolId={id}
-          onClick={() => onTool(tool === id ? null : id)}
-        />
-      ))}
+      {((tools?.length ? tools : TOOLS) as string[]).filter(shown).map((entry) => {
+        if (entry.startsWith(GROUP_PREFIX)) return groupButton(entry);
+        const id = entry as Tool;
+        return (
+          <ToolButton
+            key={id}
+            icon={TOOL_ICONS[id]}
+            label={t(`tools.${id}`)}
+            shortcut={TOOL_KEYS[id]}
+            active={tool === id}
+            disabled={disabledTools?.[id]}
+            toolId={id}
+            onClick={() => onTool(tool === id ? null : id)}
+          />
+        );
+      })}
       {!actions.some((g) => g.includes('undo')) && (
         <>
           <Sep />
@@ -259,8 +362,10 @@ export const Toolbar = forwardRef<HTMLDivElement, ToolbarProps>(function Toolbar
       {actions.map((group, gi) => (
         <span key={gi} style={{ display: 'contents' }}>
           <Sep />
-          {group.map((id) =>
-            id === 'undo' ? (
+          {group.map((entry) => {
+            if (entry.startsWith(GROUP_PREFIX)) return groupButton(entry);
+            const id = entry as ActionId;
+            return id === 'undo' ? (
               <ToolButton key={id} icon={Undo2} label={t('tools.undo')} shortcut={ACTION_KEYS.undo} disabled={!canUndo} onClick={onUndo} />
             ) : (
               <ToolButton
@@ -273,8 +378,8 @@ export const Toolbar = forwardRef<HTMLDivElement, ToolbarProps>(function Toolbar
                 disabled={disabledActions?.[id]}
                 onClick={() => onAction(id)}
               />
-            ),
-          )}
+            );
+          })}
         </span>
       ))}
     </div>
@@ -290,11 +395,71 @@ export const Toolbar = forwardRef<HTMLDivElement, ToolbarProps>(function Toolbar
 export function useToolAnchor(barRef: RefObject<HTMLElement | null>, tool: Tool | null): number | null {
   const [x, setX] = useState<number | null>(null);
   useLayoutEffect(() => {
-    const btn = tool ? barRef.current?.querySelector<HTMLElement>(`[data-tool="${tool}"]`) : null;
+    // 工具在按钮组里的话对准组按钮
+    const btn = tool ? barRef.current?.querySelector<HTMLElement>(`[data-tool="${tool}"], [data-members~="${tool}"]`) : null;
     setX(btn ? btn.offsetLeft + btn.offsetWidth / 2 : null);
   }, [barRef, tool]);
   return x;
 }
+
+/** 组按钮的水平中心（相对工具条左边） */
+export function useGroupAnchor(barRef: RefObject<HTMLElement | null>, group: string | null): number | null {
+  const [x, setX] = useState<number | null>(null);
+  useLayoutEffect(() => {
+    const btn = group ? barRef.current?.querySelector<HTMLElement>(`[data-group-id="${group}"]`) : null;
+    setX(btn ? btn.offsetLeft + btn.offsetWidth / 2 : null);
+  }, [barRef, group]);
+  return x;
+}
+
+/** 按钮组展开的二级工具条：组里的按钮，带名字。点了就收起 */
+export const GroupBar = forwardRef<
+  HTMLDivElement,
+  {
+    group: ToolbarGroup;
+    tool: Tool | null;
+    hidden?: string[];
+    disabledActions?: Partial<Record<ActionId, boolean>>;
+    disabledTools?: Partial<Record<Tool, boolean>>;
+    /** 截图里识别到了的（二维码、表格）：那个按钮亮起来 */
+    hints?: string[];
+    onTool: (t: Tool | null) => void;
+    onAction: (a: ActionId) => void;
+    onClose: () => void;
+    style?: React.CSSProperties;
+  }
+>(function GroupBar({ group, tool, hidden, disabledActions, disabledTools, hints, onTool, onAction, onClose, style }, ref) {
+  const { t } = useTranslation();
+  return (
+    <div ref={ref} className="an-groupbar cn-glass" style={style} onPointerDown={(e) => e.stopPropagation()}>
+      {group.items
+        .filter((id) => !hidden?.includes(id))
+        .map((id) => {
+          const isTool = (TOOLS as string[]).includes(id);
+          const I = itemIcon(id);
+          const label = isTool ? t(`tools.${id}`) : t(`actions.${id}`);
+          const disabled = isTool ? disabledTools?.[id as Tool] : disabledActions?.[id as ActionId];
+          return (
+            <button
+              key={id}
+              type="button"
+              className={clsx('an-groupbar__item', isTool && tool === id && 'an-groupbar__item--active', hints?.includes(id) && 'an-groupbar__item--hint')}
+              disabled={disabled}
+              data-tool={isTool ? id : undefined}
+              onClick={() => {
+                onClose();
+                if (isTool) onTool(tool === id ? null : (id as Tool));
+                else onAction(id as ActionId);
+              }}
+            >
+              <I size={16} strokeWidth={1.5} absoluteStrokeWidth />
+              <span>{label}</span>
+            </button>
+          );
+        })}
+    </div>
+  );
+});
 
 function SizeDots({ sizes, value, onChange, label }: { sizes: number[]; value: number; onChange: (v: number) => void; label: string }) {
   const max = Math.max(...sizes);

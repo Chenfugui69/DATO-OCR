@@ -11,6 +11,7 @@
 #![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used))]
 
 mod ai;
+mod apng;
 mod capture;
 mod clipboard;
 mod commands;
@@ -35,6 +36,7 @@ mod otp;
 mod paths;
 mod pin;
 mod record_edit;
+mod record_fx;
 mod platform;
 mod settings;
 mod state;
@@ -68,8 +70,11 @@ pub fn run() {
     platform::init_process();
 
     // 测试实例（`CHENOCR_TEST_DATA_DIR`，数据放在别处）不参与单实例：可以和用户正在用的那个同时开着，
-    // 拍说明用的截图、做自动化测试都不用先让用户退出。它也就收不到 `--action=` 这类转发
-    let single = std::env::var_os("CHENOCR_TEST_DATA_DIR").is_none();
+    // 拍说明用的截图、做自动化测试都不用先让用户退出。它也就收不到 `--action=` 这类转发。
+    // 调试版再加 `CHENOCR_TEST_SINGLE=1` 就照样参与（用户的实例已经退出时）：用空数据跑自动化，
+    // `--eval=` / `--action=` 也收得到，不碰用户的设置和钥匙串
+    let single = std::env::var_os("CHENOCR_TEST_DATA_DIR").is_none()
+        || (cfg!(debug_assertions) && std::env::var_os("CHENOCR_TEST_SINGLE").is_some());
     let builder = tauri::Builder::default();
     let builder = if single {
         builder
@@ -113,6 +118,15 @@ pub fn run() {
                                 );
                             }
                         }
+                        return;
+                    }
+                    // `--demo=selection`：一秒半后问前台程序选中了什么，写进日志（调划词判断用）
+                    #[cfg(debug_assertions)]
+                    if args.iter().any(|a| a == "--demo=selection") {
+                        std::thread::spawn(|| {
+                            std::thread::sleep(std::time::Duration::from_millis(1500));
+                            tracing::info!(result = %platform::probe_selection(), "前台程序的选中文字");
+                        });
                         return;
                     }
                     // `--demo=selbtn` 或 `--demo=selbtn:x,y`（屏幕物理像素）：不用真的选字，把划词按钮亮出来看样子
@@ -184,6 +198,8 @@ pub fn run() {
             commands::capture::longshot_abort,
             commands::capture::gif_set_regions,
             commands::capture::gif_finish,
+            commands::capture::gif_move_to,
+            commands::capture::record_glyphs,
             commands::capture::gif_cancel,
             commands::capture::record_edit_info,
             commands::capture::record_edit_save,
@@ -209,6 +225,12 @@ pub fn run() {
             commands::clipboard::clipboard_pin_image,
             commands::capture::capture_scan_codes,
             commands::capture::capture_structure,
+            commands::capture::capture_elements_at,
+            commands::capture::capture_elements_near,
+            commands::capture::capture_detect_table,
+            commands::capture::capture_table,
+            commands::capture::capture_region_style,
+            commands::capture::capture_overlay_stray,
             commands::capture::capture_pin_color,
             commands::capture::editor_current,
             commands::capture::editor_finish,
@@ -282,6 +304,9 @@ pub fn run() {
             commands::tools::translate_providers,
             commands::tools::translate_detect,
             commands::tools::translate_popup_text,
+            commands::tools::translate_popup_input,
+            commands::tools::selection_button_pressed,
+            commands::tools::system_language,
             commands::tools::translate_popup_reserve,
             commands::tools::translate_popup_preview,
             commands::tools::translate_set_field,
@@ -313,6 +338,10 @@ pub fn run() {
             commands::system::show_main,
             commands::system::toast_hide,
             commands::system::toast_show,
+            commands::system::speak,
+            commands::system::speak_stop,
+            commands::system::speak_status,
+            commands::system::speak_voices,
             commands::system::mcp_status,
             commands::system::mcp_regenerate_token,
             commands::system::window_set_bounds,
@@ -324,6 +353,7 @@ pub fn run() {
             commands::system::ui_language,
             commands::system::window_ready,
             commands::system::window_placement,
+            commands::system::window_take_focus,
             commands::system::window_start_resize,
             commands::system::permission_request,
             commands::system::quit_app,
@@ -496,8 +526,7 @@ fn on_system_event(event: SystemEvent) {
                 otp::mail::kick();
             }
             if event == SystemEvent::DisplayChanged {
-                let ui = app.clone();
-                let _ = app.run_on_main_thread(move || capture::overlay::prewarm(&ui));
+                schedule_overlay_prewarm(app);
             }
         }
         SystemEvent::ThemeChanged => {
@@ -505,6 +534,38 @@ fn on_system_event(event: SystemEvent) {
             let _ = app.run_on_main_thread(move || wm::refresh_visuals(&ui));
         }
     }
+}
+
+/// 屏幕参数一变就重建遮罩太勤了：菜单栏 / 程序坞出现消失、切全屏空间时，系统一秒连发几十次。
+/// 停下 400ms 后才重建一次，而且只在显示器的数量、位置、大小、缩放真的变了时才做。
+fn schedule_overlay_prewarm(app: &AppHandle) {
+    static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    static LAST: parking_lot::Mutex<Option<String>> = parking_lot::Mutex::new(None);
+    let id = SEQ.fetch_add(1, Ordering::SeqCst) + 1;
+    let app = app.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_millis(400));
+        if SEQ.load(Ordering::SeqCst) != id {
+            return;
+        }
+        let layout = platform::list_monitors()
+            .map(|ms| {
+                ms.iter()
+                    .map(|m| format!("{}:{:?}:{}", m.id, m.bounds, m.scale_factor))
+                    .collect::<Vec<_>>()
+                    .join("|")
+            })
+            .unwrap_or_default();
+        {
+            let mut last = LAST.lock();
+            if last.as_deref() == Some(layout.as_str()) {
+                return;
+            }
+            *last = Some(layout);
+        }
+        let ui = app.clone();
+        let _ = app.run_on_main_thread(move || capture::overlay::prewarm(&ui));
+    });
 }
 
 fn on_window_event(window: &tauri::Window, event: &WindowEvent) {

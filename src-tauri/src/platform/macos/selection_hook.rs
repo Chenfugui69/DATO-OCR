@@ -149,51 +149,132 @@ fn cursor_shape() -> String {
 /// 免得上一次的按钮在新的一次选字中途冒出来。
 static PRESS: AtomicU64 = AtomicU64::new(0);
 
-/// 问系统：当前有焦点的那个控件里选中的文字（空串 = 没选中）。要「辅助功能」权限（取选中的字本来也要）；
-/// 没权限、对方程序不支持（有的浏览器、自绘界面）时返回 None，由光标的样子说了算。
-fn selected_text() -> Option<String> {
-    use objc2_foundation::NSString;
-    // SAFETY: 都是 CoreFoundation / 辅助功能的只读查询；拿到的对象逐个释放。
-    unsafe {
-        if !ffi::AXIsProcessTrusted() {
-            return None;
-        }
-        let attr = |name: &str| NSString::from_str(name);
-        let system = ffi::AXUIElementCreateSystemWide();
-        if system.is_null() {
-            return None;
-        }
-        // 对方程序卡住时别跟着卡
-        ffi::AXUIElementSetMessagingTimeout(system, 0.25);
-        let mut focused: ffi::CFTypeRef = std::ptr::null();
-        let name = attr("AXFocusedUIElement");
-        let err = ffi::AXUIElementCopyAttributeValue(
-            system,
-            std::ptr::from_ref::<NSString>(&name).cast(),
-            &mut focused,
-        );
-        ffi::CFRelease(system);
-        if err != 0 || focused.is_null() {
-            return None;
-        }
-        let mut text: ffi::CFTypeRef = std::ptr::null();
-        let name = attr("AXSelectedText");
-        let err = ffi::AXUIElementCopyAttributeValue(
-            focused,
-            std::ptr::from_ref::<NSString>(&name).cast(),
-            &mut text,
-        );
-        ffi::CFRelease(focused);
-        if err != 0 || text.is_null() {
-            return None;
-        }
-        // CFString 和 NSString 是同一种对象
-        let selected = (ffi::CFGetTypeID(text) == ffi::CFStringGetTypeID())
-            .then(|| (*text.cast::<NSString>()).to_string());
-        ffi::CFRelease(text);
-        selected
+/// 问系统"选中了什么字"的结果
+#[derive(Debug)]
+enum Selection {
+    /// 选中了这段字
+    Text(String),
+    /// 对方回答了：没选中（或者只选中了空白）
+    Empty,
+    /// 问不到：没权限、对方程序不回答（这时才看光标的样子）
+    Unknown,
+}
+
+#[link(name = "ApplicationServices", kind = "framework")]
+extern "C" {
+    fn AXUIElementCreateApplication(pid: i32) -> ffi::CFTypeRef;
+    fn AXUIElementCopyParameterizedAttributeValue(
+        element: ffi::CFTypeRef,
+        attribute: ffi::CFTypeRef,
+        parameter: ffi::CFTypeRef,
+        value: *mut ffi::CFTypeRef,
+    ) -> i32;
+}
+
+/// 读一个属性（拿到的要自己释放）。不支持、没值都是 None
+unsafe fn copy_attr(element: ffi::CFTypeRef, name: &str) -> Option<ffi::CFTypeRef> {
+    let name = objc2_foundation::NSString::from_str(name);
+    let mut value: ffi::CFTypeRef = std::ptr::null();
+    let err = ffi::AXUIElementCopyAttributeValue(
+        element,
+        std::ptr::from_ref::<objc2_foundation::NSString>(&name).cast(),
+        &mut value,
+    );
+    if err == 0 && !value.is_null() {
+        Some(value)
+    } else {
+        None
     }
 }
+
+/// CFString 转成 Rust 的字符串并释放；不是字符串给 None
+unsafe fn take_string(value: ffi::CFTypeRef) -> Option<String> {
+    let text = (ffi::CFGetTypeID(value) == ffi::CFStringGetTypeID())
+        .then(|| (*value.cast::<objc2_foundation::NSString>()).to_string());
+    ffi::CFRelease(value);
+    text
+}
+
+/// 一个元素里选中的字：先看普通控件的 AXSelectedText，再看网页的选区（AXSelectedTextMarkerRange，
+/// 网页正文里选的字普通的那个问不到）。None = 这个元素两样都不支持
+unsafe fn selection_of(element: ffi::CFTypeRef) -> Option<String> {
+    if let Some(text) = copy_attr(element, "AXSelectedText").and_then(|v| take_string(v)) {
+        if !text.trim().is_empty() {
+            return Some(text);
+        }
+        // 普通控件说"没选中"，网页那条路再问一下（网页的输入框两样都支持，正文只支持后一样）
+        return Some(web_selection(element).unwrap_or(text));
+    }
+    web_selection(element)
+}
+
+unsafe fn web_selection(element: ffi::CFTypeRef) -> Option<String> {
+    let range = copy_attr(element, "AXSelectedTextMarkerRange")?;
+    let name = objc2_foundation::NSString::from_str("AXStringForTextMarkerRange");
+    let mut value: ffi::CFTypeRef = std::ptr::null();
+    let err = AXUIElementCopyParameterizedAttributeValue(
+        element,
+        std::ptr::from_ref::<objc2_foundation::NSString>(&name).cast(),
+        range,
+        &mut value,
+    );
+    ffi::CFRelease(range);
+    if err != 0 || value.is_null() {
+        return Some(String::new());
+    }
+    take_string(value).or(Some(String::new()))
+}
+
+/// 问前台程序：当前有焦点的那个控件里选中的文字。要「辅助功能」权限（取选中的字本来也要）。
+/// 焦点元素自己不支持的话，顺着父元素往上找几层（网页里焦点常落在正文里的某一段上，选区挂在整个网页上）。
+fn selected_text() -> Selection {
+    // SAFETY: 都是辅助功能的只读查询（第一次问到浏览器时打开它的辅助功能树除外）；拿到的对象逐个释放。
+    unsafe {
+        if !ffi::AXIsProcessTrusted() {
+            return Selection::Unknown;
+        }
+        let Some(pid) = objc2_app_kit::NSWorkspace::sharedWorkspace()
+            .frontmostApplication()
+            .map(|a| a.processIdentifier())
+        else {
+            return Selection::Unknown;
+        };
+        let app = AXUIElementCreateApplication(pid);
+        if app.is_null() {
+            return Selection::Unknown;
+        }
+        // 对方程序卡住时别跟着卡
+        ffi::AXUIElementSetMessagingTimeout(app, 0.25);
+        // 浏览器、Electron 程序默认不建辅助功能树，问不出选区；第一次问到时打开（和截图框选元素共用）
+        super::elements::enable_tree(pid, app);
+        let focused = copy_attr(app, "AXFocusedUIElement");
+        ffi::CFRelease(app);
+        let Some(mut current) = focused else {
+            return Selection::Unknown;
+        };
+        let mut answer = None;
+        for _ in 0..6 {
+            if let Some(text) = selection_of(current) {
+                answer = Some(text);
+                break;
+            }
+            let Some(parent) = copy_attr(current, "AXParent") else {
+                break;
+            };
+            ffi::CFRelease(current);
+            current = parent;
+        }
+        ffi::CFRelease(current);
+        match answer {
+            Some(t) if !t.trim().is_empty() => Selection::Text(t),
+            Some(_) => Selection::Empty,
+            None => Selection::Unknown,
+        }
+    }
+}
+
+/// 选完以后隔多久问一次（毫秒，从松开鼠标算）：程序更新选区有快有慢，问到有字就停
+const ASK_AT: [u64; 4] = [25, 90, 220, 400];
 
 fn send(st: &HookState, event: SelectionEvent) {
     if let Some(tx) = st.tx.as_ref() {
@@ -267,12 +348,35 @@ fn handle(event: &NSEvent) -> bool {
             let cursor = cursor_shape();
             let press = PRESS.load(Ordering::SeqCst);
             std::thread::spawn(move || {
-                std::thread::sleep(std::time::Duration::from_millis(80));
-                let text = selected_text();
-                let show = text.as_ref().map_or(ibeam, |t| !t.is_empty());
-                let again = PRESS.load(Ordering::SeqCst) != press;
-                tracing::debug!(asked = ?text.as_ref().map(|t| t.chars().count()), ibeam, %cursor, show, again, "划词手势");
-                if show && !again {
+                let mut waited = 0;
+                let mut result = Selection::Unknown;
+                for at in ASK_AT {
+                    std::thread::sleep(std::time::Duration::from_millis(at - waited));
+                    waited = at;
+                    // 中途又按下了鼠标（双击接三击、或者点别处了）：这次不算
+                    if PRESS.load(Ordering::SeqCst) != press {
+                        return;
+                    }
+                    result = selected_text();
+                    if matches!(result, Selection::Text(_)) {
+                        break;
+                    }
+                }
+                // 问到了就听它的；问不到（没权限、程序不回答）才看光标像不像 I 形
+                let (show, text) = match result {
+                    Selection::Text(t) => (true, Some(t)),
+                    Selection::Empty => (false, None),
+                    Selection::Unknown => (ibeam, None),
+                };
+                tracing::debug!(
+                    asked = ?text.as_ref().map(|t| t.chars().count()),
+                    ibeam,
+                    %cursor,
+                    show,
+                    waited,
+                    "划词手势"
+                );
+                if show && PRESS.load(Ordering::SeqCst) == press {
                     let _ = tx.send(selected(text));
                 }
             });
@@ -288,4 +392,10 @@ fn handle(event: &NSEvent) -> bool {
         }
     }
     false
+}
+
+/// 调试版：现在问前台程序"选中了什么"的结果
+#[cfg(debug_assertions)]
+pub fn probe() -> String {
+    format!("{:?}", selected_text())
 }

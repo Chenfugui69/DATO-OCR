@@ -249,3 +249,9 @@ fn handle(msg: u32, pt: POINT) -> bool {
     }
     false
 }
+
+/// 调试版：Windows 的划词判断不问系统，没什么可看的
+#[cfg(debug_assertions)]
+pub fn probe() -> String {
+    "Windows 上不问系统选中的文字".into()
+}

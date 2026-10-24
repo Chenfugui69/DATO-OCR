@@ -83,6 +83,83 @@
   background: color-mix(in srgb, var(--cn-glass-bg-thin) 45%, transparent);
   backdrop-filter: none;
 }
+/* 按钮组：右下角一个小三角，表示点了会展开 */
+.an-btn--group {
+  position: relative;
+}
+.an-btn--group::after {
+  content: '';
+  position: absolute;
+  right: 3px;
+  bottom: 3px;
+  border: 3px solid transparent;
+  border-right-color: currentColor;
+  border-bottom-color: currentColor;
+  border-radius: 1px;
+  opacity: 0.45;
+}
+/* 截图里识别到了这个组能处理的东西：右上角一个小点 */
+.an-btn[data-hint]::before {
+  content: '';
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--cn-accent);
+  box-shadow: 0 0 0 1.5px var(--cn-glass-bg-thin, #fff);
+}
+/* 按钮组展开的二级条：图标 + 名字 */
+.an-groupbar {
+  position: absolute;
+  left: 0;
+  top: 0;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  height: 40px;
+  padding: 4px;
+  border-radius: 12px;
+  user-select: none;
+  white-space: nowrap;
+  box-shadow:
+    0 10px 30px rgba(0, 0, 0, 0.22),
+    0 0 0 0.5px rgba(0, 0, 0, 0.22);
+  animation: an-groupbar-in 140ms var(--cn-ease-out);
+}
+/* 出场只用独立的 translate 往下落一点：二级条本身是用 transform 定位的，关键帧里写 transform 会把定位盖掉，
+   动画那一下它就从截图界面的左上角飞过来 */
+@keyframes an-groupbar-in {
+  from {
+    opacity: 0;
+    translate: 0 -4px;
+  }
+}
+.an-groupbar__item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 10px 0 8px;
+  border-radius: 8px;
+  color: var(--cn-label);
+  font: 500 12.5px/1 var(--cn-font-sans);
+}
+.an-groupbar__item:hover:not(:disabled) {
+  background: var(--cn-bg-hover);
+}
+.an-groupbar__item:disabled {
+  opacity: 0.4;
+}
+.an-groupbar__item--active {
+  background: var(--cn-accent);
+  color: #fff;
+}
+.an-groupbar__item--hint {
+  color: var(--cn-accent);
+  background: color-mix(in srgb, var(--cn-accent) 12%, transparent);
+}
 .an-subtoolbar {
   display: flex;
   align-items: center;

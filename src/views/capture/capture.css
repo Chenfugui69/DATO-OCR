@@ -313,6 +313,38 @@ html[data-view='capture'] #root {
   box-shadow: 0 0 12px color-mix(in srgb, var(--cn-accent) 60%, transparent);
   pointer-events: none;
 }
+/* 自动识别出来的码：码中间一个小圆图标 */
+.cap-code-badge {
+  position: absolute;
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  margin: -13px 0 0 -13px;
+  border-radius: 50%;
+  color: #fff;
+  background: var(--cn-accent);
+  box-shadow:
+    0 0 0 2px rgba(255, 255, 255, 0.9),
+    0 2px 8px rgba(0, 0, 0, 0.35);
+  cursor: pointer;
+  transition: transform 120ms ease;
+  animation: cap-badge-in 160ms ease-out;
+}
+.cap-code-badge:hover,
+.cap-code-badge[data-open] {
+  transform: scale(1.15);
+}
+@keyframes cap-badge-in {
+  from {
+    opacity: 0;
+    transform: scale(0.6);
+  }
+}
+.cap-codes--float {
+  width: 280px;
+  padding: 6px;
+}
 .cap-struct {
   position: absolute;
   left: 0;
@@ -344,6 +376,20 @@ html[data-view='capture'] #root {
   font: 600 12px/1 var(--cn-font-sans);
   color: var(--cn-label-secondary);
 }
+.cap-struct__ai {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 22px;
+  padding: 0 8px;
+  margin-right: 4px;
+  border-radius: 6px;
+  color: var(--cn-accent);
+  font: 500 11.5px/1 var(--cn-font-sans);
+}
+.cap-struct__ai:hover {
+  background: var(--cn-bg-hover);
+}
 .cap-struct__content {
   flex: 1;
   min-height: 0;
@@ -351,6 +397,133 @@ html[data-view='capture'] #root {
 .cap-struct .ocr-table {
   user-select: text;
   -webkit-user-select: text;
+}
+/* 原位显示的表格 / 公式：正好盖在选区上（坐标是选区里的 CSS 像素） */
+.cap-inplace {
+  position: absolute;
+  overflow: hidden;
+  cursor: text;
+  user-select: text;
+  -webkit-user-select: text;
+  animation: cn-fade-in 180ms var(--cn-ease-out);
+  transition: opacity 120ms var(--cn-ease-out);
+}
+.cap-inplace[data-peek] {
+  opacity: 0;
+}
+.cap-inplace--busy {
+  opacity: 0.55;
+  pointer-events: none;
+}
+.cap-inplace__bg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+.cap-inplace__cell {
+  position: absolute;
+}
+.cap-inplace__cell:focus-within {
+  /* 改字时盖住格子底下（别露出抹字后可能残留的一点痕迹），描一圈主色 */
+  background: var(--cell-bg);
+  box-shadow: inset 0 0 0 1.5px var(--cn-accent);
+  z-index: 1;
+}
+.cap-inplace__text {
+  position: absolute;
+  font-family: -apple-system, 'Helvetica Neue', Helvetica, Arial, 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  outline: none;
+  caret-color: var(--cn-accent);
+  font-kerning: normal;
+}
+.cap-inplace--formula {
+  display: grid;
+  place-items: center;
+  cursor: default;
+}
+.cap-inplace__math {
+  max-width: 100%;
+  white-space: nowrap;
+}
+.cap-inplace__math math {
+  font-size: inherit;
+}
+.cap-inplace__math--latex {
+  font-family: ui-monospace, Menlo, monospace;
+}
+/* 原图对照面板：选区左边（或右边），复制、导出的按钮也在这里 */
+.cap-ref {
+  position: absolute;
+  left: 0;
+  top: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px 10px 10px;
+  border-radius: 12px;
+  font: 400 12px/1.4 var(--cn-font-sans);
+  color: var(--cn-label);
+  animation: cn-fade-in 180ms var(--cn-ease-out);
+}
+.cap-ref__head {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+.cap-ref__title {
+  font: 600 12px/1 var(--cn-font-sans);
+  color: var(--cn-label);
+}
+.cap-ref__sub {
+  flex: 1;
+  margin-left: 6px;
+  font: 400 11px/1 var(--cn-font-sans);
+  color: var(--cn-label-tertiary);
+}
+.cap-ref__img {
+  display: block;
+  width: 100%;
+  object-fit: contain;
+  object-position: left top;
+  border-radius: 6px;
+  box-shadow: 0 0 0 0.5px var(--cn-separator);
+  background: var(--cn-fill-quaternary);
+}
+.cap-ref__actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.cap-ref__icon {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 7px;
+  color: var(--cn-label-secondary);
+}
+.cap-ref__icon:hover:not(:disabled) {
+  background: var(--cn-bg-hover);
+  color: var(--cn-label);
+}
+.cap-ref__icon:disabled {
+  opacity: 0.4;
+}
+.cap-ref__latex {
+  width: 100%;
+  min-height: 96px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  border: 0;
+  resize: vertical;
+  font: 12px/1.5 ui-monospace, Menlo, monospace;
+  color: var(--cn-label);
+  background: var(--cn-fill-quaternary);
+  box-shadow: inset 0 0 0 0.5px var(--cn-separator);
+  outline: none;
 }
 .cap-codes {
   position: absolute;
@@ -528,7 +701,9 @@ html[data-view='capture'] #root {
   gap: 6px;
 }
 .cap-magnifier__keys {
-  font-size: 10px;
+  font-size: 9.5px;
+  letter-spacing: -0.3px;
+  white-space: nowrap;
   color: rgba(255, 255, 255, 0.6);
 }
 .cap-magnifier__color span {
@@ -614,20 +789,34 @@ html[data-view='capture'] #root {
 }
 .ls-preview {
   position: absolute;
-  top: 50%;
   width: 120px;
-  max-height: 62vh;
   display: flex;
   flex-direction: column;
-  transform: translateY(-50%);
   border-radius: var(--cn-radius-xl);
   overflow: hidden;
+  /* 出场：从顶边往下展开（不缩放，图不变形） */
+  animation: ls-preview-in 320ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+@keyframes ls-preview-in {
+  from {
+    opacity: 0;
+    clip-path: inset(0 0 100% 0 round var(--cn-radius-xl));
+  }
+  to {
+    opacity: 1;
+    clip-path: inset(0 0 0 0 round var(--cn-radius-xl));
+  }
 }
 .ls-preview__scroll {
-  flex: 1;
+  flex: none;
   overflow-y: auto;
   overflow-x: hidden;
   scrollbar-width: none;
+  /* 每拼上一截，图区平滑地往下长出来 */
+  transition: height 280ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+.ls-preview__scroll::-webkit-scrollbar {
+  display: none;
 }
 .ls-preview__img {
   position: relative;
@@ -635,7 +824,6 @@ html[data-view='capture'] #root {
 .ls-preview__img img {
   display: block;
   width: 120px;
-  animation: cn-fade-in 200ms var(--cn-ease-out);
 }
 .ls-preview__seam {
   position: absolute;
@@ -885,4 +1073,379 @@ html[data-view='capture'] #root {
 .cap-trtext__line::selection {
   color: transparent;
   background: color-mix(in srgb, var(--cn-accent) 38%, transparent);
+}
+
+/* ───────────────────────── 录制（RecordUI.tsx） ───────────────────────── */
+.rec-toolbar,
+.rec-bar {
+  left: 0;
+  top: 0;
+  animation: cn-fade-in 140ms var(--cn-ease-out);
+}
+.rec-toolbar--autohide {
+  opacity: 0;
+  transition: opacity 160ms var(--cn-ease-out);
+}
+.rec-toolbar--autohide:hover {
+  opacity: 1;
+}
+/* 开始：主色……录制用红色的圆点 */
+.rec-btn--start .rec-dot {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--cn-red, #ff3b30);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--cn-red, #ff3b30) 22%, transparent);
+  transition: transform 120ms var(--cn-ease-out);
+}
+.rec-btn--start:hover .rec-dot {
+  transform: scale(1.12);
+}
+.rec-btn--stop {
+  color: var(--cn-red, #ff3b30);
+}
+.rec-time {
+  min-width: 64px;
+  padding: 0 6px;
+  font: 500 13px/1 var(--cn-font-sans);
+  color: var(--cn-label-secondary);
+  text-align: center;
+}
+.rec-time--live {
+  color: var(--cn-label);
+}
+.rec-time--live::before {
+  content: '';
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  margin-right: 6px;
+  vertical-align: 1px;
+  border-radius: 50%;
+  background: var(--cn-red, #ff3b30);
+  animation: gif-pulse 1.2s ease-in-out infinite;
+}
+.rec-time.is-warn {
+  color: var(--cn-red, #ff3b30);
+}
+.rec-bar {
+  height: 40px;
+  padding: 3px 5px;
+  overflow: visible;
+}
+.rec-bar__slot {
+  position: relative;
+  display: inline-flex;
+}
+.rec-btn--text {
+  display: inline-flex;
+  align-items: center;
+  width: auto;
+  gap: 3px;
+  padding: 0 7px;
+  font: 500 12px/1 var(--cn-font-sans);
+}
+.rec-formats {
+  display: inline-flex;
+  gap: 2px;
+}
+.rec-format {
+  height: 28px;
+  padding: 0 9px;
+  border-radius: 7px;
+  font: 600 11.5px/1 var(--cn-font-sans);
+  letter-spacing: 0.02em;
+  color: var(--cn-label-secondary);
+}
+.rec-format:hover:not(:disabled) {
+  background: var(--cn-bg-hover);
+  color: var(--cn-label);
+}
+.rec-format--on,
+.rec-format--on:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--cn-accent) 18%, transparent);
+  color: var(--cn-accent);
+}
+.rec-format:disabled {
+  opacity: 0.35;
+}
+.rec-swatches {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 2px;
+}
+.rec-swatches__icon {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  color: var(--cn-label-secondary);
+}
+.rec-swatch {
+  width: 18px;
+  height: 18px;
+  border-radius: 5px;
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.18);
+  transition: transform 100ms var(--cn-ease-out);
+}
+.rec-swatch:hover {
+  transform: scale(1.12);
+}
+/* "不画"：斜杠格子 */
+.rec-swatch--none {
+  background: linear-gradient(to top right, transparent calc(50% - 1px), #ff3b30 calc(50% - 1px), #ff3b30 calc(50% + 1px), transparent calc(50% + 1px)), var(--cn-fill-tertiary);
+}
+.rec-swatch--on {
+  box-shadow:
+    0 0 0 2px var(--cn-bg-elevated, #fff),
+    0 0 0 3.5px var(--cn-accent);
+}
+/* 录制栏的弹层：从按钮下面（或上面）弹出来 */
+.rec-pop {
+  position: absolute;
+  top: calc(100% + 10px);
+  left: 50%;
+  z-index: 5;
+  min-width: 200px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  transform: translateX(-50%);
+  background: var(--cn-bg-elevated);
+  color: var(--cn-label);
+  box-shadow:
+    0 12px 32px rgba(0, 0, 0, 0.28),
+    0 0 0 0.5px var(--cn-separator);
+  font: 400 12.5px/1.4 var(--cn-font-sans);
+  white-space: normal;
+  cursor: default;
+  animation: cn-fade-in 140ms var(--cn-ease-out);
+}
+.rec-bar--up .rec-pop {
+  top: auto;
+  bottom: calc(100% + 10px);
+}
+.rec-pop--row {
+  display: flex;
+  gap: 4px;
+  min-width: 0;
+}
+/* 大面板靠右对齐（按钮在录制栏最右边，居中会伸出屏幕） */
+.rec-pop--panel {
+  left: auto;
+  right: -6px;
+  width: 420px;
+  transform: none;
+}
+.rec-pop--settings {
+  width: 460px;
+}
+.rec-pop__title {
+  margin-bottom: 10px;
+  font: 600 13px/1 var(--cn-font-sans);
+}
+.rec-pop__row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 5px 0;
+}
+.rec-pop__radio {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 0;
+}
+.rec-pop__hint {
+  margin-top: 6px;
+  font: var(--cn-text-footnote);
+  color: var(--cn-label-tertiary);
+}
+.rec-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px 16px;
+}
+.rec-field {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 0;
+}
+.rec-field__label {
+  font: 500 12px/1.2 var(--cn-font-sans);
+  color: var(--cn-label-secondary);
+}
+.rec-field__label em {
+  font-style: normal;
+  color: var(--cn-label-tertiary);
+}
+.rec-field__box {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 10px;
+  border-radius: 7px;
+  background: var(--cn-fill-quaternary);
+  box-shadow: inset 0 0 0 0.5px var(--cn-separator);
+}
+.rec-field__box input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: var(--cn-label);
+  font: 13px/1 var(--cn-font-sans);
+}
+.rec-field__box em {
+  font-style: normal;
+  color: var(--cn-label-tertiary);
+}
+.rec-field__swatch {
+  width: 16px;
+  height: 16px;
+  border-radius: 4px;
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.2);
+}
+.rec-switches {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0 16px;
+  margin-top: 10px;
+  padding-top: 8px;
+  box-shadow: inset 0 0.5px 0 var(--cn-separator);
+}
+.rec-hl-preview {
+  display: flex;
+  height: 30px;
+  border-radius: 7px;
+  overflow: hidden;
+}
+.rec-hl-preview i {
+  flex: 1;
+  display: grid;
+  place-items: center;
+}
+.rec-hl-preview b {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+}
+/* 选区右下角外面的移动把手 */
+.rec-move {
+  position: absolute;
+  left: 0;
+  top: 0;
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  color: var(--cn-label);
+  cursor: grab;
+  touch-action: none;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
+}
+.rec-move--dragging {
+  cursor: grabbing;
+  color: var(--cn-accent);
+}
+/* 准备时选区右下角的提示：格式、麦克风、声音 */
+.rec-hints {
+  position: absolute;
+  display: flex;
+  gap: 4px;
+  pointer-events: none;
+}
+.rec-hint {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 22px;
+  padding: 0 8px;
+  border-radius: 11px;
+  background: rgba(0, 0, 0, 0.55);
+  color: #fff;
+  font: 500 11px/1 var(--cn-font-sans);
+  backdrop-filter: blur(8px);
+}
+.rec-hint--off {
+  opacity: 0.55;
+}
+/* 摄像头画面的位置框：虚线、能拖 */
+.rec-camera {
+  position: absolute;
+  left: 0;
+  top: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  background: rgba(0, 0, 0, 0.35);
+  color: #fff;
+  outline: 2px dashed rgba(255, 255, 255, 0.85);
+  outline-offset: -2px;
+  font: 500 11px/1.2 var(--cn-font-sans);
+  text-align: center;
+  cursor: grab;
+  touch-action: none;
+}
+.rec-camera:active {
+  cursor: grabbing;
+}
+/* 录制中按下的键（会被录进去） */
+.rec-keys {
+  position: absolute;
+  display: flex;
+  gap: 6px;
+  pointer-events: none;
+}
+.rec-keys--right {
+  flex-direction: row-reverse;
+}
+.rec-key {
+  display: inline-flex;
+  align-items: center;
+  padding: 0 0.7em;
+  font-weight: 600;
+  font-family: -apple-system, 'SF Pro Text', 'Segoe UI', sans-serif;
+  white-space: nowrap;
+  animation: rec-key-in 120ms var(--cn-ease-out), rec-key-out 300ms ease-in 1300ms forwards;
+}
+@keyframes rec-key-in {
+  from {
+    opacity: 0;
+    translate: 0 6px;
+  }
+}
+@keyframes rec-key-out {
+  to {
+    opacity: 0;
+  }
+}
+/* 开始前的倒数 */
+.rec-countdown {
+  position: absolute;
+  display: grid;
+  place-items: center;
+  pointer-events: none;
+}
+.rec-countdown span {
+  font: 700 120px/1 var(--cn-font-sans);
+  color: #fff;
+  text-shadow: 0 4px 24px rgba(0, 0, 0, 0.45);
+  animation: rec-count 1s var(--cn-ease-out) both;
+}
+@keyframes rec-count {
+  from {
+    opacity: 0;
+    scale: 1.4;
+  }
+  30% {
+    opacity: 1;
+    scale: 1;
+  }
 }

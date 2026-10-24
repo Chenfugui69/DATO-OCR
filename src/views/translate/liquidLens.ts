@@ -6,20 +6,40 @@
 //
 // 用 SVG 的位移滤镜（feDisplacementMap）也能做，但 WebKit 和 WebView2 对它的支持不一样，画布两边都一样。
 
-/** 中间这么大一圈不折射（占半径的比例），外面这一圈是"斜边" */
-const FLAT = 0.4;
-/** 最边上往圆心拉回多远（占半径的比例）：越大边缘弯得越厉害 */
-const BEND = 0.48;
-/** 斜边的陡峭程度：越大折射越集中在最外面一圈 */
-const CURVE = 1.9;
-/** 整体放大一点，像隔着一颗凸透镜 */
-const MAGNIFY = 1.1;
-/** 红、蓝两色比绿色多折 / 少折这么多（色散） */
-const DISPERSION = 0.07;
+import type { GlassTuning } from '@/lib/types';
 
-/** 图标底下那团雾：圆心处最浓（盖掉这么多），到这个半径（占圆点半径的比例）散尽 */
-const VEIL = 0.88;
-const VEIL_REACH = 0.8;
+/** 折射的参数。默认的就是"液态玻璃"样式；"自定义"样式由设置里的滑块换算（`lensFromTuning`） */
+export interface LensParams {
+  /** 中间这么大一圈不折射（占半径的比例），外面这一圈是"斜边" */
+  flat: number;
+  /** 最边上往圆心拉回多远（占半径的比例）：越大边缘弯得越厉害 */
+  bend: number;
+  /** 斜边的陡峭程度：越大折射越集中在最外面一圈 */
+  curve: number;
+  /** 整体放大一点，像隔着一颗凸透镜 */
+  magnify: number;
+  /** 红、蓝两色比绿色多折 / 少折这么多（色散，边上的彩边） */
+  dispersion: number;
+  /** 图标底下那团雾：圆心处最浓（盖掉这么多），到 veilReach（占圆点半径的比例）散尽 */
+  veil: number;
+  veilReach: number;
+}
+
+export const DEFAULT_LENS: LensParams = { flat: 0.4, bend: 0.48, curve: 1.9, magnify: 1.1, dispersion: 0.07, veil: 0.88, veilReach: 0.8 };
+
+/** 设置里的 0 ~ 100 滑块 → 折射参数。滑块的默认值换算出来正好是 DEFAULT_LENS */
+export function lensFromTuning(t: GlassTuning): LensParams {
+  return {
+    ...DEFAULT_LENS,
+    bend: t.refraction / 100,
+    magnify: 1 + t.magnify / 200,
+    dispersion: t.dispersion / 500,
+    veil: t.veil / 100,
+  };
+}
+
+/** 模糊滑块 → 透过玻璃看到的画面模糊几像素（圆点 28px 时最多 6px） */
+export const lensBlur = (t: GlassTuning) => (t.blur / 100) * 6;
 
 /**
  * 把 `source`（按钮窗口盖住的那块画面，圆点在它正中间）折射后画到 `canvas` 上。
@@ -29,7 +49,14 @@ const VEIL_REACH = 0.8;
  * 取底下这一小块的平均色，亮的往白里推、暗的往黑里推，从圆心往外渐渐散掉 —— 中间是一小块干净的底，
  * 边缘的折射和彩边原样留着。返回这块底的明暗（true = 暗），图标据此用浅色或深色。
  */
-export function drawLens(canvas: HTMLCanvasElement, source: CanvasImageSource, sourceWidth: number, sourceHeight: number): boolean | null {
+export function drawLens(
+  canvas: HTMLCanvasElement,
+  source: CanvasImageSource,
+  sourceWidth: number,
+  sourceHeight: number,
+  params: LensParams = DEFAULT_LENS,
+): boolean | null {
+  const { flat: FLAT, bend: BEND, curve: CURVE, magnify: MAGNIFY, dispersion: DISPERSION, veil: VEIL, veilReach: VEIL_REACH } = params;
   const size = canvas.width;
   const out = canvas.getContext('2d');
   if (!out || size <= 0 || sourceWidth <= 0 || sourceHeight <= 0) return null;

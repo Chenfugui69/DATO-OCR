@@ -794,6 +794,31 @@ html[data-view='main'][data-glass='off'] body {
   align-items: stretch;
   gap: 10px;
 }
+/* 一排能点选的小标签（"这些语言不弹"） */
+.set-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.set-chip {
+  height: 26px;
+  padding: 0 12px;
+  border-radius: 999px;
+  font: 500 12.5px/1 var(--cn-font-sans);
+  color: var(--cn-label);
+  background: var(--cn-fill-tertiary);
+  transition: background-color var(--cn-duration-fast), color var(--cn-duration-fast);
+}
+.set-chip:hover:not(:disabled) {
+  background: var(--cn-bg-hover);
+}
+.set-chip[data-on] {
+  color: #fff;
+  background: var(--cn-accent);
+}
+.set-chip:disabled {
+  opacity: 0.4;
+}
 .tb-order {
   display: flex;
   align-items: center;
@@ -801,6 +826,13 @@ html[data-view='main'][data-glass='off'] body {
   gap: 12px;
 }
 .tb-order__bar {
+  /* 按钮多了一行放不下就换行（以前是一长条，设置页里被裁掉一截） */
+  flex-wrap: wrap;
+  height: auto;
+  min-height: 44px;
+  max-width: 100%;
+  row-gap: 2px;
+  white-space: normal;
   background: var(--cn-bg-elevated);
   box-shadow:
     0 2px 8px rgba(0, 0, 0, 0.12),
@@ -808,19 +840,125 @@ html[data-view='main'][data-glass='off'] body {
   touch-action: none;
 }
 .tb-order__item {
+  position: relative;
   cursor: grab;
+  touch-action: none;
 }
 .tb-order__item:active:not(:disabled) {
   transform: none;
+}
+.tb-order__item[data-open] {
+  background: color-mix(in srgb, var(--cn-accent) 14%, transparent);
+}
+/* 条下面的按钮组区：展开的组 + 「拖到这里新建按钮组」 */
+.tb-order__zones {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: stretch;
+  gap: 10px;
+  width: 100%;
+}
+/* 展开的按钮组：组里的按钮可以拖动调整，把条上的按钮拖进来就入组，拖回条上就移出 */
+.tb-order__group {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  flex: 1 1 100%;
+  padding: 8px 10px;
+  border-radius: 12px;
+  background: var(--cn-fill-quaternary);
+  outline: 1.5px dashed transparent;
+  outline-offset: -1.5px;
+  transition:
+    background-color 160ms var(--cn-ease-out),
+    outline-color 160ms var(--cn-ease-out);
+  animation: cn-fade-in 160ms var(--cn-ease-out);
+}
+.tb-order__group[data-can-drop] {
+  outline-color: color-mix(in srgb, var(--cn-accent) 45%, transparent);
+}
+.tb-order__group[data-over] {
+  outline-color: var(--cn-accent);
+  background: color-mix(in srgb, var(--cn-accent) 10%, var(--cn-fill-quaternary));
+}
+.tb-order__group-name {
+  padding: 4px 6px;
+  margin: -4px -2px;
+  border-radius: 6px;
+  font: 600 12px/1 var(--cn-font-sans);
+  color: var(--cn-label-secondary);
+  cursor: text;
+}
+.tb-order__group-name:hover {
+  background: var(--cn-bg-hover);
+  color: var(--cn-label);
+}
+.tb-order__empty {
+  padding: 0 10px;
+  font: var(--cn-text-footnote);
+  color: var(--cn-label-tertiary);
+}
+/* 拖到这里新建按钮组 */
+.tb-order__new {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1 1 100%;
+  min-height: 44px;
+  padding: 0 14px;
+  border-radius: 12px;
+  border: 1px dashed var(--cn-separator);
+  font: var(--cn-text-footnote);
+  color: var(--cn-label-tertiary);
+  transition:
+    background-color 160ms var(--cn-ease-out),
+    border-color 160ms var(--cn-ease-out),
+    color 160ms var(--cn-ease-out),
+    opacity 160ms var(--cn-ease-out);
+}
+.tb-order__new[data-can-drop] {
+  border-color: color-mix(in srgb, var(--cn-accent) 55%, transparent);
+  color: var(--cn-accent);
+}
+.tb-order__new[data-over] {
+  border-style: solid;
+  border-color: var(--cn-accent);
+  background: color-mix(in srgb, var(--cn-accent) 12%, transparent);
+}
+.tb-order__new[data-disabled] {
+  opacity: 0.5;
+}
+}
+.tb-order__bar--group {
+  box-shadow: 0 0 0 0.5px var(--cn-separator);
+}
+.tb-order__hint {
+  font: var(--cn-text-footnote);
+  color: var(--cn-label-tertiary);
 }
 .tb-order__item[data-hidden] {
   opacity: 0.3;
 }
 .tb-order__item[data-dragging] {
+  /* 拖着的图标原来的位置：留一个虚线空位，图标本身浮在指针下面 */
+  color: transparent;
+  background: color-mix(in srgb, var(--cn-accent) 10%, transparent);
+  outline: 1px dashed color-mix(in srgb, var(--cn-accent) 60%, transparent);
+  outline-offset: -1px;
+}
+.tb-order__item[data-dragging]::after {
+  display: none;
+}
+/* 浮着跟指针走的那个图标（挂在 body 上） */
+.tb-order__ghost:not(.an-btn--primary) {
+  background: var(--cn-bg-elevated);
+}
+.tb-order__ghost {
   cursor: grabbing;
-  background: color-mix(in srgb, var(--cn-accent) 18%, transparent);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--cn-accent) 45%, transparent);
-  transform: scale(1.1);
+  box-shadow:
+    0 8px 20px rgba(0, 0, 0, 0.22),
+    inset 0 0 0 1px color-mix(in srgb, var(--cn-accent) 45%, transparent);
 }
 /* AI 服务商：每个服务商一组行，组与组之间粗一点的分隔 */
 .ai-provider + .ai-provider,
@@ -1299,4 +1437,69 @@ html[data-view='main'][data-glass='off'] body {
 }
 .orb-picker__item[aria-checked='true'] {
   box-shadow: 0 0 0 2px var(--cn-accent);
+}
+
+/* 划词按钮样式的预览：示例画面 + 一颗能拖的玻璃珠；自定义时右边一列滑块 */
+.glass-tune {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px 24px;
+  align-items: flex-start;
+}
+.glass-preview {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+}
+.glass-preview__stage {
+  position: relative;
+  overflow: hidden;
+  border-radius: 10px;
+  box-shadow: 0 0 0 0.5px var(--cn-separator);
+}
+.glass-preview__sample {
+  display: block;
+}
+.glass-preview__dot {
+  position: absolute;
+  left: 0;
+  top: 0;
+  display: grid;
+  place-items: center;
+  cursor: grab;
+  touch-action: none;
+}
+.glass-preview__dot:active {
+  cursor: grabbing;
+}
+.glass-tune__sliders {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex: 1 1 240px;
+  min-width: 240px;
+}
+.glass-tune__row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.glass-tune__name {
+  width: 64px;
+  flex: none;
+  font: var(--cn-text-footnote);
+  color: var(--cn-label-secondary);
+}
+.glass-tune__row > :nth-child(2) {
+  flex: 1;
+}
+.glass-tune__value {
+  width: 28px;
+  text-align: right;
+  font: var(--cn-text-footnote);
+  color: var(--cn-label-tertiary);
+}
+.glass-tune__sliders > button {
+  align-self: flex-start;
 }

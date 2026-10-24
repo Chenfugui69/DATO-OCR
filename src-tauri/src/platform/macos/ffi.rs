@@ -82,8 +82,14 @@ pub type CGEventTapCallBack = unsafe extern "C" fn(
 pub type CGDataProviderReleaseDataCallback =
     Option<unsafe extern "C" fn(info: *mut c_void, data: *const c_void, size: usize)>;
 
+// CGMouseButton
+pub const kCGMouseButtonLeft: u32 = 0;
+pub const kCGMouseButtonRight: u32 = 1;
+pub const kCGMouseButtonCenter: u32 = 2;
+
 #[link(name = "CoreGraphics", kind = "framework")]
 extern "C" {
+    pub fn CGEventSourceButtonState(state: i32, button: u32) -> bool;
     pub static kCGColorSpaceSRGB: CFStringRef;
 
     pub fn CGMainDisplayID() -> CGDirectDisplayID;

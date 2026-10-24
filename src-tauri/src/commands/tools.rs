@@ -29,6 +29,25 @@ pub async fn translate_popup_text() -> AppResult<Option<String>> {
     Ok(selection::current())
 }
 
+/// 划词圆点的页面自己收到了点击（监听没认出来时）：按点了圆点处理，或者把残留的圆点收起来
+#[tauri::command]
+pub async fn selection_button_pressed(app: AppHandle) -> AppResult<()> {
+    selection::button_pressed_in_page(&app);
+    Ok(())
+}
+
+/// 系统的语言（zh、en、ja……）：设置页"系统语言不弹"那一行写明是哪种
+#[tauri::command]
+pub async fn system_language() -> AppResult<String> {
+    Ok(selection::system_language())
+}
+
+/// 翻译面板这会儿是不是输入翻译（页面刚加载完、可能错过了事件时来问）
+#[tauri::command]
+pub async fn translate_popup_input() -> AppResult<bool> {
+    Ok(selection::is_input())
+}
+
 /// 设置页调划词面板外观时的预览：在主窗口旁边亮出真的面板 / 收起。
 #[tauri::command]
 pub async fn translate_popup_preview(app: AppHandle, show: bool) -> AppResult<()> {

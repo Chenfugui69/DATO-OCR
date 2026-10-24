@@ -12,72 +12,117 @@
 //   磨砂玻璃 = 模糊得很重，图标在密集的文字上也看得清。
 // - 上面盖一层淡色，再画高光：上沿一弯月牙、下沿一圈回光、边缘一道细亮线，底下一圈柔和的投影。
 // - 抓不到那块画面时（macOS 没有屏幕录制权限、抓屏出错）不透底，画一个实一些的。
+// - 自定义：液态玻璃的色差、模糊、折射、放大、雾、淡色、高光都按设置里的滑块来。
+//
+// 玻璃珠本身（`GlassDot`）设置页也拿去做预览，调滑块时就能看到效果。
 
 import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import { useEvent } from '@/lib/events';
+import { translate } from '@/lib/ipc';
 import { useSettings } from '@/lib/settings';
+import type { GlassTuning } from '@/lib/types';
 import { BrandMark } from '@/ui/BrandMark';
 
-import { drawLens } from './liquidLens';
+import { drawLens, lensBlur, lensFromTuning } from './liquidLens';
 
-export default function SelectionButton() {
-  const { t } = useTranslation();
-  const settings = useSettings();
-  const [shown, setShown] = useState<{ generation: number; dark: boolean | null; backdrop: string | null }>({ generation: 0, dark: null, backdrop: null });
-  useEvent('selection-button-show', setShown);
+export type DotStyle = 'liquid' | 'frosted' | 'solid' | 'custom';
+
+/**
+ * 一颗玻璃珠。外面那个元素要比珠子大一圈（四周各 12px，和 Rust 的 BUTTON_INSET 一致），留给投影和悬停放大；
+ * `backdrop` 是这一圈范围里底下的画面（data URL），`dark` 是后端按那块画面判断的深浅（不知道时 null）。
+ * `replay` 变了就重放一遍出场动画
+ */
+export function GlassDot({
+  style,
+  tuning,
+  size,
+  backdrop,
+  dark,
+  replay,
+  title,
+  onPointerDown,
+}: {
+  style: DotStyle;
+  tuning?: GlassTuning;
+  size: number;
+  backdrop: string | null;
+  dark: boolean | null;
+  replay?: number;
+  title?: string;
+  onPointerDown?: () => void;
+}) {
   // 玻璃的深浅跟着它底下的画面走（液态玻璃就是这样）；后端不知道底下是什么时跟应用的深浅色
   // 液态玻璃下以图标正底下那一小块的明暗为准（整块画面偏亮、图标底下却正好是一团黑字的情况不少）
-  const [lensDark, setLensDark] = useState<{ generation: number; dark: boolean } | null>(null);
-  const centerDark = lensDark?.generation === shown.generation ? lensDark.dark : shown.dark;
+  const [lensDark, setLensDark] = useState<{ backdrop: string; dark: boolean } | null>(null);
+  const centerDark = lensDark && lensDark.backdrop === backdrop ? lensDark.dark : dark;
   const tone = centerDark == null ? undefined : centerDark ? 'dark' : 'light';
-  const style = settings?.translate.selection.buttonStyle ?? 'liquid';
-  // 圆点多大由设置定（窗口已经按它摆好了），里面的图标跟着按比例变
-  const dot = settings?.translate.selection.buttonSize ?? 28;
-  // 液态玻璃：底下的画面折射后画到画布上。画布按实际像素开（Retina 上是两倍），不然边缘的折射是糊的
-  const liquid = style !== 'frosted' && !!shown.backdrop;
+  const custom = style === 'custom' && tuning ? tuning : null;
+  // 液态玻璃 / 自定义：底下的画面折射后画到画布上。画布按实际像素开（Retina 上是两倍），不然边缘的折射是糊的
+  const liquid = (style === 'liquid' || style === 'custom') && !!backdrop;
+  // 纯色：不画玻璃、不透出底下的画面（后端这时也不抓屏），最省事
+  const solid = style === 'solid';
   const lens = useRef<HTMLCanvasElement>(null);
+  const params = custom ? lensFromTuning(custom) : undefined;
+  const paramsKey = JSON.stringify(params ?? null);
   useEffect(() => {
-    if (!liquid || !shown.backdrop) return;
+    if (!liquid || !backdrop) return;
     const image = new Image();
     let stale = false;
     image.onload = () => {
       const canvas = lens.current;
       if (stale || !canvas) return;
-      const px = Math.max(1, Math.round(dot * window.devicePixelRatio));
+      const px = Math.max(1, Math.round(size * window.devicePixelRatio));
       canvas.width = px;
       canvas.height = px;
-      const dark = drawLens(canvas, image, image.naturalWidth, image.naturalHeight);
-      if (dark != null) setLensDark({ generation: shown.generation, dark });
+      const isDark = drawLens(canvas, image, image.naturalWidth, image.naturalHeight, params);
+      if (isDark != null) setLensDark({ backdrop, dark: isDark });
     };
-    image.src = shown.backdrop;
+    image.src = backdrop;
     return () => {
       stale = true;
     };
-  }, [liquid, shown.backdrop, shown.generation, dot]);
-
+    // params 按内容比（每次渲染都是新对象）
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [liquid, backdrop, size, paramsKey]);
+  // 自定义：淡色、高光按滑块（深色底上淡色是黑的，浓一点才看得出）
+  const vars: Record<string, string> = {};
+  if (custom) {
+    const a = custom.tint / 100;
+    vars['--tint'] = tone === 'dark' ? `rgba(20, 20, 26, ${Math.min(1, a * 1.6).toFixed(3)})` : `rgba(255, 255, 255, ${a.toFixed(3)})`;
+    vars['--hi'] = ((custom.highlight / 100) * (tone === 'dark' ? 0.45 : 1)).toFixed(3);
+    vars['--glow'] = ((custom.highlight / 200) * (tone === 'dark' ? 0.4 : 1)).toFixed(3);
+  }
+  const blur = custom ? (lensBlur(custom) * size) / 28 : 0;
   return (
-    <div className="selbtn-root">
-      <div
-        key={shown.generation}
-        className="selbtn"
-        data-tone={tone}
-        data-style={style}
-        data-backdrop={shown.backdrop ? 'yes' : 'no'}
-        title={t('translate.selectionButton')}
-      >
-        {liquid ? (
-          <canvas ref={lens} className="selbtn__refract" />
+    <div
+      key={replay}
+      className="selbtn"
+      data-tone={tone}
+      // 自定义用液态玻璃那一套样式，淡色、高光由上面的变量盖掉
+      data-style={style === 'custom' ? 'liquid' : style}
+      data-backdrop={backdrop ? 'yes' : 'no'}
+      title={title}
+      style={vars as React.CSSProperties}
+      onPointerDown={onPointerDown}
+    >
+      {!solid &&
+        (liquid ? (
+          <canvas ref={lens} className="selbtn__refract" style={blur > 0 ? { filter: `saturate(1.25) brightness(1.03) blur(${blur.toFixed(2)}px)` } : undefined} />
         ) : (
-          shown.backdrop && <i className="selbtn__lens" style={{ backgroundImage: `url(${shown.backdrop})` }} />
-        )}
-        <i className="selbtn__glass" />
-        <BrandMark size={Math.round(dot * 0.6)} mono />
-      </div>
-      <style>{`
-        html[data-view='selbtn'], html[data-view='selbtn'] body { background: transparent !important; overflow: hidden; }
-        .selbtn-root { position: fixed; inset: 0; display: grid; place-items: center; }
+          backdrop && <i className="selbtn__lens" style={{ backgroundImage: `url(${backdrop})` }} />
+        ))}
+      {!solid && <i className="selbtn__glass" />}
+      <BrandMark size={Math.round(size * 0.6)} mono />
+    </div>
+  );
+}
+
+/** 玻璃珠的样式（划词按钮窗口和设置页的预览都要挂一份） */
+export function GlassDotStyles() {
+  return (
+    <style>{`
         /* 圆点比窗口小一圈（四周各 12px，和 Rust 的 BUTTON_INSET 一致），留给投影和悬停放大。
            投影最远到 3 + 8 = 11px，整个落在这圈留边里；超出去的会被窗口的边切成一条直线 */
         .selbtn {
@@ -89,7 +134,8 @@ export default function SelectionButton() {
           color: rgba(50, 50, 56, 0.82);
           box-shadow: 0 0 0 0.5px var(--edge), 0 1px 2px rgba(0, 0, 0, calc(var(--drop) * 0.8)), 0 3px 8px rgba(0, 0, 0, var(--drop));
           transition: color 140ms var(--cn-ease-out), transform 160ms var(--cn-ease-out);
-          animation: selbtn-in 200ms var(--cn-ease-out);
+          /* 出场要快：选完字眼睛就在找它 */
+          animation: selbtn-in 140ms var(--cn-ease-out);
         }
         .selbtn > svg { position: relative; z-index: 2; }
         /* 液态玻璃：图标再描一圈和它反色的柔光，压在什么画面上都认得出 */
@@ -142,8 +188,41 @@ export default function SelectionButton() {
 
         .selbtn:hover { color: rgba(0, 0, 0, 0.9); transform: scale(1.08); }
         [data-theme='dark'] .selbtn:not([data-tone='light']):hover, .selbtn[data-tone='dark']:hover { color: #fff; }
-        @keyframes selbtn-in { from { opacity: 0; transform: scale(0.6); } }
+        /* 纯色：一块实心的圆，图标用主题色；深色模式换成深灰底。放在最后、选择器写重一点，盖过上面玻璃的颜色规则 */
+        .selbtn.selbtn[data-style='solid'], .selbtn.selbtn[data-style='solid']:hover { background: #fff; color: var(--cn-accent); --edge: rgba(0, 0, 0, 0.14); }
+        [data-theme='dark'] .selbtn.selbtn[data-style='solid'], [data-theme='dark'] .selbtn.selbtn[data-style='solid']:hover { background: #2c2c2e; color: var(--cn-accent); --edge: rgba(0, 0, 0, 0.5); }
+        @keyframes selbtn-in { from { opacity: 0; transform: scale(0.7); } }
+
+    `}</style>
+  );
+}
+
+export default function SelectionButton() {
+  const { t } = useTranslation();
+  const settings = useSettings();
+  const [shown, setShown] = useState<{ generation: number; dark: boolean | null; backdrop: string | null }>({ generation: 0, dark: null, backdrop: null });
+  useEvent('selection-button-show', setShown);
+  const sel = settings?.translate.selection;
+  return (
+    <div className="selbtn-root">
+      <GlassDot
+        style={sel?.buttonStyle ?? 'liquid'}
+        tuning={sel?.glass}
+        // 圆点多大由设置定（窗口已经按它摆好了），里面的图标跟着按比例变
+        size={sel?.buttonSize ?? 28}
+        backdrop={shown.backdrop}
+        dark={shown.dark}
+        replay={shown.generation}
+        title={t('translate.selectionButton')}
+        // 正常情况下圆点上的点击在后端的监听那边就被拦下了，到不了这里；到了说明那边没认出来：
+        // 告诉后端，由它决定按点了圆点处理，还是把残留的圆点收起来
+        onPointerDown={() => void translate.buttonPressed().catch(() => undefined)}
+      />
+      <style>{`
+        html[data-view='selbtn'], html[data-view='selbtn'] body { background: transparent !important; overflow: hidden; }
+        .selbtn-root { position: fixed; inset: 0; display: grid; place-items: center; }
       `}</style>
+      <GlassDotStyles />
     </div>
   );
 }

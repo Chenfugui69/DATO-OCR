@@ -164,6 +164,15 @@ pub enum HookEvent {
     Key(HookKey),
 }
 
+/// 录屏时的键盘和滚轮（见 `platform::start_record_input`）：按键显示、滚动箭头用
+#[derive(Clone, Debug, PartialEq)]
+pub enum RecordInput {
+    /// 按下了一个键，显示用的写法（带修饰键）：⌘C、⇧A、⏎、Space……
+    Key(String),
+    /// 滚轮：往下滚为正（像素或行，只看方向）
+    Scroll(f64),
+}
+
 /// 划词监听上报的事件（见 `platform::start_selection_watch`）。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum SelectionEvent {
@@ -233,6 +242,47 @@ pub enum Permission {
     FullDiskAccess,
 }
 
+/// 截图框选用的一个界面元素（辅助功能树里的）：屏幕物理坐标的框和它的角色（AXCell、AXButton……）
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UiElement {
+    pub rect: PhysicalRect,
+    pub role: String,
+}
+
+/// 朗读的选项（设置里的语速、音调、各语言的声音）
+#[derive(Clone, Debug, Default)]
+pub struct SpeakOptions {
+    pub rate: f64,
+    pub pitch: f64,
+    /// 语言（zh、en、zh-TW……）→ 声音标识
+    pub voices: std::collections::BTreeMap<String, String>,
+}
+
+impl SpeakOptions {
+    /// 某个语言标签（如 zh-CN）设置里选的声音：先找完整标签（繁体中文 zh-TW 单独设），再找语言部分
+    pub fn voice_for(&self, tag: &str) -> Option<&str> {
+        let base = tag.split('-').next().unwrap_or(tag);
+        self.voices
+            .get(tag)
+            .or_else(|| (tag != "zh-TW").then(|| self.voices.get(base)).flatten())
+            .map(String::as_str)
+            .filter(|s| !s.is_empty())
+    }
+}
+
+/// 系统里的一个朗读声音
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Voice {
+    pub id: String,
+    pub name: String,
+    /// BCP-47 语言标签，如 zh-CN
+    pub lang: String,
+    /// 1 普通 / 2 增强 / 3 高品质
+    pub quality: u8,
+}
+
 /// 录视频时要用的设备
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -253,11 +303,48 @@ pub enum MediaAccess {
     Unsupported,
 }
 
-/// 录视频时除了画面还录什么
+/// 录视频时除了画面还录什么、画面怎么压
 #[derive(Clone, Copy, Debug, Default)]
 pub struct VideoOptions {
     pub system_audio: bool,
     pub microphone: bool,
+    pub encoding: VideoEncoding,
+}
+
+/// 视频画面怎么压：录制和剪辑导出用同一套（导出不用系统"最高质量"预设，那个码率很高，剪一刀文件反而变大）
+#[derive(Clone, Copy, Debug)]
+pub struct VideoEncoding {
+    /// H.265（HEVC）：同样清晰文件小三四成；老设备、部分网页和聊天软件放不了
+    pub hevc: bool,
+    /// 画质 10–100：决定码率，越低文件越小
+    pub quality: u32,
+    pub fps: u32,
+}
+
+impl Default for VideoEncoding {
+    fn default() -> Self {
+        Self {
+            hevc: false,
+            quality: 50,
+            fps: 30,
+        }
+    }
+}
+
+impl VideoEncoding {
+    /// 平均码率（bit/s）。屏幕内容大块不动、只录变了的帧，每像素每帧给得很少也清楚：
+    /// 画质 50 ≈ 0.045 bit/像素/帧（1080p30 约 2.8 Mbps），100 ≈ 0.14；帧率超过 30 的部分只按四成算；
+    /// H.265 再打六五折
+    pub fn bitrate(&self, width: u32, height: u32) -> u32 {
+        let q = f64::from(self.quality.clamp(10, 100)) / 100.0;
+        let bpp = 0.012 + 0.13 * q * q;
+        let fps = f64::from(self.fps.clamp(1, 30)) + f64::from(self.fps.saturating_sub(30)) * 0.4;
+        let mut bits = f64::from(width) * f64::from(height) * fps * bpp;
+        if self.hevc {
+            bits *= 0.65;
+        }
+        bits.clamp(300_000.0, 40_000_000.0) as u32
+    }
 }
 
 /// 录好的视频剪一下：只要 `[start_ms, end_ms)` 这一段，按 `speed` 倍速

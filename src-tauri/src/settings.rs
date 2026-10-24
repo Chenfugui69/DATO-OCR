@@ -35,12 +35,22 @@ pub struct Settings {
     pub extra: Map<String, Value>,
 }
 
-/// 录制视频（MP4）。GIF 的帧率、录不录鼠标还在 `capture` 里（老设置），设置页一起放在"录制"下面。
+/// 录制视频（MP4）和 GIF。GIF 的帧率、录不录鼠标还在 `capture` 里（老设置），设置页一起放在"录制"下面。
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase", default)]
 pub struct RecordSettings {
-    /// 分辨率上限：original = 按屏幕的物理像素（最长边最多 3840）| 1080p | 720p（装进 1920×1080 / 1280×720）
+    /// 视频分辨率上限：original = 按屏幕的物理像素（最长边最多 3840）| 1080p | 720p（装进 1920×1080 / 1280×720）
     pub resolution: String,
+    /// 视频画质 10–100：决定码率，越低文件越小（见 `platform::VideoEncoding::bitrate`）
+    pub quality: u32,
+    /// 视频编码器：h264（哪里都能放）| hevc（H.265，文件小三四成，老设备放不了）
+    pub codec: String,
+    /// 系统声音和麦克风各存一条音轨（后期好分开调）。关着时录完混成一条（大多数播放器只放第一条）
+    pub separate_audio_tracks: bool,
+    /// GIF 分辨率上限：original（最长边最多 1600）| 1080p | 720p | 480p
+    pub gif_resolution: String,
+    /// GIF 循环播放（关掉 = 放一遍停在最后一帧）
+    pub gif_loop: bool,
     /// 视频帧率：15 / 24 / 30 / 60
     pub fps: u32,
     /// 录系统声音（电脑里正在放的声音）
@@ -57,14 +67,98 @@ pub struct RecordSettings {
     pub max_seconds: u32,
     /// 录完先打开剪辑窗口（掐头去尾、改速度），再保存。GIF 和视频都管
     pub edit_before_save: bool,
+    /// 录成什么：mp4 | gif | apng（截图工具条点「录制」后，录制栏最左边选）
+    pub format: String,
+    /// 鼠标轨迹的颜色 #rrggbb；空 = 不画轨迹
+    pub trail_color: String,
+    /// 点击时那一圈涟漪的颜色 #rrggbb；空 = 不画
+    pub click_color: String,
+    /// 指针底下垫一个高亮圆
+    pub mouse_highlight: bool,
+    /// 按着鼠标键时在指针旁标出是哪个键
+    pub mouse_buttons: bool,
+    /// 滚动时在指针旁画上下箭头
+    pub mouse_scroll: bool,
+    /// 录制时把按下的键显示在画面下面的角落
+    pub keystrokes: bool,
+    /// 动图（GIF / APNG）底下画进度条或播放时间：off | bar | time
+    pub progress: String,
+    /// 点开始后倒数几秒再录（0 = 马上录）
+    pub countdown: u32,
+    /// 摄像头画面左上角在选区里的位置（占选区宽高的比例）；None = 选区左下角
+    pub camera_at: Option<[f64; 2]>,
+    /// 摄像头画面的形状：circle | square | rounded
+    pub camera_shape: String,
+    /// 摄像头画面的大小（逻辑像素，正方形的边长 / 圆的直径）
+    pub camera_px: u32,
+    /// 效果的细节（鼠标轨迹多长、按键显示多大、高亮多大……）
+    pub effects: RecordEffects,
+    /// 录制时工具条自动藏起来，鼠标移到它那儿再出来
+    pub auto_hide_toolbar: bool,
+    /// 导出完成后提示一下
+    pub notify_done: bool,
     #[serde(flatten)]
     pub extra: Map<String, Value>,
+}
+
+/// 录制效果的细节（截图工具条「录制」→ 录制栏的「效果设置」）
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase", default)]
+pub struct RecordEffects {
+    /// 鼠标轨迹留多久（毫秒）
+    pub trail_ms: u32,
+    /// 按键显示的高度（逻辑像素）
+    pub keyboard_px: u32,
+    /// 按键显示的底色 / 字色（#rrggbb 或 #rrggbbaa）
+    pub keyboard_bg: String,
+    pub keyboard_fg: String,
+    /// 指针高亮圆的半径（逻辑像素）和颜色（#rrggbbaa）
+    pub highlight_radius: u32,
+    pub highlight_color: String,
+    /// 进度条 / 播放时间的颜色
+    pub progress_color: String,
+}
+
+impl Default for RecordEffects {
+    fn default() -> Self {
+        Self {
+            trail_ms: 500,
+            keyboard_px: 44,
+            keyboard_bg: "#000000cc".into(),
+            keyboard_fg: "#ffffff".into(),
+            highlight_radius: 40,
+            highlight_color: "#ffff0080".into(),
+            progress_color: "#1677ff".into(),
+        }
+    }
+}
+
+/// `#rrggbb` / `#rrggbbaa` → RGBA；写错了用 `fallback`
+pub fn parse_color(s: &str, fallback: [u8; 4]) -> [u8; 4] {
+    let h = s.trim().trim_start_matches('#');
+    let byte = |i: usize| u8::from_str_radix(h.get(i..i + 2)?, 16).ok();
+    match h.len() {
+        6 => match (byte(0), byte(2), byte(4)) {
+            (Some(r), Some(g), Some(b)) => [r, g, b, 255],
+            _ => fallback,
+        },
+        8 => match (byte(0), byte(2), byte(4), byte(6)) {
+            (Some(r), Some(g), Some(b), Some(a)) => [r, g, b, a],
+            _ => fallback,
+        },
+        _ => fallback,
+    }
 }
 
 impl Default for RecordSettings {
     fn default() -> Self {
         Self {
-            resolution: "original".into(),
+            resolution: "1080p".into(),
+            quality: 50,
+            codec: "h264".into(),
+            separate_audio_tracks: false,
+            gif_resolution: "720p".into(),
+            gif_loop: true,
             fps: 30,
             system_audio: false,
             microphone: false,
@@ -73,6 +167,21 @@ impl Default for RecordSettings {
             camera_size: "medium".into(),
             max_seconds: 300,
             edit_before_save: false,
+            format: "mp4".into(),
+            trail_color: String::new(),
+            click_color: "#ff3b30".into(),
+            mouse_highlight: false,
+            mouse_buttons: false,
+            mouse_scroll: false,
+            keystrokes: false,
+            progress: "off".into(),
+            countdown: 0,
+            camera_at: None,
+            camera_shape: "circle".into(),
+            camera_px: 150,
+            effects: RecordEffects::default(),
+            auto_hide_toolbar: false,
+            notify_done: true,
             extra: Map::new(),
         }
     }
@@ -81,7 +190,17 @@ impl Default for RecordSettings {
 impl RecordSettings {
     fn sanitize(&mut self) {
         if !matches!(self.resolution.as_str(), "original" | "1080p" | "720p") {
-            self.resolution = "original".into();
+            self.resolution = "1080p".into();
+        }
+        self.quality = self.quality.clamp(10, 100);
+        if !matches!(self.codec.as_str(), "h264" | "hevc") {
+            self.codec = "h264".into();
+        }
+        if !matches!(
+            self.gif_resolution.as_str(),
+            "original" | "1080p" | "720p" | "480p"
+        ) {
+            self.gif_resolution = "720p".into();
         }
         if !matches!(self.fps, 15 | 24 | 30 | 60) {
             self.fps = 30;
@@ -96,6 +215,24 @@ impl RecordSettings {
             self.camera_size = "medium".into();
         }
         self.max_seconds = self.max_seconds.clamp(10, 3600);
+        if !matches!(self.format.as_str(), "mp4" | "gif" | "apng") {
+            self.format = "mp4".into();
+        }
+        if !matches!(self.progress.as_str(), "off" | "bar" | "time") {
+            self.progress = "off".into();
+        }
+        if !matches!(self.camera_shape.as_str(), "circle" | "square" | "rounded") {
+            self.camera_shape = "circle".into();
+        }
+        self.countdown = self.countdown.min(10);
+        self.camera_px = self.camera_px.clamp(60, 480);
+        self.camera_at = self
+            .camera_at
+            .map(|[x, y]| [x.clamp(0.0, 1.0), y.clamp(0.0, 1.0)]);
+        let e = &mut self.effects;
+        e.trail_ms = e.trail_ms.clamp(100, 3000);
+        e.keyboard_px = e.keyboard_px.clamp(20, 120);
+        e.highlight_radius = e.highlight_radius.clamp(10, 120);
     }
 }
 
@@ -225,6 +362,8 @@ pub struct HotkeySettings {
     pub ai: String,
     /// 把剪贴板里的图贴到屏幕上（默认不设）
     pub pin_clipboard: String,
+    /// 输入翻译：弹出翻译面板，自己打字翻（默认不设）
+    pub input_translate: String,
     #[serde(flatten)]
     pub extra: Map<String, Value>,
 }
@@ -242,6 +381,7 @@ impl Default for HotkeySettings {
             instant: keys.instant.into(),
             ai: String::new(),
             pin_clipboard: String::new(),
+            input_translate: String::new(),
             extra: Map::new(),
         }
     }
@@ -262,7 +402,7 @@ pub struct CaptureSettings {
     pub instant_action: String,
     /// 瞬间截屏把鼠标指针也画进去
     pub instant_cursor: bool,
-    /// GIF 录制的帧率
+    /// GIF 录制的帧率（默认 10：GIF 帧率高了文件涨得快，屏幕操作 10 帧足够顺）
     pub gif_fps: u32,
     /// GIF 录制把鼠标指针也录进去
     pub gif_cursor: bool,
@@ -275,6 +415,10 @@ pub struct CaptureSettings {
     pub color_format: String,
     pub detect_windows: bool,
     pub detect_child_windows: bool,
+    /// 窗口里的元素框到多细：block = 只框大块（表格、面板、工具栏）| element = 连单元格、按钮都框
+    pub element_level: String,
+    /// 截图时自动找出画面里的二维码 / 条码，码中间放个小图标，鼠标移上去看内容
+    pub auto_scan_codes: bool,
     pub snap_threshold: u32,
     /// none（默认，右键什么都不做）| exit | cancelSelection
     pub right_click: String,
@@ -286,6 +430,9 @@ pub struct CaptureSettings {
     pub toolbar_order: Vec<String>,
     /// 工具条上隐藏的按钮（设置里点图标切换；完成、取消不能藏）
     pub toolbar_hidden: Vec<String>,
+    /// 按钮组：几个按钮合成工具条上的一个，点一下弹出二级工具条。组在上面的顺序里写作 `group:组名`，
+    /// 组里的按钮不再单独出现在顺序里。默认有一个「识别」组：二维码、表格、公式
+    pub toolbar_groups: Vec<ToolbarGroup>,
     /// 截图工具条的样子：glass = 半透明的玻璃条（默认）| frosted = 磨砂玻璃（像剪贴板面板，模糊底下的画面）
     pub toolbar_style: String,
     /// copy | copyAndSave
@@ -309,7 +456,7 @@ impl Default for CaptureSettings {
             ocr_instant: true,
             instant_action: "select".into(),
             instant_cursor: true,
-            gif_fps: 15,
+            gif_fps: 10,
             gif_cursor: true,
             frame: FrameStyle::default(),
             ocr_frame: FrameStyle {
@@ -323,10 +470,13 @@ impl Default for CaptureSettings {
             color_format: "hex".into(),
             detect_windows: true,
             detect_child_windows: true,
+            element_level: "element".into(),
+            auto_scan_codes: true,
             snap_threshold: 8,
             right_click: "none".into(),
             toolbar_tools: owned(&TOOLBAR_TOOLS),
-            toolbar_actions: owned(&TOOLBAR_ACTIONS),
+            toolbar_actions: owned(&DEFAULT_ACTIONS),
+            toolbar_groups: default_groups(),
             toolbar_order: owned(&TOOLBAR_ORDER),
             toolbar_hidden: Vec::new(),
             toolbar_style: "glass".into(),
@@ -356,10 +506,170 @@ pub const TOOLBAR_TOOLS: [&str; 12] = [
     "template",
     "eraser",
 ];
-pub const TOOLBAR_ACTIONS: [&str; 9] = [
-    "ocr", "translate", "qr", "table", "formula", "ai", "longshot", "gif", "video",
+pub const TOOLBAR_ACTIONS: [&str; 8] = [
+    "ocr",
+    "translate",
+    "qr",
+    "table",
+    "formula",
+    "ai",
+    "longshot",
+    "record",
 ];
 pub const TOOLBAR_ORDER: [&str; 5] = ["undo", "save", "pin", "cancel", "done"];
+/// 新装时中间那一组的顺序（二维码、表格、公式在「识别」组里）
+const DEFAULT_ACTIONS: [&str; 6] = [
+    "ocr",
+    "translate",
+    "group:recognize",
+    "ai",
+    "longshot",
+    "record",
+];
+/// 顺序里按钮组的写法：`group:组名`
+pub const GROUP_PREFIX: &str = "group:";
+
+/// 工具条上的一个按钮组
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase", default)]
+pub struct ToolbarGroup {
+    pub id: String,
+    /// 用户起的名字；空 = 按组名用内置的叫法（recognize → 识别）
+    pub name: String,
+    pub items: Vec<String>,
+}
+
+fn default_groups() -> Vec<ToolbarGroup> {
+    vec![ToolbarGroup {
+        id: "recognize".into(),
+        name: String::new(),
+        items: owned(&["qr", "table", "formula"]),
+    }]
+}
+
+/// 按钮组理顺：组名不重复、组里只放绘制工具或中间那组的按钮（同一类）、一个按钮只在一个组里，
+/// 空组去掉。然后两组顺序里：组里的按钮拿掉，组按 `group:组名` 出现，缺的补上。
+fn fix_toolbar(c: &mut CaptureSettings) {
+    let mut taken: Vec<String> = Vec::new();
+    let mut ids: Vec<String> = Vec::new();
+    c.toolbar_groups.retain_mut(|g| {
+        g.id = g.id.trim().to_string();
+        if g.id.is_empty() || g.id.contains(':') || ids.contains(&g.id) {
+            return false;
+        }
+        let tools = g
+            .items
+            .first()
+            .is_some_and(|i| TOOLBAR_TOOLS.contains(&i.as_str()));
+        let category: &[&str] = if tools {
+            &TOOLBAR_TOOLS
+        } else {
+            &TOOLBAR_ACTIONS
+        };
+        g.items.retain(|i| {
+            let ok = category.contains(&i.as_str()) && !taken.contains(i);
+            if ok {
+                taken.push(i.clone());
+            }
+            ok
+        });
+        if g.items.is_empty() {
+            return false;
+        }
+        ids.push(g.id.clone());
+        true
+    });
+    // 完整的顺序：按内置顺序走，碰到组里的按钮就换成那个组（组排在它第一个按钮原来的位置）
+    let canonical = |all: &[&str]| {
+        let mut out: Vec<String> = Vec::new();
+        for id in all {
+            let item = match c
+                .toolbar_groups
+                .iter()
+                .find(|g| g.items.iter().any(|i| i == id))
+            {
+                Some(g) => format!("{GROUP_PREFIX}{}", g.id),
+                None => (*id).to_string(),
+            };
+            if !out.contains(&item) {
+                out.push(item);
+            }
+        }
+        out
+    };
+    let tools = canonical(&TOOLBAR_TOOLS);
+    let actions = canonical(&TOOLBAR_ACTIONS);
+    let tool_refs: Vec<&str> = tools.iter().map(String::as_str).collect();
+    let action_refs: Vec<&str> = actions.iter().map(String::as_str).collect();
+    fix_order(&mut c.toolbar_tools, &tool_refs);
+    fix_order(&mut c.toolbar_actions, &action_refs);
+    fix_order(&mut c.toolbar_order, &TOOLBAR_ORDER);
+    c.toolbar_hidden.retain(|id| {
+        (tools.contains(id)
+            || actions.contains(id)
+            || taken.contains(id)
+            || TOOLBAR_ORDER.contains(&id.as_str()))
+            && id != "done"
+            && id != "cancel"
+    });
+    c.toolbar_hidden.dedup();
+}
+
+/// 一次性：二维码、表格、公式合成「识别」组，放在原来二维码的位置
+fn migrate_recognize_group(c: &mut CaptureSettings) {
+    if c.extra
+        .insert("toolbarGroupsV1".into(), Value::Bool(true))
+        .is_some()
+        || !c.toolbar_groups.is_empty()
+    {
+        return;
+    }
+    let items = ["qr", "table", "formula"];
+    let pos = c
+        .toolbar_actions
+        .iter()
+        .position(|i| items.contains(&i.as_str()))
+        .unwrap_or(c.toolbar_actions.len());
+    c.toolbar_actions.retain(|i| !items.contains(&i.as_str()));
+    c.toolbar_actions.insert(
+        pos.min(c.toolbar_actions.len()),
+        format!("{GROUP_PREFIX}recognize"),
+    );
+    c.toolbar_groups = default_groups();
+}
+
+/// 老版本工具条上「录制 GIF」「录制视频」是两个按钮，现在合成一个「录制」（格式在录制栏里选）：
+/// 顺序里、按钮组里第一个出现的换成「录制」，另一个去掉；两个都藏起来了才藏「录制」
+fn migrate_record_action(c: &mut CaptureSettings) {
+    let old = |id: &String| id == "gif" || id == "video";
+    let mut placed = false;
+    let mut swap = |list: &mut Vec<String>| {
+        let mut out = Vec::with_capacity(list.len());
+        for id in list.drain(..) {
+            if old(&id) {
+                if !placed {
+                    placed = true;
+                    out.push("record".into());
+                }
+            } else {
+                out.push(id);
+            }
+        }
+        *list = out;
+    };
+    swap(&mut c.toolbar_actions);
+    swap(&mut c.toolbar_order);
+    for g in &mut c.toolbar_groups {
+        swap(&mut g.items);
+    }
+    let both_hidden = ["gif", "video"]
+        .iter()
+        .all(|id| c.toolbar_hidden.iter().any(|h| h == id));
+    c.toolbar_hidden.retain(|h| !old(h));
+    if both_hidden && !c.toolbar_hidden.iter().any(|h| h == "record") {
+        c.toolbar_hidden.push("record".into());
+    }
+}
 
 fn owned(ids: &[&str]) -> Vec<String> {
     ids.iter().map(|s| (*s).into()).collect()
@@ -715,8 +1025,35 @@ pub struct TranslateSettings {
     pub selection: SelectionTranslateSettings,
     /// 划词翻译面板的外观
     pub popup: PopupStyle,
+    /// 朗读（翻译面板上的小喇叭）
+    pub speech: SpeechSettings,
     #[serde(flatten)]
     pub extra: Map<String, Value>,
+}
+
+/// 朗读：语速、音调、每种语言用哪个声音
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase", default)]
+pub struct SpeechSettings {
+    /// 语速倍数：1 = 正常，0.5 ~ 2
+    pub rate: f64,
+    /// 音调倍数：1 = 正常，0.5 ~ 2
+    pub pitch: f64,
+    /// 语言代码（zh、en、ja……）→ 声音的标识；没设的语言用系统默认的声音
+    pub voices: std::collections::BTreeMap<String, String>,
+    #[serde(flatten)]
+    pub extra: Map<String, Value>,
+}
+
+impl Default for SpeechSettings {
+    fn default() -> Self {
+        Self {
+            rate: 1.0,
+            pitch: 1.0,
+            voices: Default::default(),
+            extra: Map::new(),
+        }
+    }
 }
 
 /// 划词翻译面板外观。尺寸是逻辑像素；用户拖拽改了大小会写回这里。
@@ -778,6 +1115,7 @@ impl Default for TranslateSettings {
             custom: Vec::new(),
             selection: Default::default(),
             popup: Default::default(),
+            speech: Default::default(),
             extra: Map::new(),
         }
     }
@@ -825,8 +1163,15 @@ pub struct SelectionTranslateSettings {
     pub show_button: bool,
     /// bottomRight | topRight | bottomLeft | topLeft
     pub button_position: String,
-    /// 划词按钮的样子：liquid = 液态玻璃（通透）| frosted = 磨砂玻璃（更实，密集文字上更好认）
+    /// 划词按钮的样子：liquid = 液态玻璃（通透）| frosted = 磨砂玻璃（更实，密集文字上更好认）|
+    /// solid = 纯色（没有玻璃效果，弹出最快、最省资源）| custom = 自定义（液态玻璃的各项自己调，见 `glass`）
     pub button_style: String,
+    /// 自定义玻璃的各项（样式选"自定义"时用）
+    pub glass: GlassTuning,
+    /// 选中的是系统语言的文字（中文系统里选中文）时不弹按钮
+    pub skip_system_language: bool,
+    /// 选中这些语言的文字时不弹按钮（语言代码：zh、en、ja……）
+    pub skip_languages: Vec<String>,
     /// 划词按钮圆点的直径（逻辑像素）
     pub button_size: u32,
     /// none | alt | ctrl：按住它选文字，松开鼠标直接弹翻译面板
@@ -841,9 +1186,62 @@ impl Default for SelectionTranslateSettings {
             show_button: true,
             button_position: "bottomRight".into(),
             button_style: "liquid".into(),
+            glass: GlassTuning::default(),
+            skip_system_language: false,
+            skip_languages: Vec::new(),
             button_size: 28,
             modifier: "none".into(),
             extra: Map::new(),
+        }
+    }
+}
+
+/// 划词按钮的自定义玻璃：都是 0 ~ 100 的滑块，默认值就是"液态玻璃"的样子（页面 `liquidLens.ts` 换算成折射参数）
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase", default)]
+pub struct GlassTuning {
+    /// 色差：边缘彩边有多明显（0 = 没有彩边）
+    pub dispersion: u32,
+    /// 模糊：透过玻璃看到的画面糊多少（0 = 清楚）
+    pub blur: u32,
+    /// 折射：边缘把画面压弯得多厉害
+    pub refraction: u32,
+    /// 放大：中间放大多少
+    pub magnify: u32,
+    /// 图标底下那团雾：越浓图标越清楚，玻璃越不通透
+    pub veil: u32,
+    /// 玻璃上那层淡色的浓淡
+    pub tint: u32,
+    /// 高光的强弱
+    pub highlight: u32,
+}
+
+impl Default for GlassTuning {
+    fn default() -> Self {
+        Self {
+            dispersion: 35,
+            blur: 0,
+            refraction: 48,
+            magnify: 20,
+            veil: 88,
+            tint: 10,
+            highlight: 70,
+        }
+    }
+}
+
+impl GlassTuning {
+    fn sanitize(&mut self) {
+        for v in [
+            &mut self.dispersion,
+            &mut self.blur,
+            &mut self.refraction,
+            &mut self.magnify,
+            &mut self.veil,
+            &mut self.tint,
+            &mut self.highlight,
+        ] {
+            *v = (*v).min(100);
         }
     }
 }
@@ -1033,6 +1431,17 @@ impl Settings {
     /// 把越界值拉回合法范围（用户手改配置时可能写出任何东西）。
     pub fn sanitized(mut self) -> Self {
         self.record.sanitize();
+        let sp = &mut self.translate.speech;
+        sp.rate = if sp.rate.is_finite() {
+            sp.rate.clamp(0.5, 2.0)
+        } else {
+            1.0
+        };
+        sp.pitch = if sp.pitch.is_finite() {
+            sp.pitch.clamp(0.5, 2.0)
+        } else {
+            1.0
+        };
         let c = &mut self.capture;
         // 品牌改名：还是旧默认值的跟着换成新名字，用户自己改过的不动
         if matches!(
@@ -1046,6 +1455,9 @@ impl Settings {
         c.ocr_mask_opacity = c.ocr_mask_opacity.clamp(0.0, 0.9);
         if !matches!(c.instant_action.as_str(), "select" | "copy" | "save") {
             c.instant_action = "select".into();
+        }
+        if !matches!(c.element_level.as_str(), "block" | "element") {
+            c.element_level = "element".into();
         }
         if !matches!(c.right_click.as_str(), "none" | "exit" | "cancelSelection") {
             c.right_click = "none".into();
@@ -1064,17 +1476,9 @@ impl Settings {
         }
         c.frame.sanitize();
         c.ocr_frame.sanitize();
-        fix_order(&mut c.toolbar_tools, &TOOLBAR_TOOLS);
-        fix_order(&mut c.toolbar_actions, &TOOLBAR_ACTIONS);
-        fix_order(&mut c.toolbar_order, &TOOLBAR_ORDER);
-        c.toolbar_hidden.retain(|id| {
-            (TOOLBAR_TOOLS.contains(&id.as_str())
-                || TOOLBAR_ACTIONS.contains(&id.as_str())
-                || TOOLBAR_ORDER.contains(&id.as_str()))
-                && id != "done"
-                && id != "cancel"
-        });
-        c.toolbar_hidden.dedup();
+        migrate_recognize_group(c);
+        migrate_record_action(c);
+        fix_toolbar(c);
         if !matches!(c.toolbar_style.as_str(), "glass" | "frosted") {
             c.toolbar_style = "glass".into();
         }
@@ -1094,7 +1498,11 @@ impl Settings {
         ) {
             sel.button_position = "bottomRight".into();
         }
-        if !matches!(sel.button_style.as_str(), "liquid" | "frosted") {
+        sel.glass.sanitize();
+        if !matches!(
+            sel.button_style.as_str(),
+            "liquid" | "frosted" | "solid" | "custom"
+        ) {
             sel.button_style = "liquid".into();
         }
         sel.button_size = sel.button_size.clamp(20, 48);
@@ -1304,6 +1712,76 @@ mod tests {
                 "eraser"
             ]
         );
+    }
+
+    #[test]
+    fn old_toolbar_gets_a_recognize_group_where_qr_was() {
+        let mut c = CaptureSettings {
+            toolbar_actions: owned(&["ocr", "qr", "translate", "table", "formula", "ai"]),
+            toolbar_groups: Vec::new(),
+            ..Default::default()
+        };
+        c.extra.clear();
+        migrate_recognize_group(&mut c);
+        fix_toolbar(&mut c);
+        assert_eq!(
+            c.toolbar_actions,
+            [
+                "ocr",
+                "group:recognize",
+                "translate",
+                "ai",
+                "longshot",
+                "record"
+            ]
+        );
+        assert_eq!(c.toolbar_groups[0].items, ["qr", "table", "formula"]);
+        // 只迁移一次：用户之后把组解散了就不再建
+        c.toolbar_groups.clear();
+        migrate_recognize_group(&mut c);
+        fix_toolbar(&mut c);
+        assert!(c.toolbar_actions.contains(&"qr".to_string()));
+        assert!(!c
+            .toolbar_actions
+            .iter()
+            .any(|i| i.starts_with(GROUP_PREFIX)));
+    }
+
+    #[test]
+    fn gif_and_video_buttons_become_one_record_button() {
+        let mut c = CaptureSettings {
+            toolbar_actions: owned(&["ocr", "video", "ai", "gif"]),
+            toolbar_hidden: owned(&["gif"]),
+            ..Default::default()
+        };
+        migrate_record_action(&mut c);
+        assert_eq!(c.toolbar_actions, ["ocr", "record", "ai"]);
+        // 只藏了一个：录制按钮照样显示
+        assert!(c.toolbar_hidden.is_empty());
+        let mut both = CaptureSettings {
+            toolbar_actions: owned(&["gif", "video"]),
+            toolbar_hidden: owned(&["gif", "video"]),
+            ..Default::default()
+        };
+        migrate_record_action(&mut both);
+        assert_eq!(both.toolbar_actions, ["record"]);
+        assert_eq!(both.toolbar_hidden, ["record"]);
+    }
+
+    #[test]
+    fn groups_keep_one_category_and_items_leave_the_order() {
+        let mut c = CaptureSettings::default();
+        c.toolbar_groups.push(ToolbarGroup {
+            id: "shapes".into(),
+            name: "形状".into(),
+            items: owned(&["rect", "ellipse", "ocr", "rect"]),
+        });
+        fix_toolbar(&mut c);
+        let shapes = c.toolbar_groups.iter().find(|g| g.id == "shapes").unwrap();
+        assert_eq!(shapes.items, ["rect", "ellipse"]);
+        assert!(!c.toolbar_tools.contains(&"rect".to_string()));
+        assert!(c.toolbar_tools.contains(&"group:shapes".to_string()));
+        assert!(c.toolbar_actions.contains(&"ocr".to_string()));
     }
 
     #[test]

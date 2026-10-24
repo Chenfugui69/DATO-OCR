@@ -395,11 +395,21 @@ export function SettingsPage({ section }: { section: string | null }) {
                 onChange={(v) => set((d) => void (d.capture.colorFormat = v))}
               />
             </Row>
-            <Row title={t('settings.capture.detectWindows')}>
-              <Switch checked={c.detectWindows} onChange={(v) => set((d) => void (d.capture.detectWindows = v))} />
+            <Row title={t('settings.capture.detectLevel')} desc={t('settings.capture.detectLevelDesc')}>
+              <Segmented
+                value={!c.detectWindows ? 'off' : !c.detectChildWindows ? 'window' : c.elementLevel === 'block' ? 'block' : 'element'}
+                options={(['off', 'window', 'block', 'element'] as const).map((v) => ({ value: v, label: t(`settings.capture.detectLevelOpt.${v}`) }))}
+                onChange={(v) =>
+                  set((d) => {
+                    d.capture.detectWindows = v !== 'off';
+                    d.capture.detectChildWindows = v === 'block' || v === 'element';
+                    if (v === 'block' || v === 'element') d.capture.elementLevel = v;
+                  })
+                }
+              />
             </Row>
-            <Row title={t('settings.capture.detectChildren')} desc={t('settings.capture.detectChildrenDesc')}>
-              <Switch checked={c.detectChildWindows} disabled={!c.detectWindows} onChange={(v) => set((d) => void (d.capture.detectChildWindows = v))} />
+            <Row title={t('settings.capture.autoScanCodes')} desc={t('settings.capture.autoScanCodesDesc')}>
+              <Switch checked={c.autoScanCodes} onChange={(v) => set((d) => void (d.capture.autoScanCodes = v))} />
             </Row>
             <Row title={t('settings.capture.snap')} desc={t('settings.capture.snapDesc')}>
               <span className="set-row__value cn-numeric">{c.snapThreshold}px</span>
@@ -419,12 +429,27 @@ export function SettingsPage({ section }: { section: string | null }) {
           </Group>
 
           <Group id="record" title={t('settings.section.record')}>
+            <Row title={t('settings.record.gifResolution')} desc={t('settings.record.gifResolutionDesc')}>
+              <Segmented
+                value={rec.gifResolution}
+                options={[
+                  { value: 'original', label: t('settings.record.original') },
+                  { value: '1080p', label: '1080p' },
+                  { value: '720p', label: '720p' },
+                  { value: '480p', label: '480p' },
+                ]}
+                onChange={(v) => set((d) => void (d.record.gifResolution = v))}
+              />
+            </Row>
             <Row title={t('settings.capture.gifFps')} desc={t('settings.capture.gifFpsDesc')}>
               <Segmented
                 value={String(c.gifFps)}
-                options={['10', '15', '20', '30'].map((v) => ({ value: v, label: `${v} fps` }))}
+                options={['5', '10', '15', '20', '30'].map((v) => ({ value: v, label: `${v} fps` }))}
                 onChange={(v) => set((d) => void (d.capture.gifFps = Number(v)))}
               />
+            </Row>
+            <Row title={t('settings.record.gifLoop')} desc={t('settings.record.gifLoopDesc')}>
+              <Switch checked={rec.gifLoop} onChange={(v) => set((d) => void (d.record.gifLoop = v))} />
             </Row>
             <Row title={t('settings.record.cursor')}>
               <Switch checked={c.gifCursor} onChange={(v) => set((d) => void (d.capture.gifCursor = v))} />
@@ -453,6 +478,20 @@ export function SettingsPage({ section }: { section: string | null }) {
                   onChange={(v) => set((d) => void (d.record.fps = Number(v) as Settings['record']['fps']))}
                 />
               </Row>
+              <Row title={t('settings.record.quality')} desc={t('settings.record.qualityDesc')}>
+                <span className="set-row__value cn-numeric">{rec.quality}</span>
+                <Slider value={rec.quality} min={10} max={100} step={5} onChange={(v) => set((d) => void (d.record.quality = v))} />
+              </Row>
+              <Row title={t('settings.record.codec')} desc={t('settings.record.codecDesc')}>
+                <Segmented
+                  value={rec.codec}
+                  options={[
+                    { value: 'h264', label: 'H.264' },
+                    { value: 'hevc', label: 'H.265' },
+                  ]}
+                  onChange={(v) => set((d) => void (d.record.codec = v))}
+                />
+              </Row>
               <Row title={t('settings.record.maxSeconds')}>
                 <Select
                   value={String(rec.maxSeconds)}
@@ -466,24 +505,26 @@ export function SettingsPage({ section }: { section: string | null }) {
               <Row title={t('settings.record.microphone')} desc={mediaDesc('microphone')}>
                 <Switch checked={rec.microphone} onChange={(v) => void toggleMedia('microphone', v)} />
               </Row>
+              {rec.systemAudio && rec.microphone && (
+                <Row title={t('settings.record.separateTracks')} desc={t('settings.record.separateTracksDesc')}>
+                  <Switch checked={rec.separateAudioTracks} onChange={(v) => set((d) => void (d.record.separateAudioTracks = v))} />
+                </Row>
+              )}
               <Row title={t('settings.record.camera')} desc={mediaDesc('camera')}>
                 <Switch checked={rec.camera} onChange={(v) => void toggleMedia('camera', v)} />
               </Row>
               {rec.camera && (
                 <>
-                  <Row title={t('settings.record.cameraPosition')}>
-                    <Select
-                      value={rec.cameraPosition}
-                      options={(['top-left', 'top-right', 'bottom-left', 'bottom-right'] as const).map((v) => ({ value: v, label: t(`settings.record.corner.${v}`) }))}
-                      onChange={(v) => set((d) => void (d.record.cameraPosition = v))}
+                  <Row title={t('record.fx.cameraShape')} desc={t('settings.record.cameraPlace')}>
+                    <Segmented
+                      value={rec.cameraShape}
+                      options={(['circle', 'square', 'rounded'] as const).map((v) => ({ value: v, label: t(`record.fx.shape.${v}`) }))}
+                      onChange={(v) => set((d) => void (d.record.cameraShape = v))}
                     />
                   </Row>
                   <Row title={t('settings.record.cameraSize')}>
-                    <Segmented
-                      value={rec.cameraSize}
-                      options={(['small', 'medium', 'large'] as const).map((v) => ({ value: v, label: t(`settings.record.size.${v}`) }))}
-                      onChange={(v) => set((d) => void (d.record.cameraSize = v))}
-                    />
+                    <span className="set-row__value cn-numeric">{rec.cameraPx}px</span>
+                    <Slider value={rec.cameraPx} min={60} max={480} step={10} onChange={(v) => set((d) => void (d.record.cameraPx = v))} />
                   </Row>
                 </>
               )}
@@ -742,7 +783,7 @@ export function SettingsPage({ section }: { section: string | null }) {
           </Group>
 
           <Group id="hotkeys" title={t('settings.section.hotkeys')} note={t('settings.hotkeys.note')}>
-            {(['capture', 'instant', 'longshot', 'ocr', 'clipboard', 'translate', 'ai', 'pinClipboard'] as HotkeyAction[]).map((a) => {
+            {(['capture', 'instant', 'longshot', 'ocr', 'clipboard', 'translate', 'inputTranslate', 'ai', 'pinClipboard'] as HotkeyAction[]).map((a) => {
               const status = hk(a);
               return (
                 <Row key={a} title={t(`settings.hotkeys.${a}`)} desc={status && !status.ok ? <span className="set-row__error">{status.error}</span> : undefined}>
@@ -758,7 +799,7 @@ export function SettingsPage({ section }: { section: string | null }) {
                   // 默认热键每个平台一套，由 Rust 那边给
                   void system
                     .defaultHotkeys()
-                    .then((defaults) => set((d) => void (d.hotkeys = { ...d.hotkeys, ...defaults, ai: d.hotkeys.ai, pinClipboard: d.hotkeys.pinClipboard })))
+                    .then((defaults) => set((d) => void (d.hotkeys = { ...d.hotkeys, ...defaults, ai: d.hotkeys.ai, pinClipboard: d.hotkeys.pinClipboard, inputTranslate: d.hotkeys.inputTranslate })))
                     .catch(notify.error)
                 }
               >

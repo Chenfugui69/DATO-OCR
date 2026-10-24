@@ -38,6 +38,8 @@ rqrr = { version = "0.10", default-features = false }
 rust_xlsxwriter = { version = "0.92", default-features = false }
 # GIF 录制的编码（MIT / Apache-2.0；调色板量化用的 color_quant 是 MIT）
 gif = "0.14"
+# 录屏存成 APNG（会动的 PNG，全彩）
+png = "0.18"
 
 # 数据库：bundled 静态链接 SQLite（含 FTS5）
 rusqlite = { version = "0.32", features = ["bundled"] }
@@ -136,6 +138,8 @@ objc2-quartz-core = "0.3"
 objc2-vision = "0.3"
 # 录视频（MP4）：AVAssetWriter 硬件编码；麦克风、摄像头走 AVCaptureSession；剪辑 / 混音走 AVAssetExportSession
 objc2-av-foundation = { version = "0.3", features = ["objc2-core-media", "objc2-core-video", "dispatch2", "block2"] }
+# 输入翻译的朗读（系统的语音合成）
+objc2-avf-audio = "0.3"
 # 录视频时的系统声音（SCStream 只要音频）
 objc2-screen-capture-kit = "0.3"
 objc2-core-media = "0.3"

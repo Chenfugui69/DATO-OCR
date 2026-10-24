@@ -7,7 +7,7 @@ import { useTranslation } from 'react-i18next';
 export const SettingsSectionContext = createContext<string | null>(null);
 
 /** 卡片组属于哪个分类：大多数就是自己的 id，几组附属的归到它们的大类下 */
-const SUB_GROUPS: Record<string, string> = { 'ai-chat': 'ai', 'ai-prompts': 'ai', 'ai-look': 'ai', popup: 'selection', 'record-video': 'record' };
+const SUB_GROUPS: Record<string, string> = { 'ai-chat': 'ai', 'ai-prompts': 'ai', 'ai-look': 'ai', popup: 'selection', 'record-video': 'record', speech: 'translate' };
 export function sectionOf(id: string): string {
   return SUB_GROUPS[id] ?? id;
 }

@@ -50,6 +50,7 @@ export interface Settings {
     instant: string;
     ai: string;
     pinClipboard: string;
+    inputTranslate: string;
   };
   capture: CaptureSettings;
   longshot: {
@@ -76,11 +77,18 @@ export interface Settings {
     customBaseUrl: string;
     customModel: string;
     popup: PopupStyle;
+    speech: { rate: number; pitch: number; voices: Record<string, string> };
     selection: {
       showButton: boolean;
       buttonPosition: 'bottomRight' | 'topRight' | 'bottomLeft' | 'topLeft';
       /** 划词按钮的样子 */
-      buttonStyle: 'liquid' | 'frosted';
+      buttonStyle: 'liquid' | 'frosted' | 'solid' | 'custom';
+      /** 自定义玻璃（样式选"自定义"时用） */
+      glass: GlassTuning;
+      /** 选中系统语言的文字时不弹按钮 */
+      skipSystemLanguage: boolean;
+      /** 选中这些语言的文字时不弹按钮 */
+      skipLanguages: string[];
       /** 划词按钮圆点的直径（逻辑像素） */
       buttonSize: number;
       modifier: 'none' | 'alt' | 'ctrl';
@@ -250,7 +258,10 @@ export type TailAction = 'undo' | 'save' | 'pin' | 'cancel' | 'done';
 export const TAIL_ACTIONS: TailAction[] = ['undo', 'save', 'pin', 'cancel', 'done'];
 /** 中间那一组 */
 export type MidAction = 'ocr' | 'translate' | 'qr' | 'table' | 'formula' | 'ai' | 'longshot' | 'gif' | 'video';
-export const MID_ACTIONS: MidAction[] = ['ocr', 'translate', 'qr', 'table', 'formula', 'ai', 'longshot', 'gif', 'video'];
+/** 中间那一组新装时的顺序（二维码、表格、公式在「识别」组里） */
+export const MID_ACTIONS: string[] = ['ocr', 'translate', 'group:recognize', 'ai', 'longshot', 'record'];
+/** 新装时的按钮组 */
+export const DEFAULT_GROUPS = [{ id: 'recognize', name: '', items: ['qr', 'table', 'formula'] }];
 /** 绘制工具 */
 export type ToolId = 'rect' | 'ellipse' | 'arrow' | 'pen' | 'highlight' | 'counter' | 'mosaic' | 'text' | 'measure' | 'watermark' | 'template' | 'eraser';
 export const TOOL_ORDER: ToolId[] = ['rect', 'ellipse', 'arrow', 'pen', 'highlight', 'counter', 'mosaic', 'text', 'measure', 'watermark', 'template', 'eraser'];
@@ -280,14 +291,21 @@ export interface CaptureSettings {
   colorFormat: 'hex' | 'rgb' | 'hsl';
   detectWindows: boolean;
   detectChildWindows: boolean;
+  /** 窗口里的元素框到多细：block = 只框大块 | element = 连单元格、按钮都框 */
+  elementLevel: 'block' | 'element';
+  /** 截图时自动识别画面里的二维码 / 条码 */
+  autoScanCodes: boolean;
   snapThreshold: number;
   rightClick: 'none' | 'exit' | 'cancelSelection';
   /** 截图工具条三组按钮各自的顺序：绘制工具、识字翻译那一组、最右边那一组 */
-  toolbarTools: ToolId[];
+  toolbarTools: string[];
   /** 工具条上隐藏的按钮（设置里点图标切换） */
   toolbarHidden?: string[];
-  toolbarActions: MidAction[];
+  /** 可以有按钮组（`group:组名`） */
+  toolbarActions: string[];
   toolbarOrder: TailAction[];
+  /** 按钮组：几个按钮合成工具条上的一个，点一下弹出二级工具条 */
+  toolbarGroups?: { id: string; name: string; items: string[] }[];
   /** 截图工具条的样子：glass = 半透明玻璃条 | frosted = 磨砂玻璃 */
   toolbarStyle: 'glass' | 'frosted';
   finishAction: 'copy' | 'copyAndSave';
@@ -307,7 +325,7 @@ export interface VisualCapabilities {
   powerSaver: boolean;
 }
 
-export type HotkeyAction = 'capture' | 'longshot' | 'ocr' | 'clipboard' | 'translate' | 'instant' | 'ai' | 'pinClipboard';
+export type HotkeyAction = 'capture' | 'longshot' | 'ocr' | 'clipboard' | 'translate' | 'instant' | 'ai' | 'pinClipboard' | 'inputTranslate';
 
 export interface HotkeyStatus {
   action: HotkeyAction;
@@ -358,7 +376,7 @@ export interface AppInfo {
 // ───────────────────────── 截图 ─────────────────────────
 
 export type CaptureIntent = 'normal' | 'ocr' | 'longshot' | 'translate';
-export type FinishAction = 'copy' | 'save' | 'pin' | 'ocr' | 'translate' | 'longshot' | 'ai' | 'gif' | 'video';
+export type FinishAction = 'copy' | 'save' | 'pin' | 'ocr' | 'translate' | 'longshot' | 'ai' | 'gif' | 'video' | 'record';
 
 export interface SessionInfo {
   sessionId: number;
@@ -814,9 +832,66 @@ export type MailCodesStatus = (
   hasPassword: boolean;
 };
 
-/** 录制视频（MP4）的设置；GIF 的帧率、录不录鼠标在 capture 里 */
+/** 划词按钮的自定义玻璃：都是 0 ~ 100，默认值就是"液态玻璃"的样子 */
+export interface GlassTuning {
+  dispersion: number;
+  blur: number;
+  refraction: number;
+  magnify: number;
+  veil: number;
+  tint: number;
+  highlight: number;
+}
+
+/** 截图界面里原位显示的表格的一格（坐标是选区图的像素） */
+export interface LaidCell {
+  row: number;
+  col: number;
+  rowSpan: number;
+  colSpan: number;
+  header: boolean;
+  text: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  /** 字所在的范围 [x, y, 宽, 高]；空格子没有 */
+  textBox: [number, number, number, number] | null;
+  lines: number;
+  /** 字号（像素）：按墨迹高换算 */
+  fontPx: number;
+  /** 墨迹中心比行框中心低多少（字号的倍数） */
+  centerShift: number;
+  color: string;
+  background: string;
+  bold: boolean;
+  align: 'left' | 'center' | 'right';
+}
+
+export interface CaptureTable {
+  table: { width: number; height: number; rows: number; cols: number; cells: LaidCell[] };
+  /** 字抹掉的底图、选区原图（图片仓库里的编号，用 shotUrl 取） */
+  background: string;
+  source: string;
+}
+
+/** 选区的底色、字色和原图（原位显示公式用） */
+export interface RegionStyle {
+  background: string;
+  color: string;
+  source: string;
+}
+
+/** 录制视频（MP4）和 GIF 的设置；GIF 的帧率、录不录鼠标在 capture 里 */
 export interface RecordSettings {
   resolution: 'original' | '1080p' | '720p';
+  /** 视频画质 10–100，决定码率 */
+  quality: number;
+  codec: 'h264' | 'hevc';
+  /** 系统声音、麦克风各存一条音轨 */
+  separateAudioTracks: boolean;
+  gifResolution: 'original' | '1080p' | '720p' | '480p';
+  gifLoop: boolean;
   fps: 15 | 24 | 30 | 60;
   systemAudio: boolean;
   microphone: boolean;
@@ -825,6 +900,41 @@ export interface RecordSettings {
   cameraSize: 'small' | 'medium' | 'large';
   maxSeconds: number;
   editBeforeSave: boolean;
+  /** 录成什么（录制栏最左边选） */
+  format: RecordFormat;
+  /** 鼠标轨迹 / 点击涟漪的颜色 #rrggbb；空 = 不画 */
+  trailColor: string;
+  clickColor: string;
+  mouseHighlight: boolean;
+  mouseButtons: boolean;
+  mouseScroll: boolean;
+  /** 录制时把按下的键显示在画面角落 */
+  keystrokes: boolean;
+  /** 动图底下画进度条 / 播放时间 */
+  progress: 'off' | 'bar' | 'time';
+  /** 点开始后倒数几秒 */
+  countdown: number;
+  /** 摄像头画面左上角在选区里的位置（占选区宽高的比例）；null = 左下角 */
+  cameraAt: [number, number] | null;
+  cameraShape: 'circle' | 'square' | 'rounded';
+  /** 摄像头画面大小（逻辑像素） */
+  cameraPx: number;
+  effects: RecordEffects;
+  autoHideToolbar: boolean;
+  notifyDone: boolean;
+}
+
+export type RecordFormat = 'mp4' | 'gif' | 'apng';
+
+/** 录制效果的细节（录制栏「效果设置」） */
+export interface RecordEffects {
+  trailMs: number;
+  keyboardPx: number;
+  keyboardBg: string;
+  keyboardFg: string;
+  highlightRadius: number;
+  highlightColor: string;
+  progressColor: string;
 }
 
 export type MediaKind = 'microphone' | 'camera';

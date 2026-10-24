@@ -16,7 +16,11 @@ import { defaultToolOptions, type Tool, type ToolOptions } from '@/views/annotat
 
 import type { Point, Rect } from './geometry';
 import type { TranslatedBlock } from '@/views/annotate/translateLayer';
+import type { CaptureTable, RegionStyle } from '@/lib/types';
 import type { StructuredState } from '@/views/ocr/StructuredResult';
+
+/** 截图界面里的表格 / 公式识别：本地认出的表格带原位显示用的版面，公式带选区的底色、字色 */
+export type CaptureStructured = StructuredState & { table?: CaptureTable; region?: RegionStyle };
 
 export type Phase = 'idle' | 'detect' | 'pressing' | 'selecting' | 'editing' | 'passive' | 'longshot' | 'longshot-other' | 'gif' | 'gif-other';
 
@@ -57,8 +61,20 @@ export interface OverlayState {
   /** 识别出来的二维码 / 条码（显示结果卡片）；null = 没在看 */
   codes: ScannedCode[] | null;
   scanning: boolean;
+  /** 开着二级工具条的按钮组 */
+  toolbarGroup: string | null;
+  /** 选区里看起来有表格（「识别」组换成表格图标） */
+  tableHint: boolean;
+  /** 截图一开始就在后台识别出来的整屏二维码 / 条码（本屏局部物理坐标） */
+  autoCodes: ScannedCode[];
   /** 选区识别成表格 / 公式（AI）的结果卡片；null = 没开 */
-  structured: StructuredState | null;
+  structured: CaptureStructured | null;
+  /** 录制准备：点了「录制」之后、开始录之前（工具条换成录制的，下面一条录制栏） */
+  recordPrep: boolean;
+  /** 开始录之前的倒数还剩几秒；null = 没在倒数 */
+  countdown: number | null;
+  /** 录制栏里展开的那个弹层 */
+  recordPanel: 'mouse' | 'progress' | 'countdown' | 'effects' | 'settings' | null;
 }
 
 /** 正在翻译的一行（物理像素）。bg / fg：这一行原图上的底色和字色，占位条按它配色；取不到色时为空 */
@@ -99,6 +115,12 @@ export const initialOverlay = (): Omit<OverlayState, 'options'> => ({
   codes: null,
   scanning: false,
   structured: null,
+  recordPrep: false,
+  countdown: null,
+  recordPanel: null,
+  autoCodes: [],
+  toolbarGroup: null,
+  tableHint: false,
 });
 
 // 工具的线宽/颜色在一次运行期间记忆（规格 02 §3.7.4）—— 不随会话重置

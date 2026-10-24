@@ -24,7 +24,7 @@ export const macZhCN: Overrides = {
     },
     capture: {
       snapDesc: '拖动选区边缘靠近窗口边界时自动吸附，按住 ⌥ 临时关闭',
-      gifFpsDesc: '截图后点工具条上的"录制 GIF"（⌘G）。帧率越高越流畅，文件也越大；最长录 60 秒',
+      gifFpsDesc: 'GIF、APNG 动图的帧率（截图后点工具条上的"录制"，⌘G）。帧率越高越流畅，文件也越大；录屏幕操作 10 帧就很顺。最长录 60 秒',
     },
     ocr: {
       system: '系统自带识字',
@@ -79,7 +79,7 @@ export const macEnUS: Overrides = {
     },
     capture: {
       snapDesc: 'Selection edges snap to window borders. Hold ⌥ to disable',
-      gifFpsDesc: 'Use "Record GIF" on the capture toolbar (⌘G). Higher is smoother but bigger; up to 60 seconds',
+      gifFpsDesc: 'Frame rate for GIF and APNG ("Record" on the capture toolbar, ⌘G). Higher is smoother but bigger; 10 fps is smooth enough for screen actions. Up to 60 seconds',
     },
     ocr: {
       system: 'Built-in OCR',

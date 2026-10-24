@@ -15,7 +15,7 @@ import { windowLabel } from '@/lib/platform';
 import './color-pin.css';
 
 /** 窗口大小（逻辑像素，四周各留 12 给阴影）：收起 / 展开 */
-const COLLAPSED = { width: 176, height: 60 };
+const COLLAPSED = { width: 200, height: 60 };
 const EXPANDED = { width: 256, height: 172 };
 
 function colorFromLabel(label: string): [number, number, number] {

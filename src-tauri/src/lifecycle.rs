@@ -146,7 +146,8 @@ fn sweep(app: &AppHandle) {
             hidden.remove(label);
             continue;
         };
-        if window.is_visible().unwrap_or(true) {
+        // 收进程序坞的窗口不算藏着：那是用户放着待会儿要用的。销毁的话程序坞里会留下一个没有页面的空窗口
+        if window.is_visible().unwrap_or(true) || window.is_minimized().unwrap_or(false) {
             hidden.remove(label);
             continue;
         }

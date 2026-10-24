@@ -7,7 +7,6 @@ import clsx from 'clsx';
 import './capture.css';
 import '@/views/annotate/annotate.css';
 
-import { Window } from '@tauri-apps/api/window';
 import { Copy, Eye, Languages, Lock, Move, X } from 'lucide-react';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { flushSync } from 'react-dom';
@@ -17,16 +16,17 @@ import i18n from '@/i18n';
 import { broadcast, on } from '@/lib/events';
 import { formatColor, readableOn } from '@/lib/format';
 import { CONTENT_INTERVAL, useElementSize, useThrottled } from '@/lib/hooks';
-import { capture, gif, reportError } from '@/lib/ipc';
+import { capture, gif, reportError, system } from '@/lib/ipc';
+import { useSettingsStore } from '@/lib/settings';
 import { isMac, shotUrl, windowLabel } from '@/lib/platform';
-import { MID_ACTIONS, TAIL_ACTIONS, type CaptureIntent, type FinishAction, type FrameStyle, type MidAction, type TailAction } from '@/lib/types';
+import { DEFAULT_GROUPS, MID_ACTIONS, TAIL_ACTIONS, type CaptureIntent, type FinishAction, type FrameStyle, type TailAction } from '@/lib/types';
 import { notify } from '@/ui/overlays';
 import { AnnotationEngine, toolOf } from '@/views/annotate/engine';
 import { BRUSH_RANGE, PEN_RANGE, watermarkOf, type Tool } from '@/views/annotate/model';
 import { bmpSource, type PixelSource } from '@/views/annotate/pixels';
 import { canPick, handleCursor, SelectionOverlay, toolCursor } from '@/views/annotate/SelectionOverlay';
 import { TextEditor, useEngineVersion } from '@/views/annotate/TextEditor';
-import { SubToolbar, TOOL_KEYS, Toolbar, useToolAnchor, type ActionId } from '@/views/annotate/Toolbar';
+import { ACTION_ICONS, GroupBar, SubToolbar, TOOL_KEYS, Toolbar, useGroupAnchor, useToolAnchor, type ActionIcon, type ActionId, type ToolbarGroup } from '@/views/annotate/Toolbar';
 import { buildLabels, lineColors, TRANSLATION_GROUP } from '@/views/annotate/translateLayer';
 
 import {
@@ -54,14 +54,17 @@ import {
   type Rect,
   type SnapLines,
 } from './geometry';
-import { CodeResults } from './CodeResults';
+import { CodeBadges, CodeResults } from './CodeResults';
+import { candidatesAt, ElementCache, rectKey, thresholds, type ElementLevel, type UiElement } from './elements';
+import { FormulaInPlace, mergeAiTable, TableInPlace } from './InPlaceResult';
+import { CameraFrame, Countdown, KeyHud, MoveHandle, RecordHints, RecordToolbar, sendGlyphs } from './RecordUI';
 import { StructuredCard } from './StructuredCard';
 import { rememberSelection, SelectionPanel } from './SelectionPanel';
 import { saveTemplate } from '@/views/annotate/templates';
 import { GifUI } from './GifUI';
 import { LongshotUI } from './LongshotUI';
 import { Magnifier } from './Magnifier';
-import { get, initialOverlay, set, useOverlay, type LoadingLine } from './store';
+import { get, initialOverlay, set, useOverlay, type CaptureStructured, type LoadingLine } from './store';
 import { TranslationText } from './TranslationText';
 
 const MONITOR_ID = Number(windowLabel().replace('capture-', ''));
@@ -76,6 +79,28 @@ let windowsLocal: { handle: number; rect: Rect }[] = [];
 const childCache = new Map<number, Rect[]>();
 let childTimer: number | undefined;
 let childPending: number | null = null;
+/**
+ * 界面元素（macOS 辅助功能，像 Snow Shot）：鼠标下面那个窗口里的元素由里到外的框（表格单元格 → 整张表 → … → 窗口）。
+ * `level` = 用户用滚轮往外挑了几层；鼠标挪到别的元素上就回到最里面那层。
+ */
+const elementCache = new ElementCache();
+let elementLevel = 0;
+/** 当前最里层候选的框（换了就把层级回到最里面） */
+let elementInner = '';
+let elementSeq = 0;
+let elementTimer: number | undefined;
+let elementLast = 0;
+/** 上次去问时鼠标所在的最里层元素：鼠标还在它里面就不用再问 */
+let elementAsked: { handle: number; rect: Rect | null; at: number } | null = null;
+/** 正在问、本地又只找得到比刚才大得多的框时，先停在刚才那个框上（最多这么久），不往外跳 */
+let elementHoldUntil = 0;
+/** 滚轮切层级：触控板一次滑动会来一串小的滚动事件，攒够这么多才算一格 */
+let wheelAccum = 0;
+const WHEEL_STEP = 40;
+/** 问元素的最短间隔（毫秒）：每次都是十几次跨进程往返，鼠标快速划过时没必要每一下都问 */
+const ELEMENT_INTERVAL = 40;
+const ELEMENT_HOLD = 140;
+
 /** lasso：按着 Option / Alt 拖 = 自由画选区（`points` 是一路画下来的轨迹） */
 let press: { at: Point; hover: Rect | null; lasso: boolean; points: Point[] } | null = null;
 let drag: { kind: 'move' | 'resize'; handle?: Handle; at: Point; orig: Rect; shape?: Point[] | null } | null = null;
@@ -147,17 +172,125 @@ function scheduleChildren(handle: number) {
  * 鼠标底下要高亮的区域。截图识字 / 翻译不自动框窗口（返回 null）：整屏均匀压暗，等用户自己拖 ——
  * 识字要的是一小段文字，自动框出来的整个窗口几乎从来不是想要的范围。
  */
-function hoverAt(p: Point): Rect | null {
-  return isTextIntent(get().session?.intent) ? null : detect(p);
+function hoverAt(p: Point, query = false): Rect | null {
+  return isTextIntent(get().session?.intent) ? null : detect(p, query);
 }
 
-/** 命中判定：按 Z 序从上到下取第一个包含鼠标的窗口；再细分到面积最小的子控件。 */
-function detect(p: Point): Rect {
+/** 鼠标下面可选的元素框（比窗口小的），由小到大 */
+function elementCandidates(hit: { handle: number; rect: Rect }, p: Point): Rect[] {
+  const s = get().session;
+  const level: ElementLevel = s?.settings.elementLevel === 'block' ? 'block' : 'element';
+  return candidatesAt(elementCache.items(hit.handle), p, { ...thresholds(level, s?.monitor.scaleFactor ?? 1), maxArea: area(hit.rect) * 0.97 });
+}
+
+/** 节流着去问鼠标下面的界面元素；鼠标还在上次问到的最里层元素里面（而且问过没多久）就不用再问 */
+function scheduleElements(hit: { handle: number; rect: Rect }, p: Point) {
+  // 鼠标还在上次问到的最里层元素里、而且那是个小元素（一格、一个按钮）：里面不会再有别的，不用再问。
+  // 最里层是个大块（整个列表、整页）时照样问 —— 比如刚开始问到的是网页还没建好树时的整块
+  const asked = elementAsked;
+  const small = asked?.rect && area(asked.rect) < area(hit.rect) * 0.2;
+  if (asked && small && asked.handle === hit.handle && asked.rect && contains(asked.rect, p) && performance.now() - asked.at < 1500) return;
+  window.clearTimeout(elementTimer);
+  const wait = ELEMENT_INTERVAL - (performance.now() - elementLast);
+  const run = () => {
+    elementLast = performance.now();
+    const cursor = get().cursor;
+    if (cursor && get().phase === 'detect') void queryElements(hit.handle, cursor);
+  };
+  elementHoldUntil = performance.now() + Math.max(0, wait) + ELEMENT_HOLD;
+  if (wait <= 0) run();
+  else elementTimer = window.setTimeout(run, wait);
+}
+
+async function queryElements(handle: number, p: Point) {
+  const id = ++elementSeq;
+  const origin = get().session?.monitor.bounds;
+  if (!origin) return;
+  const toLocal = (list: { rect: Rect; role: string }[]) =>
+    list
+      .map((e) => ({ role: e.role, rect: intersect({ x: e.rect.x - origin.x, y: e.rect.y - origin.y, width: e.rect.width, height: e.rect.height }, screenRect()) }))
+      .filter((e): e is UiElement => e.rect !== null);
+  const gx = origin.x + Math.round(p.x);
+  const gy = origin.y + Math.round(p.y);
+  try {
+    const chain = toLocal(await capture.elementsAt(handle, gx, gy));
+    elementCache.add(handle, chain);
+    elementAsked = { handle, rect: chain.find((e) => e.rect.width >= 8 && e.rect.height >= 8)?.rect ?? null, at: performance.now() };
+    if (id === elementSeq) {
+      // 结果回来时鼠标已经挪走了（问的是刚才那个点）：先别放开"停在原框上"，接着问现在这个点
+      const now = get().cursor;
+      const moved = !!now && Math.hypot(now.x - p.x, now.y - p.y) > 2;
+      elementHoldUntil = moved ? performance.now() + ELEMENT_HOLD : 0;
+      refreshHover();
+      if (moved && now && get().phase === 'detect') {
+        elementLast = performance.now();
+        void queryElements(handle, now);
+      }
+    }
+    // 附近的元素（同一行的其他格、其他行……）后台取回来存着；同一块地方只取一次
+    const anchor = chain[1]?.rect ?? chain[0]?.rect;
+    if (anchor && elementCache.claimNear(handle, anchor)) {
+      const near = toLocal(await capture.elementsNear(handle, gx, gy));
+      elementCache.add(handle, near);
+      refreshHover();
+    }
+  } catch (err) {
+    reportError('capture-elements', err);
+  }
+}
+
+/** 缓存变了：按鼠标现在的位置重挑预选框 */
+function refreshHover() {
+  const { cursor, phase } = get();
+  if (cursor && phase === 'detect') set({ hover: hoverAt(cursor) });
+}
+
+/** 检测态里滚轮：在鼠标下面的元素层级之间切换（往上滚 = 外面一层，往下滚 = 里面一层） */
+function stepElementLevel(deltaY: number) {
+  const { cursor, session } = get();
+  if (!cursor || !session?.settings.detectChildWindows) return;
+  const hit = windowsLocal.find((w) => contains(w.rect, cursor));
+  if (!hit) return;
+  // 比窗口小的那些元素，再加上窗口本身（最外面一层）
+  const levels = elementCandidates(hit, cursor).length + 1;
+  wheelAccum += deltaY;
+  if (Math.abs(wheelAccum) < WHEEL_STEP) return;
+  const dir = wheelAccum < 0 ? 1 : -1;
+  wheelAccum = 0;
+  const next = Math.max(0, Math.min(levels - 1, elementLevel + dir));
+  if (next === elementLevel) return;
+  elementLevel = next;
+  set({ hover: hoverAt(cursor) });
+}
+
+/** 命中判定：按 Z 序从上到下取第一个包含鼠标的窗口；再细分到鼠标下面的界面元素 / 子控件。
+ *  `query`：鼠标真的动了（不是别的原因重算），可以去问新的界面元素 */
+function detect(p: Point, query = false): Rect {
   const s = get().session;
   const screen = screenRect();
   if (!s?.settings.detectWindows) return screen;
   const hit = windowsLocal.find((w) => contains(w.rect, p));
   if (!hit) return screen;
+  if (s.settings.detectChildWindows && isMac) {
+    if (query) scheduleElements(hit, p);
+    const cands = elementCandidates(hit, p);
+    // 换到另一个元素上了：层级回到最里面
+    const inner = cands[0] ? rectKey(cands[0]) : '';
+    if (inner !== elementInner) {
+      elementInner = inner;
+      elementLevel = 0;
+    }
+    const pick = cands[Math.min(elementLevel, cands.length)] ?? hit.rect;
+    const prev = get().hover;
+    if (elementLevel === 0 && prev && area(pick) > area(prev) * 2.5 && contains(hit.rect, { x: prev.x, y: prev.y })) {
+      // 正在问新位置、本地只找得到比刚才大得多的框（多半是整张表、整页）：先停在刚才的框上，别闪一下外框
+      if (performance.now() < elementHoldUntil) return prev;
+      // 刚出了一个小框、还贴着它的边（格子之间的缝、表头和第一行之间那几像素）：也先不跳到大框
+      const gap = Math.max(prev.x - p.x, p.x - (prev.x + prev.width), prev.y - p.y, p.y - (prev.y + prev.height), 0);
+      if (gap <= 8 * (s.monitor.scaleFactor || 1)) return prev;
+    }
+    return pick;
+  }
   if (s.settings.detectChildWindows) {
     const children = childCache.get(hit.handle);
     if (children) {
@@ -193,6 +326,11 @@ async function startSession() {
   engine.scale = info.monitor.scaleFactor;
   engine.setBackdrop({ pixels: null, bitmap: null });
   childCache.clear();
+  elementCache.clear();
+  elementLevel = 0;
+  elementInner = '';
+  elementAsked = null;
+  elementSeq++;
   activeElsewhere = null;
   press = null;
   drag = null;
@@ -228,7 +366,7 @@ async function startSession() {
       colorFormat: info.settings.colorFormat,
     });
   });
-  if (cursor) set({ hover: hoverAt(cursor) });
+  if (cursor) set({ hover: hoverAt(cursor, true) });
 
   try {
     await capture.overlayReady(info.sessionId, MONITOR_ID);
@@ -239,6 +377,17 @@ async function startSession() {
     return;
   }
   void loadPixels(info.sessionId, info.imageUrlId);
+  if (info.settings.autoScanCodes !== false && info.intent !== 'longshot') void autoScanCodes(info.sessionId);
+}
+
+/** 截图一开始就在后台把整屏的二维码 / 条码找出来（遮罩已经上屏，不耽误出图） */
+async function autoScanCodes(sessionId: number) {
+  try {
+    const found = await capture.scanCodes(sessionId, MONITOR_ID, screenRect());
+    if (get().session?.sessionId === sessionId && found.length) set({ autoCodes: found });
+  } catch (err) {
+    reportError('capture-auto-codes', err);
+  }
 }
 
 /** 原始像素异步流入（放大镜/取色/马赛克用）。失败只降级不中断：画面已经在屏上了。 */
@@ -273,6 +422,8 @@ function endSession() {
   bitmap = null;
   engine.reset();
   window.clearTimeout(childTimer);
+  window.clearTimeout(elementTimer);
+  elementCache.clear();
   set({ ...initialOverlay() });
 }
 
@@ -353,7 +504,44 @@ function onAction(id: ActionId) {
   else if (id === 'qr') void scanCodes();
   else if (id === 'table' || id === 'formula') void recognizeStructure(id);
   else if (id === 'undo') engine.undo();
+  else if (id === 'record') enterRecordPrep();
   else void finish(id === 'cancel' ? 'cancel' : id === 'save' ? 'save' : id);
+}
+
+/** 点了「录制」：先进录制准备（工具条换成录制的、下面一条录制栏），点开始才录 */
+function enterRecordPrep() {
+  if (engine.text) engine.commitText();
+  engine.select(null);
+  set({ recordPrep: true, tool: null, toolbarGroup: null, codes: null, structured: null, sizePanel: false, recordPanel: null });
+}
+
+let countdownTimer: number | undefined;
+
+function exitRecordPrep() {
+  window.clearInterval(countdownTimer);
+  set({ recordPrep: false, countdown: null, recordPanel: null });
+}
+
+/** 开始录：设置里有倒数就先倒数（选区正中一个大数字），再开始 */
+function startRecording() {
+  const st = get();
+  if (!st.recordPrep || st.countdown != null) return;
+  const settings = useSettingsStore.getState().settings;
+  // 播放时间用的字形先给 Rust（它画进动图时用）
+  if (settings?.record.progress === 'time') sendGlyphs();
+  const go = () => {
+    window.clearInterval(countdownTimer);
+    set({ countdown: null, recordPanel: null });
+    void finish('record');
+  };
+  const n = settings?.record.countdown ?? 0;
+  if (n <= 0) return go();
+  set({ countdown: n, recordPanel: null });
+  countdownTimer = window.setInterval(() => {
+    const left = (get().countdown ?? 1) - 1;
+    if (left <= 0) go();
+    else set({ countdown: left });
+  }, 1000);
 }
 
 /** 把现在的标注存成模板（模板工具里的"存当前标注"） */
@@ -385,19 +573,83 @@ async function scanCodes() {
   }
 }
 
-/** 选区识别成表格 / 公式（AI 看图），结果卡片盖在选区上 */
-async function recognizeStructure(kind: 'table' | 'formula') {
+/**
+ * 选区识别成表格 / 公式，原位盖在选区上（像截图翻译）：表格默认本地识别（几百毫秒、不联网），公式只有 AI。
+ * 识别时选区上扫一道光（和截图翻译同一套）。原位的表格再点「AI 识别」：AI 认出的行列对得上就只换字、
+ * 样式和位置不变；对不上就用卡片显示 AI 的结果
+ */
+async function recognizeStructure(kind: 'table' | 'formula', wanted?: 'local' | 'ai') {
   const { session, selection, structured } = get();
   if (!session || !selection || structured?.status === 'running') return;
   if (engine.text) engine.commitText();
-  set({ structured: { kind, status: 'running' }, codes: null, sizePanel: false });
+  const how = kind === 'formula' ? 'ai' : (wanted ?? 'local');
+  // 原位的表格上再用 AI 认：表格留着（半透明），认完替换
+  const keep = structured?.kind === kind && structured.table ? structured.table : undefined;
+  set({
+    structured: { kind, engine: how, status: 'running', table: keep },
+    codes: null,
+    sizePanel: false,
+    toolbarGroup: null,
+    trLoading: { rect: selection, lines: [], done: false },
+  });
   const stale = () => get().session?.sessionId !== session.sessionId || get().structured?.kind !== kind || get().selection !== selection;
+  const finish = (next: CaptureStructured) => {
+    if (stale()) return;
+    const loading = get().trLoading;
+    set({ structured: next, trLoading: loading ? { ...loading, done: true } : null });
+  };
   try {
-    const text = await capture.structure(session.sessionId, MONITOR_ID, selection, kind);
-    if (!stale()) set({ structured: { kind, status: 'done', text } });
+    if (kind === 'table' && how === 'local') {
+      const table = await capture.table(session.sessionId, MONITOR_ID, selection);
+      finish({ kind, engine: how, status: 'done', table });
+    } else if (kind === 'table') {
+      const text = await capture.structure(session.sessionId, MONITOR_ID, selection, kind, how);
+      const merged = keep ? mergeAiTable(keep, text) : null;
+      finish({ kind, engine: how, status: 'done', text, table: merged ?? undefined });
+    } else {
+      const [text, region] = await Promise.all([
+        capture.structure(session.sessionId, MONITOR_ID, selection, kind, how),
+        capture.regionStyle(session.sessionId, MONITOR_ID, selection).catch(() => undefined),
+      ]);
+      finish({ kind, engine: how, status: 'done', text, region });
+    }
   } catch (err) {
-    if (!stale()) set({ structured: { kind, status: 'error', error: err instanceof Error ? err.message : String(err) } });
+    finish({ kind, engine: how, status: 'error', error: err instanceof Error ? err.message : String(err) });
   }
+}
+
+/** 识别结果怎么显示：原位的表格 / 公式；正在认（还没有原位结果）只扫光；出错、AI 的表格对不上原位的格子时用卡片 */
+function StructuredResultLayer({ state, selection, s, viewport }: { state: CaptureStructured; selection: Rect; s: number; viewport: { width: number; height: number } }) {
+  const close = () => set({ structured: null });
+  if (state.table && (state.status === 'done' || state.status === 'running')) {
+    return (
+      <TableInPlace
+        data={state.table}
+        selection={selection}
+        s={s}
+        viewport={viewport}
+        busy={state.status === 'running'}
+        onAi={() => void recognizeStructure('table', 'ai')}
+        onClose={close}
+        onDone={cancel}
+      />
+    );
+  }
+  if (state.status === 'running') return null;
+  if (state.kind === 'formula' && state.status === 'done' && state.region && state.text) {
+    return <FormulaInPlace text={state.text} region={state.region} selection={selection} s={s} viewport={viewport} onClose={close} onDone={cancel} />;
+  }
+  return (
+    <StructuredCard
+      state={state}
+      selection={selection}
+      s={s}
+      viewport={viewport}
+      onClose={close}
+      onRetry={(how) => void recognizeStructure(state.kind, how)}
+      onDone={cancel}
+    />
+  );
 }
 
 /** 译文从上往下依次显现：选区顶上的一行马上开始，最底下的一行晚这么多毫秒 */
@@ -460,12 +712,20 @@ function copyColor() {
 
 // ───────────────────────── 指针 ─────────────────────────
 
+/** 遮罩在屏幕上、却没有截图会话（不该出现的状态）：让后端把它收起来，别挡着用户 */
+function strayOverlay() {
+  void capture.strayOverlay().catch(() => undefined);
+}
+
 function onPointerDown(e: React.PointerEvent) {
+  // 录制栏的弹层开着：点别处先收起它
+  if (get().recordPanel) set({ recordPanel: null });
   flushMove();
   const st = get();
-  if (!st.session || st.busy) return;
-  // 选区面板开着时点别处：先收起面板（面板自己的点击不会冒泡到这里）
-  if (st.sizePanel) set({ sizePanel: false });
+  if (!st.session) return strayOverlay();
+  if (st.busy) return;
+  // 选区面板、按钮组的二级条开着时点别处：先收起（它们自己的点击不会冒泡到这里）
+  if (st.sizePanel || st.toolbarGroup) set({ sizePanel: false, toolbarGroup: null });
   if (e.button === 2) {
     // 打字时右键和左键一样：提交文字，不退出截图（防止打完字误触右键全没了）
     if (engine.text) {
@@ -479,7 +739,8 @@ function onPointerDown(e: React.PointerEvent) {
 
   if (st.phase === 'passive' && activeElsewhere !== null) {
     // 另一块屏上已经有选区了：把焦点还给它，键盘操作才有效
-    void Window.getByLabel(`capture-${activeElsewhere}`).then((w) => w?.setFocus());
+    // 不用 setFocus()：它会激活整个应用，主窗口也跟着跑到最前面
+    void system.takeFocus(`capture-${activeElsewhere}`);
     return;
   }
   (e.target as Element).setPointerCapture?.(e.pointerId);
@@ -574,7 +835,7 @@ function handleMove(e: MoveInput) {
 
   switch (st.phase) {
     case 'detect':
-      set({ hover: hoverAt(p) });
+      set({ hover: hoverAt(p, true) });
       return;
     case 'pressing': {
       if (!press) return;
@@ -686,6 +947,10 @@ function onPointerUp() {
 /** 画笔 / 手绘马赛克时滚轮调粗细，指针的圆圈跟着变 */
 function onWheel(e: React.WheelEvent) {
   const st = get();
+  if (st.phase === 'detect') {
+    stepElementLevel(e.deltaY);
+    return;
+  }
   if (st.phase !== 'editing' || !st.tool) return;
   const o = st.options;
   const dir = e.deltaY < 0 ? 1 : -1;
@@ -742,7 +1007,8 @@ function nudge(dx: number, dy: number, resize: boolean) {
 
 function onKeyDown(e: KeyboardEvent) {
   const st = get();
-  if (!st.session || st.phase === 'idle' || isLive(st.phase)) return;
+  if (!st.session) return strayOverlay();
+  if (st.phase === 'idle' || isLive(st.phase)) return;
   if (engine.text) return; // 文字输入框自己处理
   // 输入框里打字（选区面板、水印文字）：字母不能当成工具快捷键，回车也不是完成截图
   if ((e.target as Element | null)?.closest?.('input, textarea, [contenteditable="true"], .cap-panel')) return;
@@ -757,10 +1023,24 @@ function onKeyDown(e: KeyboardEvent) {
 
   if (key === 'Escape') {
     e.preventDefault();
+    // 录制准备：先收起弹层，再停掉倒数 / 退回普通截图
+    if (st.recordPrep) {
+      if (st.recordPanel) set({ recordPanel: null });
+      else exitRecordPrep();
+      return;
+    }
     // 先收起二维码结果 / 选区面板，再取消选中的标注，再按一次才退出截图
-    if (st.codes || st.sizePanel || st.structured) set({ codes: null, sizePanel: false, structured: null });
+    if (st.codes || st.sizePanel || st.structured || st.toolbarGroup) set({ codes: null, sizePanel: false, structured: null, toolbarGroup: null });
     else if (engine.selected) engine.select(null);
     else cancel();
+    return;
+  }
+  if (st.recordPrep) {
+    // 录制准备里：回车 / ⌘G 开始录，别的键（画图工具的快捷键）都不管
+    if (key === 'Enter' || (ctrl && key.toLowerCase() === 'g')) {
+      e.preventDefault();
+      startRecording();
+    }
     return;
   }
   if (key === 'Enter') {
@@ -808,7 +1088,7 @@ function onKeyDown(e: KeyboardEvent) {
   }
   if (ctrl && key.toLowerCase() === 's') return void (e.preventDefault(), finish('save'));
   if (ctrl && key.toLowerCase() === 'p') return void (e.preventDefault(), finish('pin'));
-  if (ctrl && key.toLowerCase() === 'g') return void (e.preventDefault(), finish('gif'));
+  if (ctrl && key.toLowerCase() === 'g') return void (e.preventDefault(), enterRecordPrep());
   if (ctrl && key.toLowerCase() === 't') return void (e.preventDefault(), translateInPlace());
   if (ctrl && key.toLowerCase() === 'c') {
     e.preventDefault();
@@ -1317,6 +1597,62 @@ function selectedTranslationText(): string {
 /** 选区左上角留给尺寸提示的宽度（CSS 像素），够放下 "3840 × 2160" */
 const SIZE_HINT_ROOM = 96;
 
+/** 表格相关的界面元素角色（辅助功能）：选区框住的正好是表格时直接认为有表格 */
+const TABLE_ROLES = new Set(['AXTable', 'AXGrid', 'AXOutline']);
+
+/**
+ * 「识别」组的提示：选区里有自动识别出来的二维码 → 组按钮换成二维码图标；看起来是表格 → 表格图标。
+ * 两样都有时二维码优先（码小、一眼就能用上）。
+ */
+function useRecognizeHints(rect: Rect): { icon?: ActionIcon; hints: string[] } {
+  const autoCodes = useOverlay((x) => x.autoCodes);
+  const tableHint = useOverlay((x) => x.tableHint);
+  return useMemo(() => {
+    const qr = autoCodes.some((c) => contains(rect, { x: c.x + c.width / 2, y: c.y + c.height / 2 }));
+    const hints = [...(qr ? ['qr'] : []), ...(tableHint ? ['table'] : [])];
+    return { icon: qr ? ACTION_ICONS.qr : tableHint ? ACTION_ICONS.table : undefined, hints };
+  }, [autoCodes, tableHint, rect]);
+}
+
+/** 选区停下来之后看看里面有没有表格：先看框住的界面元素是不是表格，再让后端按格子线判断 */
+function useTableDetection() {
+  const selection = useOverlay((x) => x.selection);
+  const phase = useOverlay((x) => x.phase);
+  const session = useOverlay((x) => x.session);
+  useEffect(() => {
+    if (phase !== 'editing' || !selection || !session) {
+      if (get().tableHint) set({ tableHint: false });
+      return;
+    }
+    const hit = windowsLocal.find((w) => contains(w.rect, { x: selection.x + 1, y: selection.y + 1 }));
+    const ax =
+      !!hit &&
+      elementCache
+        .items(hit.handle)
+        .some((e) => TABLE_ROLES.has(e.role) && intersectArea(e.rect, selection) >= 0.6 * Math.min(area(e.rect), area(selection)));
+    if (ax) {
+      set({ tableHint: true });
+      return;
+    }
+    let stale = false;
+    const timer = window.setTimeout(() => {
+      capture
+        .detectTable(session.sessionId, MONITOR_ID, selection)
+        .then((yes) => !stale && get().tableHint !== yes && set({ tableHint: yes }))
+        .catch(() => {});
+    }, 220);
+    return () => {
+      stale = true;
+      window.clearTimeout(timer);
+    };
+  }, [selection, phase, session]);
+}
+
+function intersectArea(a: Rect, b: Rect): number {
+  const r = intersect(a, b);
+  return r ? area(r) : 0;
+}
+
 function Toolbars({
   rect,
   s,
@@ -1326,18 +1662,21 @@ function Toolbars({
   order,
   hidden,
   frosted,
+  groups,
 }: {
   rect: Rect;
   s: number;
   viewport: { width: number; height: number };
   /** 磨砂玻璃样式：工具条底下垫一块系统的毛玻璃（模糊冻结的画面） */
   frosted?: boolean;
-  /** 三组按钮各自的顺序（设置里可调）：绘制工具、识字翻译那一组、最右边那一组 */
-  tools?: Tool[];
-  mid?: MidAction[];
+  /** 三组按钮各自的顺序（设置里可调）：绘制工具、识字翻译那一组、最右边那一组；可以有按钮组 */
+  tools?: string[];
+  mid?: string[];
   order?: TailAction[];
   /** 设置里藏起来的按钮 */
   hidden?: string[];
+  /** 按钮组 */
+  groups?: ToolbarGroup[];
 }) {
   const { t } = useTranslation();
   const version = useEngineVersion(engine);
@@ -1356,6 +1695,10 @@ function Toolbars({
   const sub = useElementSize(subRef, { width: 300, height: 40 }, [hasSub]);
   const intentRef = useRef<HTMLDivElement>(null);
   const intentSize = useElementSize(intentRef, { width: 170, height: 26 });
+  const openGroup = useOverlay((x) => x.toolbarGroup);
+  const groupRef = useRef<HTMLDivElement>(null);
+  const groupSize = useElementSize(groupRef, { width: 240, height: 40 }, [openGroup]);
+  const recognize = useRecognizeHints(rect);
 
   const css = { x: rect.x / s, y: rect.y / s, width: rect.width / s, height: rect.height / s };
   const pos = placeToolbar(css, bar, viewport);
@@ -1399,6 +1742,12 @@ function Toolbars({
   );
   let subY = above ? pos.y - 4 - sub.height : pos.y + bar.height + 4;
   if (subY + sub.height > viewport.height || subY < 0) subY = above ? pos.y + bar.height + 4 : pos.y - 4 - sub.height;
+  // 按钮组展开的二级条：和工具的二级条一样放在工具条外侧，对准组按钮
+  const group = openGroup ? groups?.find((g) => g.id === openGroup) : undefined;
+  const groupAnchor = useGroupAnchor(barRef, group?.id ?? null);
+  let groupY = above ? pos.y - 4 - groupSize.height : pos.y + bar.height + 4;
+  if (groupY + groupSize.height > viewport.height || groupY < 0) groupY = above ? pos.y + bar.height + 4 : pos.y - 4 - groupSize.height;
+  const groupX = Math.max(4, Math.min(pos.x + (groupAnchor ?? bar.width / 2) - groupSize.width / 2, viewport.width - groupSize.width - 4));
 
   // 长截图入口只在这块屏的选区足够大时有意义；模糊需要位图到位
   const blurPending = tool === 'mosaic' && options.mosaic.mode === 'blur' && !bitmapReady;
@@ -1416,22 +1765,29 @@ function Toolbars({
   // 每动一下都把整条工具条重画一遍是拖动时最大的一笔开销。
   const barClass = clsx(pos.inside && 'cap-toolbar--inside', frosted && backed && 'an-toolbar--backed');
   const canUndo = engine.canUndo;
+  const pickTool = (next: Tool | null) => {
+    if (engine.text) engine.commitText();
+    engine.select(null);
+    set({ tool: next, cursorStyle: 'tool', toolbarGroup: null });
+  };
+  const groupIcons = recognize.icon ? { recognize: recognize.icon } : undefined;
+  const groupHints = recognize.hints.length ? { recognize: true } : undefined;
   const toolbar = useMemo(
     () => (
       <Toolbar
         ref={barRef}
         className={barClass}
         tool={tool}
-        onTool={(next) => {
-          if (engine.text) engine.commitText();
-          engine.select(null);
-          set({ tool: next, cursorStyle: 'tool' });
-        }}
+        onTool={pickTool}
+        groups={groups}
+        openGroup={openGroup}
+        onGroup={(id) => set({ toolbarGroup: id })}
+        groupIcons={groupIcons}
+        groupHints={groupHints}
         canUndo={canUndo}
         onUndo={() => engine.undo()}
         tools={tools}
-        // 录视频暂时只有 macOS 能用
-        hidden={isMac ? hidden : [...(hidden ?? []), 'video']}
+        hidden={hidden}
         actions={[mid?.length ? mid : MID_ACTIONS, order?.length ? order : TAIL_ACTIONS]}
         onAction={onAction}
         disabledTools={{ mosaic: !pixelsReady }}
@@ -1440,7 +1796,7 @@ function Toolbars({
     ),
     // version：撤销栈、选中的标注变了工具条上的状态可能跟着变
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [barClass, tool, canUndo, tools, mid, order, pixelsReady, translating, version],
+    [barClass, tool, canUndo, tools, mid, order, groups, openGroup, recognize.icon, recognize.hints.length, pixelsReady, translating, version],
   );
   // 位置：重画之后、上屏之前写上去（重画不会动这个内联样式，但第一次出现时要有）
   useLayoutEffect(() => {
@@ -1449,7 +1805,22 @@ function Toolbars({
   return (
     <>
       {toolbar}
-      {subTool && (
+      {group && (
+        <GroupBar
+          ref={groupRef}
+          style={{ transform: `translate(${groupX}px, ${groupY}px)` }}
+          group={group}
+          tool={tool}
+          hidden={hidden}
+          hints={recognize.hints}
+          disabledActions={{ translate: translating, qr: scanning }}
+          disabledTools={{ mosaic: !pixelsReady }}
+          onTool={pickTool}
+          onAction={onAction}
+          onClose={() => set({ toolbarGroup: null })}
+        />
+      )}
+      {subTool && !group && (
         <SubToolbar
           ref={subRef}
           style={{ transform: `translate(${subX}px, ${subY}px)` }}
@@ -1489,7 +1860,10 @@ export default function CaptureView() {
   const selection = useOverlay((x) => x.selection);
   const codes = useOverlay((x) => x.codes);
   const structured = useOverlay((x) => x.structured);
+  const recordPrep = useOverlay((x) => x.recordPrep);
+  const autoCodes = useOverlay((x) => x.autoCodes);
   const shape = useOverlay((x) => x.shape);
+  useTableDetection();
   const hover = useOverlay((x) => x.hover);
   const cursorStyle = useOverlay((x) => x.cursorStyle);
   const tool = useOverlay((x) => x.tool);
@@ -1535,7 +1909,7 @@ export default function CaptureView() {
       on('gif-state', (p) => {
         if (!p.active) return;
         if (p.monitorId === MONITOR_ID) {
-          set({ phase: 'gif', selection: p.rect, tool: null, gif: null });
+          set({ phase: 'gif', selection: p.rect, tool: null, gif: null, recordPrep: false, countdown: null, recordPanel: null });
           engine.reset();
         } else set({ phase: 'gif-other' });
       }),
@@ -1590,6 +1964,8 @@ export default function CaptureView() {
   return (
     <div
       className="cap-root"
+      // 自动化测试读预选框用（几何，物理像素）
+      data-hover={(phase === 'detect' || phase === 'pressing') && hover ? `${hover.x},${hover.y},${hover.width},${hover.height}` : undefined}
       data-phase={phase}
       style={{
         // 只有框选时是十字；编辑时按工具：画笔、手绘马赛克是圆圈，文字是 I 形，挪动标注是四向箭头
@@ -1632,34 +2008,45 @@ export default function CaptureView() {
             <SelectionOverlay engine={engine} displayScale={s} />
             <TextEditor engine={engine} displayScale={s} />
           </div>
-          <Toolbars
-            rect={selection}
-            s={s}
-            viewport={viewport}
-            tools={cfg?.toolbarTools}
-            hidden={cfg?.toolbarHidden}
-            mid={cfg?.toolbarActions}
-            order={cfg?.toolbarOrder}
-            frosted={cfg?.toolbarStyle === 'frosted'}
-          />
+          {recordPrep ? (
+            <>
+              <RecordToolbar rect={selection} s={s} viewport={viewport} live={false} onStart={startRecording} onExit={exitRecordPrep} />
+              <MoveHandle rect={selection} s={s} viewport={viewport} live={false} />
+              <RecordHints rect={selection} s={s} />
+              <CameraFrame rect={selection} s={s} />
+              <Countdown rect={selection} s={s} />
+            </>
+          ) : (
+            <Toolbars
+              rect={selection}
+              s={s}
+              viewport={viewport}
+              tools={cfg?.toolbarTools}
+              hidden={cfg?.toolbarHidden}
+              mid={cfg?.toolbarActions}
+              order={cfg?.toolbarOrder}
+              frosted={cfg?.toolbarStyle === 'frosted'}
+              groups={cfg?.toolbarGroups ?? DEFAULT_GROUPS}
+            />
+          )}
         </>
+      )}
+      {autoCodes.length > 0 && !codes && (phase === 'detect' || (phase === 'editing' && !tool)) && (
+        <CodeBadges codes={autoCodes} s={s} viewport={viewport} onDone={cancel} />
       )}
       {phase === 'editing' && selection && codes && (
         <CodeResults codes={codes} selection={selection} s={s} viewport={viewport} onClose={() => set({ codes: null })} onDone={cancel} />
       )}
-      {phase === 'editing' && selection && structured && (
-        <StructuredCard
-          state={structured}
-          selection={selection}
-          s={s}
-          viewport={viewport}
-          onClose={() => set({ structured: null })}
-          onRetry={() => void recognizeStructure(structured.kind)}
-          onDone={cancel}
-        />
-      )}
+      {phase === 'editing' && selection && structured && <StructuredResultLayer state={structured} selection={selection} s={s} viewport={viewport} />}
       {phase === 'longshot' && selection && <LongshotUI rect={selection} s={s} viewport={viewport} />}
-      {phase === 'gif' && selection && <GifUI rect={selection} s={s} viewport={viewport} />}
+      {phase === 'gif' && selection && (
+        <>
+          <GifUI rect={selection} s={s} />
+          <RecordToolbar rect={selection} s={s} viewport={viewport} live onStart={() => {}} onExit={() => void gif.cancel()} />
+          <MoveHandle rect={selection} s={s} viewport={viewport} live />
+          <KeyHud rect={selection} s={s} />
+        </>
+      )}
       <MagnifierLayer viewport={viewport} />
     </div>
   );
@@ -1684,6 +2071,13 @@ function MagnifierLayer({ viewport }: { viewport: { width: number; height: numbe
       scale={session.monitor.scaleFactor}
       viewport={viewport}
       format={colorFormat}
+      levelHint={phase === 'detect' && hasElementLevels(cursor)}
     />
   );
+}
+
+/** 鼠标下面除了窗口还有可选的界面元素（滚轮能切层级） */
+function hasElementLevels(p: Point): boolean {
+  const hit = windowsLocal.find((w) => contains(w.rect, p));
+  return !!hit && elementCandidates(hit, p).length > 0;
 }

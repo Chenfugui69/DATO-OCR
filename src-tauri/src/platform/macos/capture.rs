@@ -280,4 +280,35 @@ mod tests {
             println!("capture_all {}ms", started.elapsed().as_millis());
         }
     }
+
+    /// 静止画面连抓几帧，看相邻两帧有多少像素不一样、差多少（录 GIF 时这些"噪声"会被当成画面变了）：
+    /// `cargo test --lib -- --ignored static_frames_noise --nocapture`
+    #[test]
+    #[ignore]
+    fn static_frames_noise() {
+        let monitors = super::list_monitors().unwrap();
+        let m = &monitors[0];
+        let region = PhysicalRect::new(200, 200, 800, 600);
+        let rec = super::ScreenRecorder::start(m.id, region).unwrap();
+        let mut prev = rec.next(std::time::Duration::from_millis(1)).unwrap();
+        for _ in 0..5 {
+            let cur = rec.next(std::time::Duration::from_millis(150)).unwrap();
+            let (mut changed, mut small, mut max) = (0usize, 0usize, 0u8);
+            for (a, b) in prev.pixels().zip(cur.pixels()) {
+                let d = (0..3).map(|i| a.0[i].abs_diff(b.0[i])).max().unwrap();
+                if d > 0 {
+                    changed += 1;
+                    if d <= 3 {
+                        small += 1;
+                    }
+                    max = max.max(d);
+                }
+            }
+            println!(
+                "changed={changed} small(<=3)={small} max={max} of {}",
+                cur.width() * cur.height()
+            );
+            prev = cur;
+        }
+    }
 }

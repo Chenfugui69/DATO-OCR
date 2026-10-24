@@ -27,6 +27,8 @@ pub enum HotkeyAction {
     Ai,
     /// 把剪贴板里的图贴到屏幕上
     PinClipboard,
+    /// 输入翻译：弹出空的翻译面板，自己打字
+    InputTranslate,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -50,6 +52,7 @@ impl HotkeyAction {
             "instant" => Self::Instant,
             "ai" => Self::Ai,
             "pinClipboard" => Self::PinClipboard,
+            "inputTranslate" => Self::InputTranslate,
             _ => return None,
         })
     }
@@ -98,6 +101,7 @@ pub fn dispatch(app: &AppHandle, action: HotkeyAction) {
             },
         ),
         HotkeyAction::PinClipboard => pin_clipboard(app),
+        HotkeyAction::InputTranslate => translate::selection::show_input(app),
     }
 }
 
@@ -129,6 +133,7 @@ pub fn register_all(app: &AppHandle) -> Vec<HotkeyStatus> {
         (HotkeyAction::Instant, hk.instant),
         (HotkeyAction::Ai, hk.ai),
         (HotkeyAction::PinClipboard, hk.pin_clipboard),
+        (HotkeyAction::InputTranslate, hk.input_translate),
     ];
     for (action, accel) in wanted {
         let accel = accel.trim().to_string();

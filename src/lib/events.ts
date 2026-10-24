@@ -31,6 +31,8 @@ export interface EventMap {
   'longshot-progress': LongshotProgress;
   'gif-state': GifStateEvent;
   'gif-progress': GifProgress;
+  /** 录制时按下了一个键（按键显示用）：⌘C、⏎…… */
+  'record-key': string;
   'clipboard-changed': ClipChanged;
   'clipboard-panel-show': { style: 'bottom' | 'vertical' };
   /** 大预览窗口要显示哪一条 */
@@ -44,7 +46,7 @@ export interface EventMap {
   'ocr-history-changed': null;
   toast: ToastPayload;
   navigate: string;
-  'translate-request': { text: string; reserve?: number; preview?: boolean };
+  'translate-request': { text: string; reserve?: number; preview?: boolean; input?: boolean };
   'translate-outside': null;
   'translate-preview-closed': null;
   'selection-button-show': { generation: number; dark: boolean | null; backdrop: string | null };
