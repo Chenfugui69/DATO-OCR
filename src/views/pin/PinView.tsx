@@ -18,7 +18,8 @@ import { useTranslation } from 'react-i18next';
 import { useEvent } from '@/lib/events';
 import { capture, ocr, pin, popmenu, system } from '@/lib/ipc';
 import { isMac, modKey, shotUrl, windowLabel } from '@/lib/platform';
-import type { CaptureTable, LaidCell, PinInfo, PinText, PopItem, RegionStyle } from '@/lib/types';
+import type { CaptureTables, LaidCell, PinInfo, PinText, PopItem } from '@/lib/types';
+import type { PlacedFormula } from '@/views/capture/store';
 import { Spinner } from '@/ui/controls';
 import { notify } from '@/ui/overlays';
 import '@/views/capture/capture.css';
@@ -85,16 +86,34 @@ function toRows(cells: LaidCell[], texts: string[]): Cell[][] {
   return rows.filter(Boolean);
 }
 
-type Mode = { kind: 'table'; data: CaptureTable } | { kind: 'formula'; text: string; region: RegionStyle };
+type Mode = { kind: 'table'; data: CaptureTables } | { kind: 'formula'; items: PlacedFormula[] };
 
-/** 贴图上原位显示的公式：铺底色，公式撑满（宽九成二、高八成），可以改 LaTeX（图底下一条输入框） */
-function PinFormula({ text, region, width, height, editing }: { text: string; region: RegionStyle; width: number; height: number; editing: boolean }) {
-  const parsed = useMemo(() => splitFormula(text), [text]);
-  const [latex, setLatex] = useState(parsed.latex);
+/** 几张表连着导出：表和表之间空一行 */
+const GAP_ROW: Cell[] = [{ text: '', header: false, rowSpan: 1, colSpan: 1 }];
+
+/** 贴图上原位显示的一个公式：铺在它那块上，公式撑满（宽九成二、高八成），点一下改它的 LaTeX */
+function PinFormula({
+  latex,
+  initial,
+  box,
+  background,
+  color,
+  editing,
+  onPick,
+}: {
+  latex: string;
+  /** 模型给的 MathML（LaTeX 转不了时先用它） */
+  initial: string;
+  box: { left: number; top: number; width: number; height: number };
+  background: string;
+  color: string;
+  editing: boolean;
+  onPick: () => void;
+}) {
   const fresh = useMemo(() => latexToMathml(latex), [latex]);
   const lastGood = useRef('');
   if (fresh) lastGood.current = fresh;
-  const mathml = fresh ?? (lastGood.current || parsed.mathml);
+  const mathml = fresh ?? (lastGood.current || initial);
   const math = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState(24);
   useLayoutEffect(() => {
@@ -103,17 +122,21 @@ function PinFormula({ text, region, width, height, editing }: { text: string; re
     el.style.fontSize = '24px';
     const r = el.getBoundingClientRect();
     if (!r.width || !r.height) return;
-    const next = Math.min(200, Math.max(8, 24 * Math.min((width * 0.92) / r.width, ((editing ? height - 40 : height) * 0.8) / r.height)));
+    const next = Math.min(200, Math.max(8, 24 * Math.min((box.width * 0.92) / r.width, (box.height * 0.8) / r.height)));
     el.style.fontSize = `${next}px`;
     setSize(next);
-  }, [mathml, latex, width, height, editing]);
-  // 菜单 / 按钮要复制时拿现在的 LaTeX、MathML
-  useEffect(() => {
-    pinFormulaNow.latex = latex;
-    pinFormulaNow.mathml = mathml;
-  }, [latex, mathml]);
+  }, [mathml, latex, box.width, box.height]);
   return (
-    <div className="pin-formula" style={{ background: region.background, color: region.color }} onMouseDown={(e) => e.stopPropagation()} onDoubleClick={(e) => e.stopPropagation()}>
+    <div
+      className="pin-formula"
+      data-editing={editing || undefined}
+      style={{ ...box, background, color }}
+      onMouseDown={(e) => {
+        e.stopPropagation();
+        onPick();
+      }}
+      onDoubleClick={(e) => e.stopPropagation()}
+    >
       {mathml ? (
         <div ref={math} className="cap-inplace__math" style={{ fontSize: size }} dangerouslySetInnerHTML={{ __html: mathml }} />
       ) : (
@@ -121,23 +144,9 @@ function PinFormula({ text, region, width, height, editing }: { text: string; re
           {latex}
         </div>
       )}
-      {editing && (
-        <textarea
-          className="pin-formula__latex cn-selectable"
-          value={latex}
-          spellCheck={false}
-          autoFocus
-          data-invalid={(!fresh && !!latex.trim()) || undefined}
-          onChange={(e) => setLatex(e.currentTarget.value)}
-          onKeyDown={(e) => e.stopPropagation()}
-        />
-      )}
     </div>
   );
 }
-
-/** 公式现在的 LaTeX / MathML（复制按钮用） */
-const pinFormulaNow = { latex: '', mathml: '' };
 
 export default function PinView() {
   const { t } = useTranslation();
@@ -157,8 +166,11 @@ export default function PinView() {
   const [hint, setHint] = useState<'table' | 'formula' | null>(null);
   const [busy, setBusy] = useState(false);
   const [mode, setMode] = useState<Mode | null>(null);
-  const [cellTexts, setCellTexts] = useState<string[]>([]);
-  const [editingLatex, setEditingLatex] = useState(false);
+  const [cellTexts, setCellTexts] = useState<string[][]>([]);
+  /** 每个公式现在的 LaTeX（能改） */
+  const [latexes, setLatexes] = useState<string[]>([]);
+  /** 正在改哪个公式的 LaTeX */
+  const [editingLatex, setEditingLatex] = useState<number | null>(null);
 
   // 鼠标移上来才识别字、看是不是表格 / 公式：大多数贴图只是看一眼，不必每张都跑一遍
   const loadText = useCallback(() => {
@@ -289,7 +301,7 @@ export default function PinView() {
     setBusy(true);
     try {
       const data = await pin.table(LABEL);
-      setCellTexts(data.table.cells.map((c) => c.text));
+      setCellTexts(data.tables.map((x) => x.table.cells.map((c) => c.text)));
       setMode({ kind: 'table', data });
     } catch (err) {
       void system.toast('error', err instanceof Error ? err.message : String(err));
@@ -297,45 +309,62 @@ export default function PinView() {
       setBusy(false);
     }
   }, []);
+  /** 公式：先找出像公式的几块（表格不算），每块分别交给 AI */
   const openFormula = useCallback(async () => {
     setBusy(true);
     try {
-      const [text, region] = await Promise.all([pin.structure(LABEL, 'formula'), pin.regionStyle(LABEL)]);
-      setEditingLatex(false);
-      setMode({ kind: 'formula', text, region });
+      const found = await pin.formulaRegions(LABEL);
+      const results = await Promise.allSettled(found.regions.map((r) => pin.structure(LABEL, 'formula', r.rect)));
+      const items = found.regions.flatMap((r, i) => {
+        const res = results[i]!;
+        return res.status === 'fulfilled' && res.value.trim() ? [{ ...r, text: res.value }] : [];
+      });
+      if (!items.length) {
+        const failed = results.find((r): r is PromiseRejectedResult => r.status === 'rejected');
+        throw failed ? failed.reason : new Error(t('capture.structured.formulaNotFound'));
+      }
+      setEditingLatex(null);
+      setLatexes(items.map((f) => splitFormula(f.text).latex));
+      setMode({ kind: 'formula', items });
     } catch (err) {
       void system.toast('error', err instanceof Error ? err.message : String(err));
     } finally {
       setBusy(false);
     }
-  }, []);
+  }, [t]);
+  const tableRows = useCallback(
+    (data: CaptureTables) => data.tables.map((x, i) => toRows(x.table.cells, cellTexts[i] ?? [])),
+    [cellTexts],
+  );
   const copyTable = useCallback(() => {
     if (mode?.kind !== 'table') return;
-    const rows = toRows(mode.data.table.cells, cellTexts);
+    const all = tableRows(mode.data);
     void capture
-      .writeRich(toExcelText(tableGrid(rows)), toHtmlTable(rows))
+      .writeRich(all.map((rows) => toExcelText(tableGrid(rows))).join('\n\n'), all.map((rows) => toHtmlTable(rows)).join('<br>'))
       .then(() => system.toast('success', t('ocr.structured.copied')))
       .catch(notify.error);
-  }, [mode, cellTexts, t]);
+  }, [mode, tableRows, t]);
   const exportXlsx = useCallback(() => {
     if (mode?.kind !== 'table') return;
     void ocr
-      .exportXlsx(toRows(mode.data.table.cells, cellTexts))
+      .exportXlsx(tableRows(mode.data).flatMap((rows, i) => (i ? [GAP_ROW, ...rows] : rows)))
       .then((path) => {
         if (path) void system.toast('success', t('ocr.structured.exported'));
       })
       .catch(notify.error);
-  }, [mode, cellTexts, t]);
+  }, [mode, tableRows, t]);
   const copyFormula = useCallback(
     (what: 'latex' | 'mathml') => {
-      const value = what === 'latex' ? pinFormulaNow.latex.trim() : pinFormulaNow.mathml;
+      if (mode?.kind !== 'formula') return;
+      const parts = what === 'latex' ? latexes : latexes.map((l, i) => latexToMathml(l) ?? splitFormula(mode.items[i]?.text ?? '').mathml);
+      const value = parts.map((x) => x.trim()).filter(Boolean).join('\n\n');
       if (!value) return;
       void capture
         .writeText(value)
         .then(() => system.toast('success', t('ocr.structured.copied')))
         .catch(notify.error);
     },
-    [t],
+    [mode, latexes, t],
   );
 
   // ── 右键菜单 ──
@@ -502,20 +531,59 @@ export default function PinView() {
               })}
             </div>
           )}
-          {mode?.kind === 'table' && (
-            <TableSheet
-              data={mode.data}
-              s={dpr / zoom}
-              texts={cellTexts}
-              onTexts={setCellTexts}
-              style={{ left: 0, top: 0, width: imgW, height: imgH }}
-              menuHost={(items, run) => {
-                sheetRun.current = run;
-                void popmenu.open(LABEL, items);
+          {mode?.kind === 'table' &&
+            mode.data.tables.map((table, i) => {
+              const k = zoom / dpr;
+              return (
+                <TableSheet
+                  key={i}
+                  data={table}
+                  s={dpr / zoom}
+                  texts={cellTexts[i] ?? []}
+                  onTexts={(next) => setCellTexts((prev) => prev.map((v, j) => (j === i ? next : v)))}
+                  style={{ left: table.rect.x * k, top: table.rect.y * k, width: table.rect.width * k, height: table.rect.height * k }}
+                  menuHost={(items, run) => {
+                    sheetRun.current = run;
+                    void popmenu.open(LABEL, items);
+                  }}
+                />
+              );
+            })}
+          {mode?.kind === 'formula' &&
+            mode.items.map((f, i) => {
+              const k = zoom / dpr;
+              return (
+                <PinFormula
+                  key={i}
+                  latex={latexes[i] ?? ''}
+                  initial={splitFormula(f.text).mathml}
+                  box={{ left: f.rect.x * k, top: f.rect.y * k, width: f.rect.width * k, height: f.rect.height * k }}
+                  background={f.background}
+                  color={f.color}
+                  editing={editingLatex === i}
+                  onPick={() => setEditingLatex(i)}
+                />
+              );
+            })}
+          {mode?.kind === 'formula' && editingLatex !== null && (
+            <textarea
+              key={editingLatex}
+              className="pin-formula__latex cn-selectable"
+              value={latexes[editingLatex] ?? ''}
+              spellCheck={false}
+              autoFocus
+              data-invalid={(!latexToMathml(latexes[editingLatex] ?? '') && !!latexes[editingLatex]?.trim()) || undefined}
+              onChange={(e) => {
+                const v = e.currentTarget.value;
+                setLatexes((prev) => prev.map((x, j) => (j === editingLatex ? v : x)));
               }}
+              onKeyDown={(e) => {
+                e.stopPropagation();
+                if (e.key === 'Escape') setEditingLatex(null);
+              }}
+              onMouseDown={(e) => e.stopPropagation()}
             />
           )}
-          {mode?.kind === 'formula' && <PinFormula text={mode.text} region={mode.region} width={imgW} height={imgH} editing={editingLatex} />}
           {zoom !== 1 && <span className="pin-zoom cn-glass-thin cn-numeric">{Math.round(zoom * 100)}%</span>}
           {/* 鼠标移上来才出现：右下角关闭，左边是表格 / 公式的提示（开着时换成它们的几个操作） */}
           <div className="pin-actions" onMouseDown={(e) => e.stopPropagation()} onDoubleClick={(e) => e.stopPropagation()}>
@@ -530,7 +598,7 @@ export default function PinView() {
               <>
                 <PinButton text="TeX" label={t('pin.copyLatex')} onClick={() => copyFormula('latex')} />
                 <PinButton text="ML" label={t('pin.copyMathml')} onClick={() => copyFormula('mathml')} />
-                <PinButton icon={PenLine} label={t('pin.editLatex')} on={editingLatex} onClick={() => setEditingLatex((v) => !v)} />
+                <PinButton icon={PenLine} label={t('pin.editLatex')} on={editingLatex !== null} onClick={() => setEditingLatex((v) => (v === null ? 0 : null))} />
                 <PinButton icon={Sigma} label={t('pin.exitFormula')} on onClick={() => setMode(null)} />
               </>
             )}
@@ -571,7 +639,7 @@ export default function PinView() {
         .pin-btn { display: inline-grid; place-items: center; min-width: 20px; height: 20px; padding: 0 4px; border: 0; border-radius: 10px; background: rgba(0,0,0,0.38); color: rgba(255,255,255,0.88); font: 600 9.5px/1 var(--cn-font-sans); cursor: pointer; opacity: 0.72; transition: opacity 120ms, background 120ms; }
         .pin-btn:hover { opacity: 1; background: rgba(0,0,0,0.62); }
         .pin-btn[data-on] { opacity: 1; background: var(--cn-accent); }
-        .pin-formula { position: absolute; inset: 0; display: grid; place-items: center; overflow: hidden; line-height: normal; }
+        .pin-formula { position: absolute; display: grid; place-items: center; overflow: hidden; line-height: normal; }
         .pin-formula__latex { position: absolute; left: 4px; right: 4px; bottom: 4px; height: 34px; padding: 4px 6px; border: 0; border-radius: 6px; resize: none; outline: none; font: 12px/1.4 'Cascadia Mono', Consolas, ui-monospace, monospace; color: var(--cn-label); background: var(--cn-bg-elevated); box-shadow: 0 0 0 1.5px var(--cn-accent); }
         .pin-formula__latex[data-invalid] { color: var(--cn-red); }
       `}</style>

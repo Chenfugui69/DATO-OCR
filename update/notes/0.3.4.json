@@ -1,0 +1,76 @@
+{
+  "added": [
+    "截图里直接识别表格：认出的表格盖在原来的位置上，样子和原图几乎一样，像 Excel 一样框选、打字、复制粘贴、撤销，还能导出 Excel",
+    "截图里直接识别公式：公式原位显示，可以改 LaTeX，复制 LaTeX 或 MathML",
+    "选区里有好几张表、或者表格和公式混在一起时，自动分开认，每张表各自盖在原处",
+    "本地公式识别（设置 → 文字识别里下载）：不用 AI，印刷体公式一般不到一秒就认出来",
+    "可以给「识别表格 / 公式」单独选一个更快的 AI 模型，对话照样用原来的",
+    "录屏合并成一个「录制」按钮：先进录制准备，选格式（MP4 / GIF / APNG）、倒计时、麦克风、系统声音、摄像头，再开始",
+    "录制时可以显示鼠标点击、鼠标轨迹、滚动和按下的键，加进度条或播放时间，拖右下角把手挪动录制区域",
+    "录完可以先剪辑：掐头去尾、0.5–4 倍速（声音不变调）",
+    "Windows 也能录 MP4 视频，带系统声音、麦克风和摄像头",
+    "截图标注新工具：荧光笔、序号、橡皮擦、测量、水印、标注模板，还有聚光灯和放大镜",
+    "截图时识别二维码 / 条码，点一下复制或打开链接",
+    "选区可以输入坐标和宽高、锁定比例，支持自由形状选区和延时截图",
+    "取色时按 P 把颜色贴到桌面上，HEX / RGB / HSL 一键复制",
+    "贴图里的文字可以直接选中复制；贴图能旋转、翻转、鼠标穿透，也能恢复刚关掉的贴图",
+    "选区框的拖柄可以选「半圆条」，只露出框外的一半，不挡选区里的内容；录屏时的拖柄单独设置",
+    "划词小圆点可以自定义液态玻璃效果（色差、模糊、折射等），调整时有实时预览",
+    "设置页可以搜索（Ctrl+F / ⌘F），在搜索结果里直接修改",
+    "界面语言新增繁體中文、日本語、한국어"
+  ],
+  "improved": [
+    "截图翻译按表格格子原位翻译，粗体和字号跟着原文，纯数字不再重画",
+    "识别公式快了一倍以上",
+    "待机时占用的内存减少约一半",
+    "截图工具条新增扁平样式，磨砂玻璃样式在拖动、录制时也不会丢",
+    "录制准备时不再压暗屏幕，录制框以外的窗口照常可以点；录制中也能截图",
+    "截图时框选整张表更准：贴着表格边或在表格外侧不远处都能框到整张表",
+    "二级工具条展开时不再从屏幕左上角飞进来",
+    "Mac 版支持自动更新"
+  ],
+  "fixed": [
+    "划词翻译面板的圆角有锯齿，截图里四个角露出方块或台阶（Windows）",
+    "主窗口收进任务栏 / 程序坞后，用划词或截图时主窗口会自己跳出来",
+    "表格只有表头上下两道线时，整张表被认成一行",
+    "录制时副屏上的控制条点不中"
+  ],
+  "en": {
+    "added": [
+      "Recognize tables right in a screenshot: the table is laid back over the original, looking almost the same, and you can select, type, copy, paste and undo like in Excel, or export it to Excel",
+      "Recognize formulas right in a screenshot: the formula is shown in place, you can edit its LaTeX and copy LaTeX or MathML",
+      "When the selection contains several tables, or tables mixed with formulas, each is recognized separately and laid over its own spot",
+      "Local formula recognition (download it in Settings → Text recognition): no AI needed, printed formulas are usually read in under a second",
+      "Pick a separate, faster AI model just for table and formula recognition while chat keeps using yours",
+      "Screen recording is now one Record button: set up the format (MP4 / GIF / APNG), countdown, microphone, system audio and camera first, then start",
+      "Show mouse clicks, the mouse trail, scrolling and key presses while recording, add a progress bar or elapsed time, and move the recording area with the corner handle",
+      "Trim recordings and change their speed (0.5–4×, pitch preserved) before saving",
+      "MP4 recording on Windows, with system audio, microphone and camera",
+      "New annotation tools: highlighter, numbered markers, eraser, measure, watermark and templates, plus spotlight and magnifier",
+      "Scan QR codes and barcodes while capturing, then copy or open the link with one click",
+      "Enter the selection's position and size, lock the aspect ratio, draw freeform selections, or take delayed screenshots",
+      "Press P while picking a color to pin it on the desktop, with one-click HEX / RGB / HSL copy",
+      "Select and copy text inside pinned screenshots; rotate, flip and click through pins, and bring back the one you just closed",
+      "Half-bar selection handles that only show the outer half so nothing inside the selection is covered; recording has its own handle setting",
+      "Customize the liquid-glass look of the selection dot (dispersion, blur, refraction and more) with a live preview",
+      "Search Settings (Ctrl+F / ⌘F) and change options right in the results",
+      "New interface languages: Traditional Chinese, Japanese and Korean"
+    ],
+    "improved": [
+      "Screenshot translation now works cell by cell in tables, keeps bold text and font sizes, and leaves plain numbers alone",
+      "Formula recognition is more than twice as fast",
+      "About half the memory use while idle",
+      "A new flat capture toolbar style; the frosted-glass style no longer drops while dragging or recording",
+      "Recording setup no longer dims the screen, windows outside the area stay usable, and you can take screenshots while recording",
+      "Picking a whole table while capturing is more accurate, even when the pointer is on the table's edge or just outside it",
+      "The secondary toolbar no longer flies in from the top-left corner of the screen",
+      "Automatic updates on Mac"
+    ],
+    "fixed": [
+      "Jagged corners on the translation popup, and square or stepped corners on it in screenshots (Windows)",
+      "The main window popped up during text selection or capture after being minimized to the taskbar / Dock",
+      "Tables with only lines above and below the header were read as a single row",
+      "Recording controls on a secondary display couldn't be clicked"
+    ]
+  }
+}

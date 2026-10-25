@@ -33,11 +33,11 @@ function laid(): CaptureTable {
   return {
     table: { width: 300, height: 120, rows: 2, cols: 2, cells: [cell(0, 0, 'cty'), cell(0, 1, 'pop'), cell(1, 0, 'Bejing'), cell(1, 1, '21')] },
     background: 'bg',
-    source: 'src',
+    rect: { x: 40, y: 30, width: 300, height: 120 },
   };
 }
 
-const sel = { x: 500, y: 400, width: 300, height: 120 };
+const sel = { x: 0, y: 0, width: 300, height: 120 };
 
 describe('AI 认出的表格摆回选区', () => {
   it('行列对得上：只换字，位置、样式不动', () => {
@@ -73,6 +73,8 @@ describe('AI 认出的表格摆回选区', () => {
       laid(),
     )!;
     expect(t.plain).toMatchObject({ x: 10, y: 20, width: 200, height: 60 });
+    // 还是摆在原来那张表的范围里
+    expect(t.rect).toEqual({ x: 40, y: 30, width: 300, height: 120 });
     expect(t.table).toMatchObject({ rows: 3, cols: 3 });
     const score = t.table.cells.find((x) => x.text === '成绩')!;
     expect(score).toMatchObject({ row: 0, col: 1, colSpan: 2, header: true, bold: true, align: 'center', background: '#eeeeee' });

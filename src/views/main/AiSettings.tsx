@@ -206,6 +206,15 @@ export function AiSettingsGroups({ settings, set }: { settings: Settings; set: (
             onChange={(v) => set((d) => void (d.ai.defaultModel = v))}
           />
         </Row>
+        <Row title={t('settings.ai.visionModel')} desc={t('settings.ai.visionModelDesc')}>
+          <Select
+            value={allModels.some((m) => m.value === cfg.visionModel) ? cfg.visionModel : ''}
+            disabled={allModels.length === 0}
+            width={220}
+            options={[{ value: '', label: t('settings.ai.visionModelSame') }, ...allModels]}
+            onChange={(v) => set((d) => void (d.ai.visionModel = v))}
+          />
+        </Row>
         <Row title={t('settings.ai.systemPrompt')} desc={t('settings.ai.systemPromptDesc')}>
           <textarea
             key="system-prompt"

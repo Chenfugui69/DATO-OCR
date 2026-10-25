@@ -254,6 +254,8 @@ fn start(app: &AppHandle, intent: CaptureIntent, instant: bool, nested: bool) ->
     let cursor = platform::cursor_position();
     let settings = st.settings.read().capture.clone();
 
+    // 开着毛玻璃的面板先换成页面画的实心底（Windows 抓屏里系统背板的圆角裁剪不起作用），抓完换回来
+    let glass = wm::GlassSnapshot::begin(app);
     // 窗口和子控件跟抓屏并行枚举，而且必须赶在遮罩出现之前：Chromium 系浏览器发现自己
     // 被完全遮住会把网页内容区那个子窗口藏起来，遮罩一盖上就枚举不到了
     let (shots, windows, grab_ms, enum_ms) = std::thread::scope(|scope| {
@@ -268,6 +270,7 @@ fn start(app: &AppHandle, intent: CaptureIntent, instant: bool, nested: bool) ->
         let (windows, enum_ms) = windows.join().unwrap_or_default();
         (shots, windows, grab_ms, enum_ms)
     });
+    drop(glass);
     let mut shots = match shots {
         Ok(shots) => shots,
         Err(err) => {

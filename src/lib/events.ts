@@ -34,6 +34,8 @@ export interface EventMap {
   'gif-progress': GifProgress;
   /** 录制时按下了一个键（按键显示用）：⌘C、⏎…… */
   'record-key': string;
+  /** 本程序要截图了：开着毛玻璃的面板换成实心底（true）/ 换回来（false），见 `useGlassSnapshot` */
+  'glass-snapshot': boolean;
   /** 录制准备开始 / 结束：所有遮罩都不压暗、鼠标穿透（monitorId 是录制框所在的屏） */
   'record-prep': { active: boolean; monitorId: number };
   /** 录制准备时的鼠标（遮罩穿透了收不到）：位置（本屏局部物理坐标，不在这块屏上是 null）、按着的键、这一拍滚了多少 */
@@ -51,6 +53,8 @@ export interface EventMap {
   'library-changed': null;
   'ocr-job': OcrJob;
   'ocr-engine-download': PaddleDownload;
+  /** 本地公式识别模型的下载进度 */
+  'ocr-latex-download': PaddleDownload;
   'ocr-history-changed': null;
   toast: ToastPayload;
   navigate: string;

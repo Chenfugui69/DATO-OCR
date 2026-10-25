@@ -1,9 +1,8 @@
 // AI 认出的表格怎么摆回截图选区里（纯计算，不碰 DOM，方便单测）。坐标都是选区图的物理像素。
 
-import type { CaptureTable, LaidCell } from '@/lib/types';
+import type { CaptureTable, LaidCell, RegionRect } from '@/lib/types';
 import { tableGrid, type Cell } from '@/views/ocr/structured';
 
-import type { Rect } from './geometry';
 
 const median = (v: number[]) => (v.length ? [...v].sort((a, b) => a - b)[Math.floor(v.length / 2)]! : undefined);
 
@@ -39,10 +38,11 @@ const textUnits = (text: string) => [...text].reduce((n, ch) => n + (/[⺀-鿿�
 const NUMERIC = /^[\s(（]*[-+−]?[$¥€£]?\s*[\d.,，]+%?\s*[)）]?$/;
 
 /**
- * 认出的表格画到原位：铺满原来那张表的范围（没有就整个选区），按每列字的多少分列宽、行高平均，
- * 底色、字色用原图的（`colors`，有原位的格子时取格子里最多的那种）。没有格子返回 null
+ * 认出的表格画到原位：铺满原来那张表的范围（没有就整块 `area`，选区图里的物理像素），按每列字的多少分列宽、
+ * 行高平均，底色、字色用原图的（`colors`，有原位的格子时取格子里最多的那种）。没有格子返回 null。
+ * 坐标都是 `area` 里的（有原位的表时用那张表的范围）
  */
-export function layoutTable(rows: Cell[][], selection: Rect, colors: { background: string; color: string } | undefined, base?: CaptureTable): CaptureTable | null {
+export function layoutTable(rows: Cell[][], area: RegionRect, colors: { background: string; color: string } | undefined, base?: CaptureTable): CaptureTable | null {
   // 摊开合并单元格，算出每格从哪行哪列开始
   const taken: boolean[][] = [];
   const placed: { cell: Cell; row: number; col: number }[] = [];
@@ -67,7 +67,7 @@ export function layoutTable(rows: Cell[][], selection: Rect, colors: { backgroun
         const y0 = Math.min(...laid.map((c) => c.y));
         return { x: x0, y: y0, width: Math.max(...laid.map((c) => c.x + c.width)) - x0, height: Math.max(...laid.map((c) => c.y + c.height)) - y0 };
       })()
-    : { x: 0, y: 0, width: selection.width, height: selection.height };
+    : { x: 0, y: 0, width: (base?.rect ?? area).width, height: (base?.rect ?? area).height };
   // 表头、表身的底色分开取（表头常常是灰底）
   const background = mostCommon(laid.filter((c) => !c.header).map((c) => c.background)) ?? colors?.background ?? '#ffffff';
   const headerBackground = mostCommon(laid.filter((c) => c.header).map((c) => c.background)) ?? background;
@@ -113,10 +113,11 @@ export function layoutTable(rows: Cell[][], selection: Rect, colors: { backgroun
       align: cell.text.trim() && NUMERIC.test(cell.text) ? 'right' : header ? 'center' : 'left',
     };
   });
+  const rect = base?.rect ?? area;
   return {
-    table: { width: selection.width, height: selection.height, rows: nRows, cols: nCols, cells },
+    table: { width: rect.width, height: rect.height, rows: nRows, cols: nCols, cells },
     background: '',
-    source: base?.source ?? '',
+    rect,
     plain: { ...bounds, line: `color-mix(in srgb, ${color} 28%, ${background})` },
   };
 }

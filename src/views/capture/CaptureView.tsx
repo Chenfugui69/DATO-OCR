@@ -19,7 +19,7 @@ import { CONTENT_INTERVAL, useElementSize, useThrottled } from '@/lib/hooks';
 import { capture, gif, reportError, system } from '@/lib/ipc';
 import { useSettingsStore } from '@/lib/settings';
 import { isMac, shotUrl, windowLabel } from '@/lib/platform';
-import { DEFAULT_GROUPS, MID_ACTIONS, TAIL_ACTIONS, type CaptureIntent, type CaptureTable, type FinishAction, type FrameStyle, type SessionInfo, type TailAction } from '@/lib/types';
+import { DEFAULT_GROUPS, MID_ACTIONS, TAIL_ACTIONS, type CaptureIntent, type CaptureTable, type CaptureTables, type FinishAction, type HandleStyle, type RegionRect, type FrameStyle, type SessionInfo, type TailAction } from '@/lib/types';
 import { notify } from '@/ui/overlays';
 import { AnnotationEngine, toolOf } from '@/views/annotate/engine';
 import { BRUSH_RANGE, PEN_RANGE, watermarkOf, type Tool } from '@/views/annotate/model';
@@ -56,7 +56,7 @@ import {
 } from './geometry';
 import { CodeBadges, CodeResults } from './CodeResults';
 import { candidatesAt, ElementCache, rectKey, tableMagnet, thresholds, withTable, type ElementLevel, type UiElement } from './elements';
-import { aiTableLayout, FormulaInPlace, mergeAiTable, TableInPlace } from './InPlaceResult';
+import { aiTableLayout, FormulasInPlace, mergeAiTable, TablesInPlace } from './InPlaceResult';
 import { EffectsPreview, LiveCapturable, LiveDrawRegion } from './RecordPreview';
 import { CameraFrame, Countdown, KeyHud, MoveHandle, PrepEdges, RecordHints, RecordToolbar, sendGlyphs, setRegion } from './RecordUI';
 import { rememberSelection, SelectionPanel } from './SelectionPanel';
@@ -631,7 +631,9 @@ async function scanCodes() {
 /**
  * 选区识别成表格 / 公式，原位盖在选区上（像截图翻译）：表格默认本地识别（几百毫秒、不联网），本地没认出表格时
  * 自动换 AI 再认；公式只有 AI。认的时候选区上扫一道光（和截图翻译同一套），不弹卡片。
- * 原位的表格再点「AI 重新识别」：AI 认出的行列对得上就只换字，样式和位置不变；对不上就按原来的范围画一张表。
+ * 选区里有好几样东西（几张表、表和公式）时分开认：表格只认是表的那几块，每块各自原位盖上；
+ * 公式先找出像公式的几块，每块分别交给 AI（同时问，只看那一块，不会被表格带偏）。
+ * 原位的表格再点「AI 重新识别」：每张表各认各的，认出的行列对得上就只换字，样式和位置不变；对不上就按原来的范围画一张表。
  * 认不出、出错只弹一条提示，选区和别的标注都不动。
  */
 async function recognizeStructure(kind: 'table' | 'formula', wanted?: 'local' | 'ai') {
@@ -643,11 +645,12 @@ async function recognizeStructure(kind: 'table' | 'formula', wanted?: 'local' | 
     engine.removeGroup(TRANSLATION_GROUP);
     set({ showOriginal: false, moveLabels: false, translatedBlocks: [] });
   }
-  const how = kind === 'formula' ? 'ai' : (wanted ?? 'local');
+  // 表格默认本地识别；公式下载了本地模型也先本地认（没下载的 Rust 那边直接交给 AI）
+  const how = wanted ?? 'local';
   // 原位的结果上再用 AI 认：结果留着（半透明），认完替换
   const prev = structured?.kind === kind && structured.status === 'done' ? structured : undefined;
   set({
-    structured: { kind, engine: how, status: 'running', table: prev?.table, text: prev?.text, region: prev?.region },
+    structured: { kind, engine: how, status: 'running', tables: prev?.tables, formulas: prev?.formulas },
     codes: null,
     sizePanel: false,
     toolbarGroup: null,
@@ -666,25 +669,32 @@ async function recognizeStructure(kind: 'table' | 'formula', wanted?: 'local' | 
     settle(keep);
     notify.error(err);
   };
-  const region = () => capture.regionStyle(session.sessionId, MONITOR_ID, selection).catch(() => undefined);
-  /** AI 认表格，套回原位（对得上就只换字，对不上就按原来的范围画一张） */
-  const askAi = async (base?: CaptureTable) => {
-    const [html, colors] = await Promise.all([capture.structure(session.sessionId, MONITOR_ID, selection, 'table', 'ai'), base ? undefined : region()]);
-    const table = (base && mergeAiTable(base, html)) ?? aiTableLayout(html, selection, colors, base);
+  /** 选区图里的一块 → 屏幕上的范围 */
+  const abs = (r: RegionRect): Rect => ({ x: selection.x + r.x, y: selection.y + r.y, width: r.width, height: r.height });
+  const whole: RegionRect = { x: 0, y: 0, width: selection.width, height: selection.height };
+  /** AI 认一张表（只看这张表的范围），套回原位（对得上就只换字，对不上就按原来的范围画一张） */
+  const aiTable = async (area: RegionRect, base?: CaptureTable, colors?: { background: string; color: string }) => {
+    const html = await capture.structure(session.sessionId, MONITOR_ID, abs(area), 'table', 'ai');
+    const table = (base && mergeAiTable(base, html)) ?? aiTableLayout(html, area, colors, base);
     if (!table) throw new Error(i18n.t('capture.structured.notFound'));
-    return { html, table };
+    return table;
+  };
+  /** 本地一张表都没认出（或还没有原位的表）：整个选区交给 AI */
+  const aiWhole = async () => {
+    const style = await capture.regionStyle(session.sessionId, MONITOR_ID, selection);
+    const table = await aiTable(whole, undefined, style);
+    return { tables: [table], source: style.source };
   };
   try {
     if (kind === 'table' && how === 'local') {
-      let table: CaptureTable;
+      let found: CaptureTables;
       try {
-        table = await capture.table(session.sessionId, MONITOR_ID, selection);
+        found = await capture.table(session.sessionId, MONITOR_ID, selection);
       } catch (local) {
         if (stale()) return;
         // 本地没认出（没有格子线、字太乱）：换 AI 认，光接着扫
         try {
-          const r = await askAi();
-          settle({ kind, engine: 'ai', status: 'done', text: r.html, table: r.table });
+          settle({ kind, engine: 'ai', status: 'done', tables: await aiWhole() });
         } catch (ai) {
           // AI 也说图里没有表格：就说没认出表格；AI 出错了（超时、没配好）才把原因带上
           const said = message(ai);
@@ -693,16 +703,34 @@ async function recognizeStructure(kind: 'table' | 'formula', wanted?: 'local' | 
         }
         return;
       }
-      settle({ kind, engine: how, status: 'done', table });
+      settle({ kind, engine: how, status: 'done', tables: found });
     } else if (kind === 'table') {
-      const r = await askAi(prev?.table);
-      settle({ kind, engine: how, status: 'done', text: r.html, table: r.table });
+      const base = prev?.tables;
+      if (!base) {
+        settle({ kind, engine: how, status: 'done', tables: await aiWhole() });
+        return;
+      }
+      // 每张表各认各的；认不出的那张留着原来的，全都认不出才报错
+      const results = await Promise.allSettled(base.tables.map((t) => aiTable(t.rect, t)));
+      const failed = results.find((r): r is PromiseRejectedResult => r.status === 'rejected');
+      if (failed && results.every((r) => r.status === 'rejected')) throw failed.reason;
+      const tables = results.map((r, i) => (r.status === 'fulfilled' ? r.value : base.tables[i]!));
+      settle({ kind, engine: how, status: 'done', tables: { tables, source: base.source } });
     } else {
-      const [text, style] = await Promise.all([
-        capture.structure(session.sessionId, MONITOR_ID, selection, kind, how),
-        prev?.region ? prev.region : capture.regionStyle(session.sessionId, MONITOR_ID, selection),
-      ]);
-      settle({ kind, engine: how, status: 'done', text, region: style });
+      // 公式：先找出像公式的几块（再认时沿用上次的几块），每块分别交给 AI
+      const found = prev?.formulas
+        ? { regions: prev.formulas.items, source: prev.formulas.source }
+        : await capture.formulaRegions(session.sessionId, MONITOR_ID, selection);
+      const results = await Promise.allSettled(found.regions.map((r) => capture.structure(session.sessionId, MONITOR_ID, abs(r.rect), 'formula', how)));
+      const items = found.regions.flatMap((r, i) => {
+        const res = results[i]!;
+        return res.status === 'fulfilled' && res.value.trim() ? [{ rect: r.rect, background: r.background, color: r.color, text: res.value }] : [];
+      });
+      if (!items.length) {
+        const failed = results.find((r): r is PromiseRejectedResult => r.status === 'rejected');
+        throw failed ? failed.reason : new Error(i18n.t('capture.structured.formulaNotFound'));
+      }
+      settle({ kind, engine: how, status: 'done', formulas: { items, source: found.source } });
     }
   } catch (err) {
     // 重新认失败：留着原来的结果
@@ -714,10 +742,10 @@ async function recognizeStructure(kind: 'table' | 'formula', wanted?: 'local' | 
 function StructuredResultLayer({ state, selection, s, viewport }: { state: CaptureStructured; selection: Rect; s: number; viewport: { width: number; height: number } }) {
   const close = () => set({ structured: null });
   const busy = state.status === 'running';
-  if (state.kind === 'table' && state.table) {
+  if (state.kind === 'table' && state.tables) {
     return (
-      <TableInPlace
-        data={state.table}
+      <TablesInPlace
+        data={state.tables}
         selection={selection}
         s={s}
         viewport={viewport}
@@ -728,16 +756,15 @@ function StructuredResultLayer({ state, selection, s, viewport }: { state: Captu
       />
     );
   }
-  if (state.kind === 'formula' && state.region && state.text) {
+  if (state.kind === 'formula' && state.formulas) {
     return (
-      <FormulaInPlace
-        text={state.text}
-        region={state.region}
+      <FormulasInPlace
+        data={state.formulas}
         selection={selection}
         s={s}
         viewport={viewport}
         busy={busy}
-        onAi={() => void recognizeStructure('formula')}
+        onAi={() => void recognizeStructure('formula', 'ai')}
         onClose={close}
         onDone={cancel}
       />
@@ -1528,7 +1555,11 @@ function SizeHint({
   );
 }
 
-function Handles({ rect, s, radius, dots }: { rect: Rect; s: number; radius: number; dots: boolean }) {
+/**
+ * 选区框上的拖柄。`kind`：bar = 四条边中间是小圆条 | halfBar = 半圆条，只露出框线外面的一半（四个角的圆点也只露出框外的部分），
+ * 不挡选区里的内容（录屏时常用）| dot = 四条边中间也是小圆点
+ */
+function Handles({ rect, s, radius, kind: style }: { rect: Rect; s: number; radius: number; kind: HandleStyle }) {
   // 圆角框的四个角点沿 45° 收到圆弧上，不悬在框外
   const inset = Math.min(radius, rect.width / s / 2, rect.height / s / 2) * (1 - Math.SQRT1_2);
   return (
@@ -1542,11 +1573,12 @@ function Handles({ rect, s, radius, dots }: { rect: Rect; s: number; radius: num
         const sx = h.includes('w') ? -1 : h.includes('e') ? 1 : 0;
         const sy = h.includes('n') ? -1 : h.includes('s') ? 1 : 0;
         // 设置里选了小圆点：四条边中间也画成和角上一样的圆点
-        const kind = corner || dots ? 'corner' : sy !== 0 ? 'h' : 'v';
+        const kind = corner || style === 'dot' ? 'corner' : sy !== 0 ? 'h' : 'v';
         return (
           <span
             key={h}
-            className={`cap-handle cap-handle--${kind}`}
+            className={clsx(`cap-handle cap-handle--${kind}`, style === 'halfBar' && 'cap-handle--half')}
+            data-h={h}
             style={
               {
                 left: p.x / s + (corner ? dx : 0),
@@ -2114,7 +2146,9 @@ export default function CaptureView() {
             <FrameBox rect={selection} s={s} width={frameWidth} radius={radius} solid={frameSolid} corners={frameCorners} />
           )}
           {/* 拖柄从开始拖选区就跟着显示，不是松手才冒出来。四角样式的框本身就是四个角，不再叠拖柄 */}
-          {!frameCorners && !engine.drawing && !shape && <Handles rect={selection} s={s} radius={radius} dots={frame?.handles === 'dot'} />}
+          {!frameCorners && !engine.drawing && !shape && (
+            <Handles rect={selection} s={s} radius={radius} kind={recordPrep ? (cfg?.recordHandles ?? 'halfBar') : (frame?.handles ?? 'bar')} />
+          )}
           <SizeHint rect={selection} s={s} viewport={viewport} interactive={phase === 'editing'} />
         </>
       )}

@@ -23,10 +23,12 @@ DATO OCR makes those four steps one tool: press a key to start, and the result i
 </p>
 
 - **Select and go**: windows are detected automatically and edges snap as you drag. Copy, save, or pin the result on screen.
-- **Annotate**: rectangle, ellipse, arrow, pen, mosaic, text. Everything can be moved and resized afterwards.
+- **Annotate**: rectangle, ellipse, arrow, pen, highlighter, numbered markers, mosaic, text, measure, watermark, plus spotlight and magnifier. Everything can be moved and resized afterwards, and favorite combinations can be saved as templates.
 - **Instant capture**: grabs the whole desktop the moment you press the key, including menus and popups that vanish on touch.
 - **Scrolling capture**: scroll the page and it stitches one long image.
-- **Record a GIF**: select an area and record it; it is saved, copied, and shows up in the screenshot library.
+- **Tables and formulas**: a recognized table is laid back over the original, looking almost the same, and you can select, edit and copy cells like in Excel or export to Excel; formulas appear in place with editable LaTeX. Several tables, or tables mixed with formulas, are recognized separately. Download the local formula model to read formulas in under a second without AI.
+- **Screen recording**: record MP4, GIF or APNG with system audio, microphone and camera, showing mouse clicks and key presses; trim before saving.
+- **QR codes and colors**: scan QR codes and barcodes while capturing; press P while picking a color to pin it on the desktop.
 - **Translate in place**: one key after capturing, and the translation appears right where the original text was. Mixed-language lines are translated separately, and text already in the target language is left alone. Both the translation and the original can be selected and copied, and you can choose which service to use.
 - **Your toolbar, your way**: drag the buttons into the order you like in Settings, or switch the toolbar to frosted glass.
 
@@ -63,7 +65,7 @@ DATO OCR makes those four steps one tool: press a key to start, and the result i
 </p>
 
 Selection frame color and thickness, toolbar button order, panel style, frosted glass, every shortcut, the order of translation services — all in Settings. When you style the selection translate popup, a full-size preview sits right next to it.
-The interface is available in English and Simplified Chinese and follows your system language by default.
+The interface is available in English, Simplified Chinese, Traditional Chinese, Japanese and Korean, and follows your system language by default.
 
 ---
 
@@ -98,6 +100,7 @@ Get it from the [releases page](https://github.com/Chenfugui69/DATO-OCR/releases
 - Text recognition runs on your machine: the bundled offline engine on Windows, the system's own recognizer on macOS.
 - Screenshots, recognition history and clipboard history are stored locally and never uploaded.
 - Translation and AI chat go online and send the content to the service you chose. API keys and mailbox passwords are stored encrypted on your machine.
+- Table recognition runs on your machine. Formula recognition does too once the local model is downloaded; otherwise it goes to the AI provider you set up.
 - Smart picks are computed on your machine by default. Only if you turn on "Use an AI model for suggestions" are the recognized window text and summaries of recent clips sent to the provider set in AI Chat.
 - The MCP server is off by default, listens only on your own machine, and requires a token.
 

@@ -440,6 +440,13 @@ pub async fn window_backdrop_fade(
     Ok(())
 }
 
+/// 页面已经换成实心底、画完了一帧（截图前，见 `wm::GlassSnapshot`）
+#[tauri::command]
+pub async fn window_glass_snapshot_ready(window: tauri::WebviewWindow) -> AppResult<()> {
+    crate::wm::glass_snapshot_ready(window.label());
+    Ok(())
+}
+
 /// 窗口的位置和所在屏的可用区域（逻辑像素）。null = 页面自己读 `window.screenX` 那一套就行。
 #[tauri::command]
 pub async fn window_placement(

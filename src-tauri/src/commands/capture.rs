@@ -74,9 +74,12 @@ pub async fn capture_structure(
         })
         .await?
     };
-    // 表格默认本地识别（快、不联网）；要 AI 时页面传 engine = ai
+    // 表格默认本地识别（快、不联网），公式下载了本地模型也先本地认；要 AI 时页面传 engine = ai
     if kind == "table" && engine.as_deref() != Some("ai") {
         return blocking(move || crate::ocr::table_local(&app, &image)).await;
+    }
+    if kind == "formula" {
+        return crate::ocr::formula_image(&app, image, engine.as_deref().unwrap_or("local")).await;
     }
     crate::ocr::structure_image(&app, &image, &kind).await
 }
@@ -130,45 +133,156 @@ fn selection_image(
     crate::imaging::crop_opaque(&shot.image, rect)
 }
 
-/// 原位识别出来的表格：每格的位置和样式，加上底图（字抹掉的选区）和原图在图片仓库里的编号
+/// 一块在选区图里的范围（像素）
+#[derive(Clone, Copy, serde::Serialize, serde::Deserialize)]
+pub struct RegionRect {
+    pub x: u32,
+    pub y: u32,
+    pub width: u32,
+    pub height: u32,
+}
+
+impl RegionRect {
+    fn of(b: &ocr::table::Box2) -> Self {
+        let (x, y, width, height) = ocr::regions::pixel_rect(b);
+        Self {
+            x,
+            y,
+            width,
+            height,
+        }
+    }
+
+    /// 从图里切出这一块（超出的部分不要）
+    fn crop(&self, image: &image::RgbaImage) -> AppResult<image::RgbaImage> {
+        let (w, h) = image.dimensions();
+        if self.x >= w || self.y >= h || self.width == 0 || self.height == 0 {
+            return Err(AppError::msg("识别范围不在图里"));
+        }
+        let (cw, ch) = (self.width.min(w - self.x), self.height.min(h - self.y));
+        Ok(image::imageops::crop_imm(image, self.x, self.y, cw, ch).to_image())
+    }
+}
+
+/// 原位识别出来的一张表：在选区图里的范围，每格的位置和样式（坐标是这块里的），字抹掉的底图（图片仓库里的编号）
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CaptureTable {
     pub table: ocr::table::LaidTable,
     pub background: String,
+    pub rect: RegionRect,
+}
+
+/// 选区里认出来的几张表，加上选区原图的编号（摆在旁边给用户对照）
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CaptureTables {
+    pub tables: Vec<CaptureTable>,
     pub source: String,
 }
 
-/// 截图界面里「识别表格」：本地认出表格，原位盖在原来的表格上（像截图翻译那样）。
-/// 两张图的编号以 `cap-<会话>-` 开头，截图结束时跟着冻结的画面一起清掉
+/// 截图界面里「识别表格」：本地认出选区里的每张表，原位盖在原来的表格上（像截图翻译那样）。
+/// 图片编号以 `cap-<会话>-` 开头，截图结束时跟着冻结的画面一起清掉
 #[tauri::command]
 pub async fn capture_table(
     app: AppHandle,
     session_id: u64,
     monitor_id: u64,
     rect: PhysicalRect,
-) -> AppResult<CaptureTable> {
+) -> AppResult<CaptureTables> {
     blocking(move || {
         let image = selection_image(&app, session_id, monitor_id, rect)?;
-        laid_table(&app, image, &format!("cap-{session_id}-"))
+        laid_tables(&app, image, &format!("cap-{session_id}-"))
     })
     .await
 }
 
-/// 认出表格、量好每格，底图和原图放进图片仓库（编号以 `prefix` 开头，跟着截图会话 / 贴图一起清掉）
-fn laid_table(app: &AppHandle, image: image::RgbaImage, prefix: &str) -> AppResult<CaptureTable> {
+/// 认出每张表、量好每格，底图和原图放进图片仓库（编号以 `prefix` 开头，跟着截图会话 / 贴图一起清掉）
+fn laid_tables(app: &AppHandle, image: image::RgbaImage, prefix: &str) -> AppResult<CaptureTables> {
     static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-    let (table, background) = ocr::table_layout(app, &image)?;
+    let placed = ocr::tables_layout(app, &image)?;
     let n = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    let (bg_id, src_id) = (format!("{prefix}table{n}-bg"), format!("{prefix}table{n}-src"));
     let st = state(app);
-    st.images.put(bg_id.clone(), std::sync::Arc::new(background));
-    st.images.put(src_id.clone(), std::sync::Arc::new(image));
-    Ok(CaptureTable {
-        table,
-        background: bg_id,
-        source: src_id,
+    let tables = placed
+        .into_iter()
+        .enumerate()
+        .map(|(i, t)| {
+            let id = format!("{prefix}table{n}-{i}-bg");
+            st.images.put(id.clone(), std::sync::Arc::new(t.background));
+            CaptureTable {
+                table: t.laid,
+                background: id,
+                rect: RegionRect::of(&t.rect),
+            }
+        })
+        .collect();
+    let source = format!("{prefix}table{n}-src");
+    st.images.put(source.clone(), std::sync::Arc::new(image));
+    Ok(CaptureTables { tables, source })
+}
+
+/// 「识别公式」要交给 AI 的一块：范围和它的底色、字色（原位显示时铺底、上字）
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FormulaRegion {
+    pub rect: RegionRect,
+    pub background: String,
+    pub color: String,
+}
+
+/// 选区里像公式的几块（表格不算），加上选区原图的编号
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FormulaRegions {
+    pub regions: Vec<FormulaRegion>,
+    pub source: String,
+}
+
+#[tauri::command]
+pub async fn capture_formula_regions(
+    app: AppHandle,
+    session_id: u64,
+    monitor_id: u64,
+    rect: PhysicalRect,
+) -> AppResult<FormulaRegions> {
+    blocking(move || {
+        let image = selection_image(&app, session_id, monitor_id, rect)?;
+        formula_regions(&app, image, &format!("cap-{session_id}-"))
     })
+    .await
+}
+
+fn formula_regions(
+    app: &AppHandle,
+    image: image::RgbaImage,
+    prefix: &str,
+) -> AppResult<FormulaRegions> {
+    static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let found = ocr::formula_regions(app, &image)?;
+    if found.is_empty() {
+        return Err(AppError::msg("图里没有认出公式"));
+    }
+    let regions = found
+        .iter()
+        .map(|b| {
+            let rect = RegionRect::of(b);
+            let (background, color) = rect
+                .crop(&image)
+                .map(|c| ocr::table::region_colors(&c))
+                .unwrap_or_else(|_| ocr::table::region_colors(&image));
+            FormulaRegion {
+                rect,
+                background,
+                color,
+            }
+        })
+        .collect();
+    let n = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let source = format!("{prefix}formula{n}-src");
+    state(app)
+        .images
+        .put(source.clone(), std::sync::Arc::new(image));
+    Ok(FormulaRegions { regions, source })
 }
 
 /// 选区的底色和字色（原位显示公式用），再把选区原图放进图片仓库（左边给用户对照）
@@ -528,24 +642,51 @@ pub async fn pin_detect_structure(app: AppHandle, label: String) -> AppResult<Op
     blocking(move || detect_structure(&app, &pin_image(&app, &label)?)).await
 }
 
-/// 贴图里的表格：认出来、量好每格，像截图里一样原位盖在图上能改（图片编号跟着贴图一起清）
+/// 贴图里的表格：认出每张表、量好每格，像截图里一样原位盖在图上能改（图片编号跟着贴图一起清）
 #[tauri::command]
-pub async fn pin_table(app: AppHandle, label: String) -> AppResult<CaptureTable> {
+pub async fn pin_table(app: AppHandle, label: String) -> AppResult<CaptureTables> {
     blocking(move || {
         let image = pin_image(&app, &label)?;
-        laid_table(&app, image, &format!("{label}-"))
+        laid_tables(&app, image, &format!("{label}-"))
     })
     .await
 }
 
-/// 贴图用 AI 认表格 / 公式（表格是 HTML，公式是 LaTeX + MathML）
+/// 贴图里像公式的几块（表格不算）
 #[tauri::command]
-pub async fn pin_structure(app: AppHandle, label: String, kind: String) -> AppResult<String> {
+pub async fn pin_formula_regions(app: AppHandle, label: String) -> AppResult<FormulaRegions> {
+    blocking(move || {
+        let image = pin_image(&app, &label)?;
+        formula_regions(&app, image, &format!("{label}-"))
+    })
+    .await
+}
+
+/// 贴图用 AI 认表格 / 公式（表格是 HTML，公式是 LaTeX）。给了 `rect` 就只认图里那一块。
+/// 公式下载了本地模型先本地认，`engine = ai` 时直接 AI
+#[tauri::command]
+pub async fn pin_structure(
+    app: AppHandle,
+    label: String,
+    kind: String,
+    rect: Option<RegionRect>,
+    engine: Option<String>,
+) -> AppResult<String> {
     let image = {
         let app = app.clone();
         let label = label.clone();
-        blocking(move || pin_image(&app, &label)).await?
+        blocking(move || {
+            let image = pin_image(&app, &label)?;
+            match rect {
+                Some(r) => r.crop(&image),
+                None => Ok(image),
+            }
+        })
+        .await?
     };
+    if kind == "formula" {
+        return crate::ocr::formula_image(&app, image, engine.as_deref().unwrap_or("local")).await;
+    }
     crate::ocr::structure_image(&app, &image, &kind).await
 }
 

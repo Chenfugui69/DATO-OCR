@@ -35,8 +35,12 @@ pub const OCR_JOB: &str = "ocr-job";
 pub const OCR_HISTORY_CHANGED: &str = "ocr-history-changed";
 /// PaddleOCR 引擎下载进度
 pub const OCR_ENGINE_DOWNLOAD: &str = "ocr-engine-download";
+/// 本地公式识别模型的下载进度（`ocr::latex::DownloadStatus`）
+pub const OCR_LATEX_DOWNLOAD: &str = "ocr-latex-download";
 
 pub const TOAST: &str = "toast";
+/// 本程序要截图了：开着毛玻璃的面板换成实心底（true）/ 换回来（false），见 `wm::GlassSnapshot`
+pub const GLASS_SNAPSHOT: &str = "glass-snapshot";
 pub const NAVIGATE: &str = "navigate";
 pub const TRANSLATE_REQUEST: &str = "translate-request";
 /// 鼠标在翻译面板外面按下了

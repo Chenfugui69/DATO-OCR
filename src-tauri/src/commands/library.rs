@@ -206,6 +206,20 @@ pub async fn ocr_paddle_remove(app: AppHandle) -> AppResult<()> {
     Ok(())
 }
 
+/// 下载安装本地公式识别模型（进度走 `ocr-latex-download` 事件）
+#[tauri::command]
+pub async fn ocr_latex_install(app: AppHandle) -> AppResult<()> {
+    ocr::latex::install(&app).await
+}
+
+/// 删掉本地公式识别模型
+#[tauri::command]
+pub async fn ocr_latex_remove(app: AppHandle) -> AppResult<()> {
+    tokio::task::spawn_blocking(move || ocr::latex::remove(&app))
+        .await
+        .map_err(|e| crate::error::AppError::msg(e.to_string()))?
+}
+
 #[tauri::command]
 pub async fn ocr_history(app: AppHandle, query: OcrQuery) -> AppResult<OcrPage> {
     state(&app).db.with(|c| ocr_repo::query(c, &query))

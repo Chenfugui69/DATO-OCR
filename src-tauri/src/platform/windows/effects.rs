@@ -49,7 +49,9 @@ use windows::Win32::System::WinRT::{
 };
 use windows::Win32::UI::WindowsAndMessaging::GetClientRect;
 use windows::UI::Composition::Desktop::DesktopWindowTarget;
-use windows::UI::Composition::{CompositionRoundedRectangleGeometry, Compositor, SpriteVisual};
+use windows::UI::Composition::{
+    CompositionBorderMode, CompositionRoundedRectangleGeometry, Compositor, SpriteVisual,
+};
 use windows_numerics::{Vector2, Vector3};
 
 struct Backdrop {
@@ -98,9 +100,9 @@ fn client_size(h: HWND) -> Vector2 {
     }
 }
 
-/// 背板比面板四周各缩进这么多（物理像素）。合成器的几何裁剪**没有抗锯齿**，圆角是一级一级的台阶；
-/// 页面画的面板圆角是抗锯齿的。两者一样大的话，面板边缘那圈半透明的像素外面会露出背板的台阶，
-/// 圆角看着有锯齿（用户报过）。缩进一点，台阶就整个藏在面板的色调底下了。
+/// 背板比面板四周各缩进这么多（物理像素）：背板的圆角裁剪打开了柔边（`CompositionBorderMode::Soft`，
+/// 默认是硬边、圆角一级一级的台阶），缩进一点让模糊的边缘整个落在页面画的面板（抗锯齿的圆角）里面，
+/// 不从面板边上透出来。
 const BACKDROP_INSET: f32 = 1.0;
 
 /// 把背板摆在 `offset` 起、`size` 大的范围里（已经是面板的范围），实际裁剪再往里缩一圈。
@@ -151,6 +153,8 @@ fn attach_backdrop(h: HWND, radius: f32) -> windows::core::Result<()> {
     // SAFETY: h 是本线程创建的存活窗口。isTopmost = false：挂在网页内容下面。
     let target = unsafe { interop.CreateDesktopWindowTarget(h, false)? };
     let visual = compositor.CreateSpriteVisual()?;
+    // 柔边：裁剪的边缘做抗锯齿。默认（继承到根上是硬边）圆角是一级一级的台阶
+    visual.SetBorderMode(CompositionBorderMode::Soft)?;
     visual.SetRelativeSizeAdjustment(Vector2 { X: 1.0, Y: 1.0 })?;
     visual.SetBrush(&compositor.CreateHostBackdropBrush()?)?;
     let geometry = compositor.CreateRoundedRectangleGeometry()?;
@@ -175,97 +179,34 @@ fn attach_backdrop(h: HWND, radius: f32) -> windows::core::Result<()> {
 
 // ───────────────────────── 窗口区域 ─────────────────────────
 //
-// 背板按圆角裁了，但只在屏幕上的合成里管用：抓屏（WGC，截图功能就是用它）抓到的画面里背板是整个
-// 矩形，圆角外面露出四个浅色的小方角（用户截图里看到的）。所以挂了背板的窗口，窗口区域本身也裁成
-// 圆角：圆角外面根本不属于这个窗口，屏幕上、抓屏里都一样。
+// 窗口区域（`SetWindowRgn`）只能整像素地裁，**没有抗锯齿**：以前为了让抓屏里背板也是圆角，把挂了背板的窗口
+// 区域裁成圆角，结果截图里面板四角一级一级的台阶（用户报过好几次）。现在窗口区域只用来"只保留窗口里的一块"
+// （`set_rect_region`，抽屉展开前的预留），不再裁圆角。
 //
-// 窗口区域可能同时被两边要求：页面 / 后端指定只保留一块（`set_rect_region`，抽屉的预留），背板要圆角。
-// 两样都记下来，每次按两者合起来重算一次。命令可能在非 UI 线程调，所以用锁不用 thread_local。
+// 抓屏（WGC）里背板会无视裁剪、画成整块矩形：本程序自己截图时，抓屏前先让面板换成页面自己画的实心底、
+// 把背板藏起来（`wm::GlassSnapshot`），冻结的画面里圆角全是页面画的、带抗锯齿。
+// 命令可能在非 UI 线程调，所以用锁不用 thread_local。
 
 /// 窗口里的一块：x, y, 宽, 高（物理像素，相对窗口左上角）
 type LocalRect = (i32, i32, i32, i32);
 /// 每个窗口当前要求保留的那一块；没有 = 整个窗口
 static REGION_RECT: parking_lot::Mutex<Option<HashMap<isize, LocalRect>>> =
     parking_lot::Mutex::new(None);
-/// 挂了背板的窗口：圆角半径（物理像素）、背板是不是只铺在窗口里指定的一块（`set_backdrop_rect`）
-static REGION_RADIUS: parking_lot::Mutex<Option<HashMap<isize, (u32, bool)>>> =
-    parking_lot::Mutex::new(None);
 
-/// 窗口区域的圆角比面板小这么多（物理像素）：弧线落在面板圆角外面一点，页面画的抗锯齿边缘整个留着，
-/// 只切掉角上那块方的。区域本身没有抗锯齿，一样大的话会把边缘那圈半透明像素切成台阶
-const REGION_RADIUS_SLACK: u32 = 2;
-
-/// 按记下的"保留哪一块"和"圆角多大"重设窗口区域。
-///
-/// 背板只铺在窗口里一小块、窗口又没指定保留哪一块（截图遮罩上工具条的毛玻璃）：圆角是那一小块的，
-/// 不是窗口的，窗口区域不裁圆角。
+/// 按记下的"保留哪一块"重设窗口区域
 fn apply_region(h: HWND) {
     let key = h.0 as isize;
     let rect = REGION_RECT.lock().as_ref().and_then(|m| m.get(&key).copied());
-    let radius = REGION_RADIUS
-        .lock()
-        .as_ref()
-        .and_then(|m| m.get(&key).copied())
-        .filter(|&(_, manual)| !manual || rect.is_some())
-        .map(|(r, _)| r.saturating_sub(REGION_RADIUS_SLACK))
-        .filter(|&r| r > 0);
     // SAFETY: h 是存活的本进程窗口。SetWindowRgn 成功后区域归系统所有，失败才由我们释放。
     unsafe {
-        let rgn = match (rect, radius) {
-            (None, None) => {
-                let _ = SetWindowRgn(h, None, true);
-                return;
-            }
-            (Some((x, y, w, hh)), None) => CreateRectRgn(x, y, x + w, y + hh),
-            (rect, Some(r)) => {
-                let (x, y, w, hh) = rect.unwrap_or_else(|| {
-                    let size = client_size(h);
-                    (0, 0, size.X as i32, size.Y as i32)
-                });
-                let d = (r * 2) as i32;
-                CreateRoundRectRgn(x, y, x + w + 1, y + hh + 1, d, d)
-            }
+        let Some((x, y, w, hh)) = rect else {
+            let _ = SetWindowRgn(h, None, true);
+            return;
         };
+        let rgn = CreateRectRgn(x, y, x + w, y + hh);
         if SetWindowRgn(h, Some(rgn), true) == 0 {
             let _ = DeleteObject(rgn.into());
         }
-    }
-}
-
-/// 每次都重设区域，不管半径变没变：`wm::set_glass` 挂背板之前会先把窗口区域清掉
-fn set_region_radius(h: HWND, radius: Option<u32>) {
-    // 锁只在这个块里拿着：apply_region 还要再拿一次
-    {
-        let mut map = REGION_RADIUS.lock();
-        let map = map.get_or_insert_with(HashMap::new);
-        let key = h.0 as isize;
-        match radius {
-            Some(r) => {
-                let manual = map.get(&key).is_some_and(|&(_, m)| m);
-                map.insert(key, (r, manual));
-            }
-            None => {
-                map.remove(&key);
-            }
-        }
-    }
-    apply_region(h);
-}
-
-/// 背板改成只铺一块 / 恢复铺满：窗口区域要不要裁圆角跟着变。
-fn set_region_manual(h: HWND, manual: bool) {
-    let changed = {
-        let mut map = REGION_RADIUS.lock();
-        match map.as_mut().and_then(|m| m.get_mut(&(h.0 as isize))) {
-            Some(entry) if entry.1 != manual => {
-                entry.1 = manual;
-                true
-            }
-            _ => false,
-        }
-    };
-    if changed {
-        apply_region(h);
     }
 }
 
@@ -276,7 +217,8 @@ pub fn set_backdrop(window: &WebviewWindow, radius: Option<u32>) -> bool {
     match radius {
         Some(r) => match attach_backdrop(h, r as f32) {
             Ok(()) => {
-                set_region_radius(h, Some(r));
+                // `wm::set_glass` 挂背板之前把窗口区域清掉了：要求过只保留一块的，重新设上
+                apply_region(h);
                 true
             }
             Err(err) => {
@@ -285,7 +227,7 @@ pub fn set_backdrop(window: &WebviewWindow, radius: Option<u32>) -> bool {
             }
         },
         None => {
-            set_region_radius(h, None);
+            apply_region(h);
             let removed = BACKDROPS.with(|b| b.borrow_mut().remove(&(h.0 as isize)));
             if removed.is_some() {
                 let off = BOOL(0);
@@ -308,14 +250,6 @@ pub fn set_backdrop(window: &WebviewWindow, radius: Option<u32>) -> bool {
 /// 页面正在指定背板范围（动画期间）时不动它。
 pub fn resize_backdrop(window: &WebviewWindow) -> bool {
     let Ok(h) = window.hwnd() else { return false };
-    // 圆角的窗口区域按新大小重裁（只保留一块的话那块是页面指定的，不跟着窗口变，重算也一样）
-    if REGION_RADIUS
-        .lock()
-        .as_ref()
-        .is_some_and(|m| m.contains_key(&(h.0 as isize)))
-    {
-        apply_region(h);
-    }
     let state = BACKDROPS.with(|b| {
         b.borrow()
             .get(&(h.0 as isize))
@@ -345,7 +279,6 @@ pub fn set_backdrop_rect(window: &WebviewWindow, rect: Option<(f32, f32, f32, f3
         Some(bd.geometry.clone())
     });
     let Some(geometry) = geometry else { return };
-    set_region_manual(h, rect.is_some());
     let (offset, size) = match rect {
         Some((x, y, w, hh)) => (
             Vector2 { X: x, Y: y },
@@ -659,7 +592,6 @@ pub fn set_round_region(window: &WebviewWindow, radius: u32) {
 }
 
 /// 把窗口限制在一个矩形里（物理像素，相对窗口左上角）：外面的部分不显示、点击直接穿过去。`None` = 整个窗口。
-/// 挂了毛玻璃背板的窗口，这一块按背板的圆角裁（见上面"窗口区域"）。
 pub fn set_rect_region(window: &WebviewWindow, rect: Option<(i32, i32, i32, i32)>) {
     let Ok(h) = window.hwnd() else { return };
     {

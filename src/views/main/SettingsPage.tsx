@@ -380,7 +380,12 @@ export function SettingsPage({ section }: { section: string | null }) {
                 onChange={(v) => set((d) => void (d.capture.toolbarStyle = v))}
               />
             </Row>
-            <FrameStyleRows name={t('settings.frame.captureName')} value={c.frame} onChange={(v) => set((d) => void (d.capture.frame = v))} />
+            <FrameStyleRows
+              name={t('settings.frame.captureName')}
+              value={c.frame}
+              onChange={(v) => set((d) => void (d.capture.frame = v))}
+              record={{ value: c.recordHandles ?? 'halfBar', onChange: (v) => set((d) => void (d.capture.recordHandles = v)) }}
+            />
             <Row title={t('settings.capture.magnifier')}>
               <Switch checked={c.showMagnifier} onChange={(v) => set((d) => void (d.capture.showMagnifier = v))} />
             </Row>
@@ -600,6 +605,7 @@ export function SettingsPage({ section }: { section: string | null }) {
             </Row>
             {/* 可下载的 PaddleOCR 引擎只有 Windows 版 */}
             {!isMac && <PaddleEngineRow status={info.data?.ocr} />}
+            <LatexModelRow status={info.data?.ocr} />
           </Group>
 
           <TranslateSettingsGroups settings={settings} set={set} />
@@ -992,6 +998,48 @@ function PaddleEngineRow({ status }: { status?: EngineStatus }) {
         </Button>
       ) : (
         <Button size="sm" loading={busy} disabled={!status?.avx || busy} onClick={() => void ocr.paddleInstall().catch(() => undefined)}>
+          {t('settings.ocr.download')}
+        </Button>
+      )}
+    </Row>
+  );
+}
+
+/** 本地公式识别模型：下载（带进度）/ 已安装可删除 / 这台电脑用不了 */
+function LatexModelRow({ status }: { status?: EngineStatus }) {
+  const { t } = useTranslation();
+  const qc = useQueryClient();
+  const [dl, setDl] = useState<PaddleDownload | null>(null);
+  useEvent('ocr-latex-download', (p) => {
+    setDl(p);
+    if (!p.stage) void qc.invalidateQueries({ queryKey: ['app-info'] });
+  });
+  const cur = dl ?? status?.latexDownload;
+  const busy = !!cur?.stage;
+  const size = Math.round((status?.latexSize ?? 0) / 1_000_000);
+  let desc = t('settings.ocr.latexDesc', { size });
+  if (status && !status.latexSupported) desc = t('settings.ocr.latexUnsupported');
+  else if (cur?.stage === 'downloading') desc = t('settings.ocr.paddleDownloading', { percent: Math.round((cur.progress ?? 0) * 100) });
+  else if (cur?.stage === 'extracting') desc = t('settings.ocr.paddleExtracting');
+  else if (cur?.error) desc = t('settings.ocr.paddleFailed', { error: cur.error });
+  else if (status?.latex) desc = t('settings.ocr.latexInstalled');
+  return (
+    <Row title={t('settings.ocr.latex')} desc={desc}>
+      {status?.latex && !busy ? (
+        <Button
+          size="sm"
+          variant="ghost"
+          onClick={() =>
+            void ocr
+              .latexRemove()
+              .then(() => qc.invalidateQueries({ queryKey: ['app-info'] }))
+              .catch(notify.error)
+          }
+        >
+          {t('settings.ocr.remove')}
+        </Button>
+      ) : (
+        <Button size="sm" loading={busy} disabled={!status?.latexSupported || busy} onClick={() => void ocr.latexInstall().catch(() => undefined)}>
           {t('settings.ocr.download')}
         </Button>
       )}

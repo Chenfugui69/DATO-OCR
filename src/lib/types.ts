@@ -275,9 +275,11 @@ export interface FrameStyle {
   /** corners = 只画四个角 */
   style: 'solid' | 'dashed' | 'dotted' | 'corners';
   radius: number;
-  /** 四条边中间的拖柄：bar = 小圆条，dot = 小圆点（四个角一直是圆点） */
-  handles: 'bar' | 'dot';
+  /** 四条边中间的拖柄：bar = 小圆条，halfBar = 半圆条（只露出框外的一半），dot = 小圆点（四个角一直是圆点） */
+  handles: HandleStyle;
 }
+
+export type HandleStyle = 'bar' | 'halfBar' | 'dot';
 
 export interface CaptureSettings {
   maskOpacity: number;
@@ -298,6 +300,8 @@ export interface CaptureSettings {
   /** 截图时自动识别画面里的二维码 / 条码 */
   autoScanCodes: boolean;
   /** 识别出的表格 / 公式盖在原处之后原图怎么看：side = 摆在选区左边 | toggle = 小条上点按钮切换 */
+  /** 录屏（录制准备）时选区框的拖柄，和截图的分开设 */
+  recordHandles: HandleStyle;
   inplaceOriginal: 'side' | 'toggle';
   snapThreshold: number;
   rightClick: 'none' | 'exit' | 'cancelSelection';
@@ -351,6 +355,11 @@ export interface EngineStatus {
   /** PaddleOCR 已下载 */
   paddle: boolean;
   paddleDownload: PaddleDownload;
+  /** 本地公式识别：这台电脑能不能用、下载了没有、要下多少字节、下载进度 */
+  latexSupported: boolean;
+  latex: boolean;
+  latexSize: number;
+  latexDownload: PaddleDownload;
 }
 
 /** PaddleOCR 引擎下载进度 */
@@ -673,6 +682,8 @@ export interface AiSettings {
   providers: AiProvider[];
   /** 服务商id/模型名 */
   defaultModel: string;
+  /** 识别表格 / 公式（AI 看图）用的模型，`服务商id/模型名`；空 = 跟默认模型一样 */
+  visionModel: string;
   systemPrompt: string;
   temperature: number;
   maxTokens: number;
@@ -898,13 +909,35 @@ export interface LaidCell {
   align: 'left' | 'center' | 'right';
 }
 
+/** 一块在选区图里的范围（物理像素） */
+export interface RegionRect {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+/** 原位识别出来的一张表。格子的坐标都是这张表所在那块（`rect`）里的物理像素 */
 export interface CaptureTable {
   table: { width: number; height: number; rows: number; cols: number; cells: LaidCell[] };
-  /** 字抹掉的底图、选区原图（图片仓库里的编号，用 shotUrl 取）；自己画的表没有底图 */
+  /** 字抹掉的底图（图片仓库里的编号，用 shotUrl 取，和 `rect` 一样大）；自己画的表没有底图 */
   background: string;
-  source: string;
-  /** 自己画的表（AI 认出的行列和原位的格子对不上时）：铺在哪（选区图的物理像素）、线用什么颜色 */
+  /** 这张表在选区图里的范围 */
+  rect: RegionRect;
+  /** 自己画的表（AI 认出的行列和原位的格子对不上时）：铺在哪、线用什么颜色 */
   plain?: { x: number; y: number; width: number; height: number; line: string };
+}
+
+/** 选区里认出来的几张表（几张表、表和公式在一起时分开认），加上选区原图（摆在旁边对照） */
+export interface CaptureTables {
+  tables: CaptureTable[];
+  source: string;
+}
+
+/** 选区里像公式的几块（表格不算）：范围、底色、字色，加上选区原图 */
+export interface FormulaRegions {
+  regions: { rect: RegionRect; background: string; color: string }[];
+  source: string;
 }
 
 /** 选区的底色、字色和原图（原位显示公式用） */

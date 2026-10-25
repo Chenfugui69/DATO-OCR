@@ -14,6 +14,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import { useEvent } from '@/lib/events';
+import { useGlassSnapshot } from '@/lib/glassSnapshot';
 import { ai, clipboard, ocr, system, translate } from '@/lib/ipc';
 import { useSettings, useSettingsStore } from '@/lib/settings';
 import { assetUrl, isMac, modKey } from '@/lib/platform';
@@ -55,6 +56,7 @@ interface Preview {
 }
 
 export default function PanelView() {
+  useGlassSnapshot();
   const { t } = useTranslation();
   const qc = useQueryClient();
   useLiveInvalidation();

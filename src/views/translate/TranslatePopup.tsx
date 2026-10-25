@@ -24,6 +24,7 @@ import { flushSync } from 'react-dom';
 import { useTranslation } from 'react-i18next';
 
 import { useEvent } from '@/lib/events';
+import { useGlassSnapshot } from '@/lib/glassSnapshot';
 import { isMac } from '@/lib/platform';
 import { ai, system, translate } from '@/lib/ipc';
 import { useSettings, useSettingsStore } from '@/lib/settings';
@@ -174,6 +175,7 @@ function dragHandle(e: React.PointerEvent<HTMLElement>, move: (ev: PointerEvent)
 
 export default function TranslatePopup() {
   const { t } = useTranslation();
+  useGlassSnapshot();
   const settings = useSettings();
   const popup = settings?.translate.popup;
   const blur = !!popup?.blur;
@@ -909,6 +911,9 @@ html[data-view='translate'], html[data-view='translate'] body { background: tran
    macOS 的系统材质自己就是浅色的，不用垫 */
 html:not([data-platform='mac'])[data-theme='light'] .pop-shell.is-blur {
   --pop-hi: rgba(252,252,254,calc(0.55 + var(--pop-alpha) * 0.45)); --pop-lo: rgba(236,236,241,calc(0.55 + var(--pop-alpha) * 0.45)); }
+/* 本程序截图的那一刻（Windows）：系统背板藏起来、色调换成不透明，抓到的面板全是页面画的（圆角带抗锯齿），见 useGlassSnapshot */
+html[data-snapshot] .pop-shell.is-blur { --pop-alpha: 1 !important; }
+html[data-snapshot] .pop-shell.is-blur, html[data-snapshot] .pop-shell.is-blur * { transition: none !important; }
 .pop-shell.is-drawer { flex-direction: column; }
 
 .pop-pane { position: relative; min-width: 0; min-height: 0; display: flex; flex-direction: column; }

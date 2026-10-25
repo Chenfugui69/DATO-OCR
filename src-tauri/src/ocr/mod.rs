@@ -9,7 +9,9 @@ pub mod paddle;
 pub mod rapid;
 pub mod formula;
 pub mod glyphs;
+pub mod latex;
 pub mod reflow;
+pub mod regions;
 pub mod table;
 pub mod xlsx;
 
@@ -84,6 +86,11 @@ pub struct EngineStatus {
     /// PaddleOCR 已下载
     pub paddle: bool,
     pub paddle_download: paddle::DownloadStatus,
+    /// 本地公式识别：这台电脑能不能用、下载了没有、要下多少字节、下载进度
+    pub latex_supported: bool,
+    pub latex: bool,
+    pub latex_size: u64,
+    pub latex_download: paddle::DownloadStatus,
 }
 
 impl OcrService {
@@ -107,6 +114,10 @@ pub fn status(app: &AppHandle) -> EngineStatus {
         avx: supports_avx(),
         paddle: paddle::engine_dir(&st.paths).is_some(),
         paddle_download,
+        latex_supported: latex::supported(),
+        latex: latex::installed_dir(&st.paths).is_some(),
+        latex_size: latex::download_size(),
+        latex_download: latex::download_status(),
     }
 }
 
@@ -425,7 +436,35 @@ pub async fn structure(
             .await
             .map_err(|e| AppError::msg(e.to_string()))?;
     }
+    if kind == "formula" {
+        return formula_image(app, image, engine).await;
+    }
     structure_image(app, &image, kind).await
+}
+
+/// 认公式：下载了本地模型、又不是点名要 AI 的，先本地认（几百毫秒、不联网）；本地没认出来再交给 AI，
+/// AI 也不行就报本地的错。没有本地模型直接 AI
+pub async fn formula_image(
+    app: &AppHandle,
+    image: image::RgbaImage,
+    engine: &str,
+) -> AppResult<String> {
+    if engine == "ai" || !latex::installed(app) {
+        return structure_image(app, &image, "formula").await;
+    }
+    let local = {
+        let (app, image) = (app.clone(), image.clone());
+        tokio::task::spawn_blocking(move || latex::recognize(&app, &image))
+            .await
+            .map_err(|e| AppError::msg(e.to_string()))?
+    };
+    match local {
+        Ok(latex) => Ok(latex),
+        Err(err) => {
+            tracing::warn!("本地公式识别没认出来，换 AI：{err}");
+            structure_image(app, &image, "formula").await.map_err(|_| err)
+        }
+    }
 }
 
 /// 本地识别表格：识字一次，再按表格线 / 文字对齐排成格子，给 HTML（和 AI 的格式一样）。
@@ -445,25 +484,120 @@ pub fn table_local(app: &AppHandle, image: &image::RgbaImage) -> AppResult<Strin
     Ok(table::to_html(&rows))
 }
 
-/// 截图界面里原位显示的表格：认出网格、量出每格的位置和样式，再给一张把字抹掉的底图
-pub fn table_layout(
-    app: &AppHandle,
-    image: &image::RgbaImage,
-) -> AppResult<(table::LaidTable, image::RgbaImage)> {
+/// 原位显示的一张表：在图里的范围，每格的位置和样式（坐标是这块里的），字抹掉的底图（和这块一样大）
+pub struct PlacedTable {
+    pub rect: table::Box2,
+    pub laid: table::LaidTable,
+    pub background: image::RgbaImage,
+}
+
+/// 截图界面里原位显示的表格：识字一次，把图切成一块块（几张表、表和公式分开），每块是表格的认出网格、
+/// 量出每格的位置和样式，再给一张把字抹掉的底图。一张表都没认出来时报错
+pub fn tables_layout(app: &AppHandle, image: &image::RgbaImage) -> AppResult<Vec<PlacedTable>> {
     let started = Instant::now();
     let upscale = image.width() * image.height() < 1_500_000;
     let result = recognize(app, image, None, upscale)?;
-    let grid =
-        table::grid(image, &result.blocks).ok_or_else(|| AppError::msg("图里没有认出表格"))?;
-    let laid = table::layout(image, &grid);
-    let background = table::erase_grid(image, &grid);
+    let tables = find_tables(image, &result.blocks);
+    if tables.is_empty() {
+        return Err(AppError::msg("图里没有认出表格"));
+    }
     tracing::info!(
-        rows = laid.rows,
-        cols = laid.cols,
+        tables = tables.len(),
+        cells = tables.iter().map(|t| t.laid.cells.len()).sum::<usize>(),
         elapsed_ms = started.elapsed().as_millis() as u64,
         "原位识别表格"
     );
-    Ok((laid, background))
+    Ok(tables)
+}
+
+/// 图里的一张张表（见 `regions`）：只认是表格的块，公式、标题、说明文字不管。
+/// 切不开（底色是渐变、图片）或者每块都不像表时，整张图照旧当一张表认一次
+pub fn find_tables(image: &image::RgbaImage, blocks: &[reflow::OcrBlock]) -> Vec<PlacedTable> {
+    let mut out = Vec::new();
+    for r in regions::split(image, blocks) {
+        if r.blocks.is_empty() {
+            continue;
+        }
+        let crop = r.crop(image);
+        let Some(grid) = table::grid(&crop, &r.blocks) else {
+            continue;
+        };
+        // 矩阵、几行对齐的算式也能排成格子：没有框又像公式的不算表
+        if !r.ruled && formula::looks_like_formula(&crop, &r.blocks) {
+            continue;
+        }
+        out.push(PlacedTable {
+            rect: r.rect,
+            laid: table::layout(&crop, &grid),
+            background: table::erase_grid(&crop, &grid),
+        });
+    }
+    if out.is_empty() {
+        if let Some(grid) = table::grid(image, blocks) {
+            out.push(PlacedTable {
+                rect: table::Box2 {
+                    x0: 0.0,
+                    y0: 0.0,
+                    x1: f64::from(image.width()),
+                    y1: f64::from(image.height()),
+                },
+                laid: table::layout(image, &grid),
+                background: table::erase_grid(image, &grid),
+            });
+        }
+    }
+    out
+}
+
+/// 「识别公式」要交给 AI 的几块：图里像公式的块（挨着的几行算式并成一块），表格不算。
+/// 一块都看不出像公式时：图里有表格就交其余有字的块，没有表格就整张图交（和以前一样）
+pub fn formula_regions(app: &AppHandle, image: &image::RgbaImage) -> AppResult<Vec<table::Box2>> {
+    let pixels = image.width() * image.height();
+    let result = recognize(app, image, None, pixels < 1_500_000)?;
+    Ok(find_formulas(image, &result.blocks))
+}
+
+pub fn find_formulas(image: &image::RgbaImage, blocks: &[reflow::OcrBlock]) -> Vec<table::Box2> {
+    let whole = table::Box2 {
+        x0: 0.0,
+        y0: 0.0,
+        x1: f64::from(image.width()),
+        y1: f64::from(image.height()),
+    };
+    let mut heights: Vec<f64> = blocks
+        .iter()
+        .filter(|b| !b.text.trim().is_empty())
+        .map(|b| table::bounds(b).height())
+        .collect();
+    heights.sort_by(f64::total_cmp);
+    let lh = heights.get(heights.len() / 2).copied().unwrap_or(16.0);
+    let mut formulas: Vec<table::Box2> = Vec::new();
+    let mut others = Vec::new();
+    let mut tables = 0;
+    let mut after_formula = false;
+    for r in regions::split(image, blocks) {
+        let crop = r.crop(image);
+        let math = !r.blocks.is_empty() && formula::looks_like_formula(&crop, &r.blocks);
+        let grid = !r.blocks.is_empty() && table::grid(&crop, &r.blocks).is_some();
+        if r.ruled || (grid && !math) {
+            tables += 1;
+        } else if math {
+            // 紧接着上一块公式、隔得不远（几行算式）：并成一块
+            match formulas.last_mut() {
+                Some(last) if after_formula && r.rect.y0 - last.y1 <= lh => {
+                    *last = last.union(&r.rect);
+                }
+                _ => formulas.push(r.rect),
+            }
+        } else if !r.blocks.is_empty() {
+            others.push(r.rect);
+        }
+        after_formula = math && !r.ruled;
+    }
+    if formulas.is_empty() {
+        return if tables == 0 { vec![whole] } else { others };
+    }
+    formulas
 }
 
 /// 同上，直接给图（截图界面里框好区域就识别，不经过识字窗口）

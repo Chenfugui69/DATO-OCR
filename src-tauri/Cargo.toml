@@ -1,6 +1,6 @@
 [package]
 name = "chenocr"
-version = "0.3.3"
+version = "0.3.4"
 description = "DATO OCR · 截图 · 识字 · 翻译 · 剪贴板 · AI"
 authors = ["DATO OCR"]
 license = "GPL-3.0-only"
@@ -75,6 +75,12 @@ aes = "0.8"
 cbc = "0.1"
 # PaddleOCR 引擎包是 7z（LZMA2 + BCJ2）。纯 Rust 解压（Apache-2.0）
 sevenz-rust2 = { version = "0.23", default-features = false, features = ["util"] }
+# 本地公式识别（可选下载的模型）跑 ONNX 模型用。只开动态加载：ONNX Runtime 的动态库跟模型一起由用户在设置里下载，
+# 构建时不下载、程序里也不带
+ort = { version = "=2.0.0-rc.13", default-features = false, features = ["std", "load-dynamic", "api-22"] }
+# 解 ONNX Runtime 的安装包（Mac 的 tgz、Windows zip 里的 dll），核对 zip 里文件的 CRC
+flate2 = "1"
+crc32fast = "1"
 # 读系统的界面语言（界面语言设成「跟随系统」时用）
 sys-locale = "0.3"
 imap = "2.4"

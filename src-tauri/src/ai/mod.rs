@@ -493,7 +493,9 @@ pub async fn complete_with_image(
     max_tokens: u32,
 ) -> AppResult<String> {
     let encoded = encode_image(image)?;
-    complete_inner(app, None, system, user, vec![encoded], max_tokens).await
+    // 设置里单独选了看图识别用的模型就用它（没选或者已经删掉了，退回默认模型）
+    let model = state(app).settings.read().ai.vision_model.clone();
+    complete_inner(app, Some(&model), system, user, vec![encoded], max_tokens).await
 }
 
 async fn complete_inner(
@@ -523,8 +525,12 @@ async fn complete_inner(
         images,
     }];
     let mut out = String::new();
+    let started = std::time::Instant::now();
+    // 第一个字什么时候来的：慢的话分得清是等模型开口（中转、大模型），还是字多写得久
+    let mut first: Option<u64> = None;
     let collect = |piece: Piece| {
         if let Piece::Text(t) = piece {
+            first.get_or_insert_with(|| started.elapsed().as_millis() as u64);
             out.push_str(t);
         }
     };
@@ -552,6 +558,13 @@ async fn complete_inner(
             .await?
         }
     }
+    tracing::info!(
+        model = %params.model,
+        first_text_ms = first,
+        total_ms = started.elapsed().as_millis() as u64,
+        chars = out.chars().count(),
+        "AI 单次回答"
+    );
     Ok(out)
 }
 

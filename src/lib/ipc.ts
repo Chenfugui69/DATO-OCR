@@ -2,7 +2,7 @@
 
 import { Channel, invoke } from '@tauri-apps/api/core';
 
-import type { AiContext, AppInfo, CaptureIntent, CaptureTable, ChatEvent, ChatRequest, ClipDetail, ClipGroup, ClipPage, ClipQuery, ClipStats, DavDevice, EditorAction, EditorDoc, EngineStatus, FinishAction, HotkeyStatus, MailCodeSettings, MailCodesStatus, McpStatus, MediaAccess, MediaKind, RecordEditInfo, OcrJob, RegionStyle, SmartSuggestion, OcrPage, Permissions, PhysicalRect, PinInfo, PinText, ScannedCode, ProviderInfo, RegionTranslation, SecretsStatus, SessionInfo, Settings, ShotPage, SyncStatus, UpdateStatus, ShotQuery, TranslateRequest, TranslateResult, VisualCapabilities,
+import type { AiContext, AppInfo, CaptureIntent, CaptureTables, ChatEvent, ChatRequest, ClipDetail, ClipGroup, ClipPage, ClipQuery, ClipStats, DavDevice, EditorAction, EditorDoc, EngineStatus, FinishAction, FormulaRegions, HotkeyStatus, MailCodeSettings, MailCodesStatus, McpStatus, MediaAccess, MediaKind, RecordEditInfo, OcrJob, RegionStyle, SmartSuggestion, OcrPage, Permissions, PhysicalRect, PinInfo, PinText, RegionRect, ScannedCode, ProviderInfo, RegionTranslation, SecretsStatus, SessionInfo, Settings, ShotPage, SyncStatus, UpdateStatus, ShotQuery, TranslateRequest, TranslateResult, VisualCapabilities,
   PopItem,
 } from './types';
 
@@ -98,8 +98,10 @@ export const capture = {
   /** 选区里看起来有没有表格（格子线） */
   detectStructure: (sessionId: number, monitorId: number, rect: PhysicalRect) =>
     call<'table' | 'formula' | null>('capture_detect_structure', { sessionId, monitorId, rect }),
-  /** 本地认出表格，原位显示用：每格的位置、样式，字抹掉的底图和原图 */
-  table: (sessionId: number, monitorId: number, rect: PhysicalRect) => call<CaptureTable>('capture_table', { sessionId, monitorId, rect }),
+  /** 本地认出选区里的每张表，原位显示用：每格的位置、样式，字抹掉的底图和原图 */
+  table: (sessionId: number, monitorId: number, rect: PhysicalRect) => call<CaptureTables>('capture_table', { sessionId, monitorId, rect }),
+  /** 选区里像公式的几块（表格不算），每块分别交给 AI */
+  formulaRegions: (sessionId: number, monitorId: number, rect: PhysicalRect) => call<FormulaRegions>('capture_formula_regions', { sessionId, monitorId, rect }),
   /** 选区的底色、字色和原图（原位显示公式用） */
   regionStyle: (sessionId: number, monitorId: number, rect: PhysicalRect) => call<RegionStyle>('capture_region_style', { sessionId, monitorId, rect }),
 };
@@ -155,10 +157,13 @@ export const pin = {
   ocr: (label: string, translate: boolean) => call<void>('pin_ocr', { label, translate }),
   /** 贴图看起来是表格还是公式（右下角的小提示） */
   detectStructure: (label: string) => call<'table' | 'formula' | null>('pin_detect_structure', { label }),
-  /** 贴图里的表格：认出来、量好每格（原位盖在图上像 Excel 一样改） */
-  table: (label: string) => call<CaptureTable>('pin_table', { label }),
-  /** AI 认表格 / 公式 */
-  structure: (label: string, kind: 'table' | 'formula') => call<string>('pin_structure', { label, kind }),
+  /** 贴图里的每张表：认出来、量好每格（原位盖在图上像 Excel 一样改） */
+  table: (label: string) => call<CaptureTables>('pin_table', { label }),
+  /** 贴图里像公式的几块（表格不算） */
+  formulaRegions: (label: string) => call<FormulaRegions>('pin_formula_regions', { label }),
+  /** AI 认表格 / 公式；给了 `rect` 只认图里那一块 */
+  structure: (label: string, kind: 'table' | 'formula', rect?: RegionRect, engine: 'local' | 'ai' = 'local') =>
+    call<string>('pin_structure', { label, kind, rect: rect ?? null, engine }),
   regionStyle: (label: string) => call<RegionStyle>('pin_region_style', { label }),
 };
 
@@ -277,6 +282,9 @@ export const ocr = {
   /** 下载安装 PaddleOCR 引擎，进度看 `ocr-engine-download` 事件 */
   paddleInstall: () => call<void>('ocr_paddle_install'),
   paddleRemove: () => call<void>('ocr_paddle_remove'),
+  /** 本地公式识别模型：下载（进度走 `ocr-latex-download`）/ 删掉 */
+  latexInstall: () => call<void>('ocr_latex_install'),
+  latexRemove: () => call<void>('ocr_latex_remove'),
   history: (query: { keyword?: string; offset: number; limit: number }) => call<OcrPage>('ocr_history', { query }),
   openRecord: (id: number) => call<void>('ocr_open_record', { id }),
   deleteRecord: (id: number) => call<void>('ocr_delete_record', { id }),
@@ -378,4 +386,6 @@ export const system = {
   backdrop: (rect: { x: number; y: number; width: number; height: number } | null, ms = 0) => call<void>('window_backdrop', { rect, ms }),
   /** 毛玻璃背板整体淡入（略放大）/ 淡出（略缩小，停在透明）：面板出场、收起时和页面动画一起走 */
   backdropFade: (visible: boolean, ms: number) => call<void>('window_backdrop_fade', { visible, ms }),
+  /** 截图前换好实心底、画完了一帧（见 `useGlassSnapshot`） */
+  glassSnapshotReady: () => call<void>('window_glass_snapshot_ready'),
 };

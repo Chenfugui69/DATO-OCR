@@ -7,5 +7,9 @@
 	<true/>
 	<key>com.apple.security.device.camera</key>
 	<true/>
+	<!-- 本地公式识别要加载用户在设置里下载的 ONNX Runtime 动态库（微软编译、不是我们签的名），
+	     hardened runtime 默认只许加载同一个开发者签名的库 -->
+	<key>com.apple.security.cs.disable-library-validation</key>
+	<true/>
 </dict>
 </plist>

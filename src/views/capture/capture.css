@@ -159,6 +159,51 @@ html[data-view='capture'] #root {
   width: 6px;
   height: 22px;
 }
+/*
+ * 半圆条：整根小圆条的外半边（平的一边落在框线中线上，圆的一边朝外），框线里侧那一半和选区里的内容都不挡。
+ * 四个角的圆点同样把框线中线以内的那一角裁掉
+ */
+.cap-handle--half {
+  --in: 50%;
+  --out: 50%;
+  clip-path: var(--clip);
+}
+.cap-handle--half.cap-handle--h {
+  height: 4px;
+  transform: translate(-50%, calc(-50% + var(--sy) * 50%));
+}
+.cap-handle--half.cap-handle--v {
+  width: 4px;
+  transform: translate(calc(-50% + var(--sx) * 50%), -50%);
+}
+.cap-handle--half[data-h='n'] {
+  border-radius: 999px 999px 0 0;
+  --clip: inset(-4px -4px 0 -4px);
+}
+.cap-handle--half[data-h='s'] {
+  border-radius: 0 0 999px 999px;
+  --clip: inset(0 -4px -4px -4px);
+}
+.cap-handle--half[data-h='w'] {
+  border-radius: 999px 0 0 999px;
+  --clip: inset(-4px 0 -4px -4px);
+}
+.cap-handle--half[data-h='e'] {
+  border-radius: 0 999px 999px 0;
+  --clip: inset(-4px -4px -4px 0);
+}
+.cap-handle--half[data-h='nw'] {
+  --clip: polygon(-4px -4px, calc(100% + 4px) -4px, calc(100% + 4px) var(--in), var(--in) var(--in), var(--in) calc(100% + 4px), -4px calc(100% + 4px));
+}
+.cap-handle--half[data-h='ne'] {
+  --clip: polygon(-4px -4px, calc(100% + 4px) -4px, calc(100% + 4px) calc(100% + 4px), var(--out) calc(100% + 4px), var(--out) var(--in), -4px var(--in));
+}
+.cap-handle--half[data-h='sw'] {
+  --clip: polygon(-4px -4px, var(--in) -4px, var(--in) var(--out), calc(100% + 4px) var(--out), calc(100% + 4px) calc(100% + 4px), -4px calc(100% + 4px));
+}
+.cap-handle--half[data-h='se'] {
+  --clip: polygon(var(--out) -4px, calc(100% + 4px) -4px, calc(100% + 4px) calc(100% + 4px), -4px calc(100% + 4px), -4px var(--out), var(--out) var(--out));
+}
 
 /* 截图工具条的完成按钮跟选区框同一个颜色 */
 .cap-root .an-btn--primary,
@@ -916,6 +961,13 @@ html[data-view='capture'] #root {
   place-items: center;
   width: 28px;
   height: 28px;
+}
+/* 认出了几张表 / 几个公式 */
+.cap-trbar__count {
+  padding: 0 6px 0 4px;
+  color: var(--cn-label-tertiary);
+  font: 500 12px/1 var(--cn-font-sans);
+  white-space: nowrap;
 }
 .cap-trbar__sep {
   width: 0.5px;

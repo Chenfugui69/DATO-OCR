@@ -2,7 +2,7 @@
 
 import { useTranslation } from 'react-i18next';
 
-import type { FrameStyle } from '@/lib/types';
+import type { FrameStyle, HandleStyle } from '@/lib/types';
 import { ColorPicker } from '@/ui/ColorPicker';
 import { Segmented, Slider } from '@/ui/controls';
 
@@ -12,10 +12,26 @@ const PRESETS = ['accent', '#FFFFFF', '#FF3B30', '#FF9500', '#FFCC00', '#34C759'
 
 const cssColor = (c: string) => (c === 'accent' ? 'var(--cn-accent)' : c);
 
-export function FrameStyleRows({ name, value, onChange }: { name: string; value: FrameStyle; onChange: (next: FrameStyle) => void }) {
+export function FrameStyleRows({
+  name,
+  value,
+  onChange,
+  record,
+}: {
+  name: string;
+  value: FrameStyle;
+  onChange: (next: FrameStyle) => void;
+  /** 录屏时的拖柄（和截图的分开设）：给了就在拖柄那行下面多一行 */
+  record?: { value: HandleStyle; onChange: (next: HandleStyle) => void };
+}) {
   const { t } = useTranslation();
   const patch = (p: Partial<FrameStyle>) => onChange({ ...value, ...p });
   const custom = value.color !== 'accent' && !PRESETS.includes(value.color.toUpperCase());
+  const handleOptions: { value: HandleStyle; label: string }[] = [
+    { value: 'bar', label: t('settings.frame.handleBar') },
+    { value: 'halfBar', label: t('settings.frame.handleHalfBar') },
+    { value: 'dot', label: t('settings.frame.handleDot') },
+  ];
   return (
     <>
       <Row title={t('settings.frame.color', { name })}>
@@ -58,16 +74,14 @@ export function FrameStyleRows({ name, value, onChange }: { name: string; value:
           onChange={(v) => patch({ style: v })}
         />
       </Row>
-      <Row title={t('settings.frame.handles', { name })}>
-        <Segmented
-          value={value.handles ?? 'bar'}
-          options={[
-            { value: 'bar', label: t('settings.frame.handleBar') },
-            { value: 'dot', label: t('settings.frame.handleDot') },
-          ]}
-          onChange={(v) => patch({ handles: v })}
-        />
+      <Row title={t('settings.frame.handles', { name })} desc={t('settings.frame.handlesDesc')}>
+        <Segmented value={value.handles ?? 'bar'} options={handleOptions} onChange={(v) => patch({ handles: v })} />
       </Row>
+      {record && (
+        <Row title={t('settings.frame.recordHandles')} desc={t('settings.frame.recordHandlesDesc')}>
+          <Segmented value={record.value} options={handleOptions} onChange={record.onChange} />
+        </Row>
+      )}
       <Row title={t('settings.frame.radius', { name })}>
         <span className="set-row__value cn-numeric">{value.radius}px</span>
         <Slider value={value.radius} min={0} max={24} onChange={(v) => patch({ radius: v })} />

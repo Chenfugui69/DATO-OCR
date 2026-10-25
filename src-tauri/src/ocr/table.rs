@@ -37,7 +37,8 @@ fn luminance(img: &RgbaImage) -> Vec<i32> {
         .collect()
 }
 
-/// 一串"是不是线像素"里最长的一段（中间断开不超过 2 个像素的接起来算）
+/// 一串"是不是线像素"里最长的一段（中间断开不超过 5 个像素的接起来算：竖线和横线交叉的地方，
+/// 两边也是深色、不算线像素，线粗到 4 像素（Retina 屏上 2pt 的线）时一断就是 4 个像素）
 fn longest_run(marks: impl Iterator<Item = bool>) -> u32 {
     let (mut best, mut cur, mut gap) = (0u32, 0u32, 0u32);
     for m in marks {
@@ -45,7 +46,7 @@ fn longest_run(marks: impl Iterator<Item = bool>) -> u32 {
             cur += 1 + gap;
             gap = 0;
             best = best.max(cur);
-        } else if cur > 0 && gap < 2 {
+        } else if cur > 0 && gap < 5 {
             gap += 1;
         } else {
             cur = 0;
@@ -135,7 +136,7 @@ impl Box2 {
     }
 }
 
-fn bounds(b: &OcrBlock) -> Box2 {
+pub(super) fn bounds(b: &OcrBlock) -> Box2 {
     let xs = b.quad.iter().map(|p| p[0]);
     let ys = b.quad.iter().map(|p| p[1]);
     Box2 {
@@ -618,7 +619,7 @@ fn join_words(words: impl Iterator<Item = String>) -> String {
         out.push_str(&w);
     }
     if out.chars().any(is_cjk) {
-        return out;
+        return ascii_brackets(&out);
     }
     out.chars()
         .map(|c| match c {
@@ -630,6 +631,33 @@ fn join_words(words: impl Iterator<Item = String>) -> String {
             _ => c,
         })
         .collect()
+}
+
+/// 中文里括着的全是半角字（"预算（$）"）：原文多半是半角括号，换回 "预算 ($)"
+fn ascii_brackets(text: &str) -> String {
+    let chars: Vec<char> = text.chars().collect();
+    let mut out = String::new();
+    let mut i = 0;
+    while i < chars.len() {
+        if chars[i] == '（' {
+            if let Some(len) = chars[i + 1..].iter().position(|&c| c == '）') {
+                let inner = &chars[i + 1..i + 1 + len];
+                if len > 0 && inner.iter().all(|c| c.is_ascii()) {
+                    if out.chars().last().is_some_and(|c| !c.is_whitespace()) {
+                        out.push(' ');
+                    }
+                    out.push('(');
+                    out.extend(inner);
+                    out.push(')');
+                    i += len + 2;
+                    continue;
+                }
+            }
+        }
+        out.push(chars[i]);
+        i += 1;
+    }
+    out
 }
 
 /// 表格转成 HTML（和 AI 回答的格式一样，页面同一套代码显示）
@@ -1541,6 +1569,13 @@ mod tests {
         let t = build(&img, &blocks).unwrap();
         assert_eq!(t.len(), 2);
         assert_eq!(t[1][1].text, "first line second line");
+    }
+
+    #[test]
+    fn fullwidth_brackets_around_latin_in_chinese_become_ascii() {
+        assert_eq!(super::ascii_brackets("预算（$）"), "预算 ($)");
+        assert_eq!(super::ascii_brackets("面积（平方公里）"), "面积（平方公里）");
+        assert_eq!(super::ascii_brackets("单位 （km）"), "单位 (km)");
     }
 
     #[test]

@@ -16,11 +16,20 @@ import { defaultToolOptions, type Tool, type ToolOptions } from '@/views/annotat
 
 import type { Point, Rect } from './geometry';
 import type { TranslatedBlock } from '@/views/annotate/translateLayer';
-import type { CaptureTable, RegionStyle } from '@/lib/types';
+import type { CaptureTables, RegionRect } from '@/lib/types';
 import type { StructuredState } from '@/views/ocr/StructuredResult';
 
-/** 截图界面里的表格 / 公式识别：本地认出的表格带原位显示用的版面，公式带选区的底色、字色 */
-export type CaptureStructured = StructuredState & { table?: CaptureTable; region?: RegionStyle };
+/** 原位显示的一个公式：在选区图里的范围、底色、字色和 AI 认出的 LaTeX */
+export interface PlacedFormula {
+  rect: RegionRect;
+  background: string;
+  color: string;
+  text: string;
+}
+
+/** 截图界面里的表格 / 公式识别：选区里的每张表（原位显示用的版面），或每个公式（各自的范围和底色、字色）。
+ *  `source` 是选区原图（摆在旁边对照） */
+export type CaptureStructured = StructuredState & { tables?: CaptureTables; formulas?: { items: PlacedFormula[]; source: string } };
 
 export type Phase = 'idle' | 'detect' | 'pressing' | 'selecting' | 'editing' | 'passive' | 'longshot' | 'longshot-other' | 'gif' | 'gif-other';
 

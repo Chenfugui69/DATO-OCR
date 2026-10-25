@@ -20,7 +20,7 @@ import { useElementSize } from '@/lib/hooks';
 import { capture, ocr, system } from '@/lib/ipc';
 import { shotUrl } from '@/lib/platform';
 import { useSettings } from '@/lib/settings';
-import type { CaptureTable, LaidCell, RegionStyle } from '@/lib/types';
+import type { CaptureTable, CaptureTables, LaidCell, RegionRect } from '@/lib/types';
 import { Spinner } from '@/ui/controls';
 import { notify, Tooltip } from '@/ui/overlays';
 import { parseTable, splitFormula } from '@/views/ocr/StructuredResult';
@@ -28,6 +28,7 @@ import { tableGrid, toExcelText, toHtmlTable, toMarkdown, type Cell } from '@/vi
 
 import type { Rect } from './geometry';
 import { latexToMathml } from './formulaRender';
+import type { PlacedFormula } from './store';
 import { layoutTable, mergeTable } from './tableLayout';
 import { TableSheet } from './TableSheet';
 
@@ -49,9 +50,9 @@ function toRows(cells: LaidCell[], texts: string[]): Cell[][] {
 /** AI 重新认的表格（HTML）套回原位的格子：行列对得上就只换字；对不上返回 null */
 export const mergeAiTable = (laid: CaptureTable, html: string) => mergeTable(laid, parseTable(html));
 
-/** AI 认出的表格（HTML）按原来的范围画到原位（见 `layoutTable`） */
-export const aiTableLayout = (html: string, selection: Rect, colors: { background: string; color: string } | undefined, base?: CaptureTable) =>
-  layoutTable(parseTable(html), selection, colors, base);
+/** AI 认出的表格（HTML）按原来的范围画到原位（见 `layoutTable`）；`area` 是这张表在选区图里的范围 */
+export const aiTableLayout = (html: string, area: RegionRect, colors: { background: string; color: string } | undefined, base?: CaptureTable) =>
+  layoutTable(parseTable(html), area, colors, base);
 
 // ───────────────────────── 选区上方的小条 ─────────────────────────
 
@@ -125,7 +126,15 @@ function OriginalBeside({ source, selection, s, x }: { source: string; selection
   );
 }
 
-export function TableInPlace({
+/** 几张表连着导出：表和表之间空一行 */
+const GAP_ROW: Cell[] = [{ text: '', header: false, rowSpan: 1, colSpan: 1 }];
+
+/**
+ * 选区里认出来的每张表各自原位盖在原来的位置上（几张表、表和公式在一起时分开认，公式、标题这些不盖），
+ * 共用选区上方的一条操作条：复制 / 导出是全部的表（表和表之间空一行），AI 重新识别每张表各认各的。
+ * 只想要其中一张：在那张表上框选、右键复制
+ */
+export function TablesInPlace({
   data,
   selection,
   s,
@@ -135,7 +144,7 @@ export function TableInPlace({
   onClose,
   onDone,
 }: {
-  data: CaptureTable;
+  data: CaptureTables;
   selection: Rect;
   s: number;
   viewport: Viewport;
@@ -147,37 +156,48 @@ export function TableInPlace({
   onDone: () => void;
 }) {
   const { t } = useTranslation();
-  const cells = data.table.cells;
-  const [texts, setTexts] = useState(() => cells.map((c) => c.text));
-  useEffect(() => setTexts(cells.map((c) => c.text)), [cells]);
+  const initial = () => data.tables.map((x) => x.table.cells.map((c) => c.text));
+  const [texts, setTexts] = useState(initial);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => setTexts(initial()), [data]);
   const [original, setOriginal] = useState(false);
   const side = useOriginalSide(selection, s, viewport);
   const sel = css(selection, s);
   const done = useDoneToast(onDone);
 
-  const rows = useMemo(() => toRows(cells, texts), [cells, texts]);
-  const grid = useMemo(() => tableGrid(rows), [rows]);
-  const copyTable = () => void capture.writeRich(toExcelText(grid), toHtmlTable(rows)).then(() => done('copied')).catch(notify.error);
-  const copyMarkdown = () => void capture.writeText(toMarkdown(grid)).then(() => done('copied')).catch(notify.error);
+  const all = useMemo(() => data.tables.map((x, i) => toRows(x.table.cells, texts[i] ?? [])), [data, texts]);
+  const copyTable = () =>
+    void capture
+      .writeRich(all.map((rows) => toExcelText(tableGrid(rows))).join('\n\n'), all.map((rows) => toHtmlTable(rows)).join('<br>'))
+      .then(() => done('copied'))
+      .catch(notify.error);
+  const copyMarkdown = () =>
+    void capture
+      .writeText(all.map((rows) => toMarkdown(tableGrid(rows))).join('\n\n'))
+      .then(() => done('copied'))
+      .catch(notify.error);
   const exportXlsx = () => {
     onDone();
     void ocr
-      .exportXlsx(rows)
+      .exportXlsx(all.flatMap((rows, i) => (i ? [GAP_ROW, ...rows] : rows)))
       .then((path) => path && void system.toast('success', t('ocr.structured.exported')).catch(() => {}))
       .catch(notify.error);
   };
 
   return (
     <>
-      <TableSheet
-        data={data}
-        s={s}
-        texts={texts}
-        onTexts={setTexts}
-        busy={busy}
-        hidden={side === null && original}
-        style={{ left: sel.x, top: sel.y, width: sel.width, height: sel.height }}
-      />
+      {data.tables.map((table, i) => (
+        <TableSheet
+          key={i}
+          data={table}
+          s={s}
+          texts={texts[i] ?? []}
+          onTexts={(next) => setTexts((prev) => prev.map((v, j) => (j === i ? next : v)))}
+          busy={busy}
+          hidden={side === null && original}
+          style={{ left: sel.x + table.rect.x / s, top: sel.y + table.rect.y / s, width: table.rect.width / s, height: table.rect.height / s }}
+        />
+      ))}
       {side !== null && <OriginalBeside source={data.source} selection={selection} s={s} x={side} />}
       <StructuredBar selection={selection} s={s} viewport={viewport}>
         {side === null && (
@@ -187,7 +207,8 @@ export function TableInPlace({
             <span className="cap-trbar__sep" />
           </>
         )}
-        <BarButton icon={Copy} label={t('capture.structured.copy')} tip={t('ocr.structured.copyTableTip')} disabled={busy} onClick={copyTable} />
+        {data.tables.length > 1 && <span className="cap-trbar__count">{t('capture.structured.tableCount', { count: data.tables.length })}</span>}
+        <BarButton icon={Copy} label={t('capture.structured.copy')} tip={t(data.tables.length > 1 ? 'capture.structured.copyAllTip' : 'ocr.structured.copyTableTip')} disabled={busy} onClick={copyTable} />
         <BarButton icon={FileSpreadsheet} tip={t('ocr.structured.exportXlsxTip')} disabled={busy} onClick={exportXlsx} />
         <BarButton icon={FileText} tip={t('ocr.structured.copyMarkdownTip')} disabled={busy} onClick={copyMarkdown} />
         <span className="cap-trbar__sep" />
@@ -279,9 +300,80 @@ function LatexEditor({
   );
 }
 
-export function FormulaInPlace({
-  text,
-  region,
+/** 一个公式原位摆在它那块上：铺底色，按块的大小摆公式（宽不超过九成二、高不超过八成），点一下改 LaTeX */
+function FormulaPiece({
+  latex,
+  initial,
+  box,
+  background,
+  color,
+  busy,
+  peek,
+  editing,
+  onPick,
+}: {
+  latex: string;
+  /** 模型给的 MathML（LaTeX 转不了时先用它） */
+  initial: string;
+  box: CssRect;
+  background: string;
+  color: string;
+  busy: boolean;
+  peek: boolean;
+  editing: boolean;
+  onPick: () => void;
+}) {
+  const { t } = useTranslation();
+  // 显示用的 MathML：按现在的 LaTeX 本地转；转不了（写到一半、有错）就留着上一次转好的，最开始用模型给的
+  const fresh = useMemo(() => latexToMathml(latex), [latex]);
+  const lastGood = useRef<string>('');
+  if (fresh) lastGood.current = fresh;
+  const mathml = fresh ?? (lastGood.current || initial);
+  // 按 24px 摆一遍量大小，再放大 / 缩小到撑满这块
+  const mathRef = useRef<HTMLDivElement>(null);
+  const [size, setSize] = useState(24);
+  useLayoutEffect(() => {
+    const el = mathRef.current;
+    if (!el) return;
+    el.style.fontSize = '24px';
+    const r = el.getBoundingClientRect();
+    if (!r.width || !r.height) return;
+    const k = Math.min((box.width * 0.92) / r.width, (box.height * 0.8) / r.height);
+    const next = Math.min(200, Math.max(8, 24 * k));
+    el.style.fontSize = `${next}px`;
+    setSize(next);
+  }, [mathml, latex, box.width, box.height]);
+  return (
+    <div
+      className={clsx('cap-inplace cap-inplace--formula', busy && 'cap-inplace--busy')}
+      data-peek={peek || undefined}
+      data-editing={editing || undefined}
+      style={{ left: box.x, top: box.y, width: box.width, height: box.height, background, color }}
+      title={editing ? undefined : t('capture.structured.editLatex')}
+      onPointerDown={(e) => {
+        e.stopPropagation();
+        onPick();
+      }}
+      onDoubleClick={stop}
+    >
+      {mathml ? (
+        // 已经过 sanitizeMathml：只剩 MathML 标签和排版属性
+        <div ref={mathRef} className="cap-inplace__math" style={{ fontSize: size }} dangerouslySetInnerHTML={{ __html: mathml }} />
+      ) : (
+        <div ref={mathRef} className="cap-inplace__math cap-inplace__math--latex" style={{ fontSize: size }}>
+          {latex}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * 选区里像公式的每一块各自原位显示（表格、文字不盖），共用选区上方的操作条：复制是全部公式（一个一段），
+ * 点哪个公式就在它边上出 LaTeX 输入框
+ */
+export function FormulasInPlace({
+  data,
   selection,
   s,
   viewport,
@@ -290,8 +382,7 @@ export function FormulaInPlace({
   onClose,
   onDone,
 }: {
-  text: string;
-  region: RegionStyle;
+  data: { items: PlacedFormula[]; source: string };
   selection: Rect;
   s: number;
   viewport: Viewport;
@@ -302,75 +393,62 @@ export function FormulaInPlace({
   onDone: () => void;
 }) {
   const { t } = useTranslation();
-  const parsed = useMemo(() => splitFormula(text), [text]);
-  const [latex, setLatex] = useState(parsed.latex);
-  useEffect(() => setLatex(parsed.latex), [parsed]);
-  // 显示用的 MathML：按现在的 LaTeX 本地转；转不了（写到一半、有错）就留着上一次转好的，最开始用模型给的
-  const fresh = useMemo(() => latexToMathml(latex), [latex]);
-  const lastGood = useRef<string>('');
-  if (fresh) lastGood.current = fresh;
-  const mathml = fresh ?? (lastGood.current || parsed.mathml);
-  const [editing, setEditing] = useState(false);
+  const parsed = useMemo(() => data.items.map((f) => splitFormula(f.text)), [data]);
+  const [latexes, setLatexes] = useState(() => parsed.map((p) => p.latex));
+  useEffect(() => setLatexes(parsed.map((p) => p.latex)), [parsed]);
+  /** 正在改哪个公式的 LaTeX */
+  const [editing, setEditing] = useState<number | null>(null);
   const [original, setOriginal] = useState(false);
   const side = useOriginalSide(selection, s, viewport);
   const [editorH, setEditorH] = useState(44);
   const sel = css(selection, s);
   const done = useDoneToast(onDone);
-  const showEditor = editing && !original;
+  const peek = side === null && original;
+  const showEditor = editing !== null && !original && editing < data.items.length;
 
-  // 按 24px 摆一遍量大小，再放大 / 缩小到撑满选区（宽不超过九成二、高不超过八成）
-  const mathRef = useRef<HTMLDivElement>(null);
-  const [size, setSize] = useState(24);
-  useLayoutEffect(() => {
-    const el = mathRef.current;
-    if (!el) return;
-    el.style.fontSize = '24px';
-    const r = el.getBoundingClientRect();
-    if (!r.width || !r.height) return;
-    const k = Math.min((sel.width * 0.92) / r.width, (sel.height * 0.8) / r.height);
-    const next = Math.min(200, Math.max(8, 24 * k));
-    el.style.fontSize = `${next}px`;
-    setSize(next);
-  }, [mathml, latex, sel.width, sel.height]);
+  /** 一块在屏幕上的范围（截图坐标，给输入框定位）和 CSS 范围 */
+  const areaOf = (i: number): Rect => {
+    const r = data.items[i]!.rect;
+    return { x: selection.x + r.x, y: selection.y + r.y, width: r.width, height: r.height };
+  };
+  const mathmls = latexes.map((l, i) => latexToMathml(l) ?? parsed[i]?.mathml ?? '');
+  const joined = (v: string[]) => v.map((x) => x.trim()).filter(Boolean).join('\n\n');
   const copy = (value: string) => void capture.writeText(value).then(() => done('copied')).catch(notify.error);
+  // 输入框在公式上面、伸出了选区的上沿：操作条再往上让开
+  const editorTop = showEditor ? css(areaOf(editing), s) : null;
+  const lift = editorTop && editorAbove(editorTop, editorH) ? Math.max(0, sel.y - (editorTop.y - editorH - 6)) : 0;
 
   return (
     <>
-      <div
-        className={clsx('cap-inplace cap-inplace--formula', busy && 'cap-inplace--busy')}
-        data-peek={(side === null && original) || undefined}
-        data-editing={editing || undefined}
-        style={{ left: sel.x, top: sel.y, width: sel.width, height: sel.height, background: region.background, color: region.color }}
-        title={editing ? undefined : t('capture.structured.editLatex')}
-        onPointerDown={(e) => {
-          e.stopPropagation();
-          setEditing(true);
-        }}
-        onDoubleClick={stop}
-      >
-        {mathml ? (
-          // 已经过 sanitizeMathml：只剩 MathML 标签和排版属性
-          <div ref={mathRef} className="cap-inplace__math" style={{ fontSize: size }} dangerouslySetInnerHTML={{ __html: mathml }} />
-        ) : (
-          <div ref={mathRef} className="cap-inplace__math cap-inplace__math--latex" style={{ fontSize: size }}>
-            {latex}
-          </div>
-        )}
-      </div>
-      {side !== null && <OriginalBeside source={region.source} selection={selection} s={s} x={side} />}
+      {data.items.map((f, i) => (
+        <FormulaPiece
+          key={i}
+          latex={latexes[i] ?? ''}
+          initial={parsed[i]?.mathml ?? ''}
+          box={css(areaOf(i), s)}
+          background={f.background}
+          color={f.color}
+          busy={busy}
+          peek={peek}
+          editing={editing === i}
+          onPick={() => setEditing(i)}
+        />
+      ))}
+      {side !== null && <OriginalBeside source={data.source} selection={selection} s={s} x={side} />}
       {showEditor && (
         <LatexEditor
-          value={latex}
-          invalid={!fresh && !!latex.trim()}
-          selection={selection}
+          key={editing}
+          value={latexes[editing] ?? ''}
+          invalid={!latexToMathml(latexes[editing] ?? '') && !!latexes[editing]?.trim()}
+          selection={areaOf(editing)}
           s={s}
           viewport={viewport}
-          onChange={setLatex}
+          onChange={(v) => setLatexes((prev) => prev.map((x, j) => (j === editing ? v : x)))}
           onHeight={setEditorH}
-          onClose={() => setEditing(false)}
+          onClose={() => setEditing(null)}
         />
       )}
-      <StructuredBar selection={selection} s={s} viewport={viewport} lift={showEditor && editorAbove(sel, editorH) ? editorH + 6 : 0}>
+      <StructuredBar selection={selection} s={s} viewport={viewport} lift={lift}>
         {side === null && (
           <>
             <BarButton icon={Sigma} label={t('capture.structured.formula')} tip={t('capture.structured.showResult')} on={!original} onClick={() => setOriginal(false)} />
@@ -378,9 +456,10 @@ export function FormulaInPlace({
             <span className="cap-trbar__sep" />
           </>
         )}
-        <BarButton icon={Copy} label="LaTeX" tip={t('ocr.structured.copyLatexTip')} disabled={busy || !latex.trim()} onClick={() => copy(latex.trim())} />
-        <BarButton icon={Copy} label="MathML" tip={t('ocr.structured.copyMathmlTip')} disabled={busy || !mathml} onClick={() => copy(mathml)} />
-        <BarButton icon={PenLine} tip={t('capture.structured.editLatex')} on={editing} disabled={busy} onClick={() => setEditing((v) => !v)} />
+        {data.items.length > 1 && <span className="cap-trbar__count">{t('capture.structured.formulaCount', { count: data.items.length })}</span>}
+        <BarButton icon={Copy} label="LaTeX" tip={t('ocr.structured.copyLatexTip')} disabled={busy || !joined(latexes)} onClick={() => copy(joined(latexes))} />
+        <BarButton icon={Copy} label="MathML" tip={t('ocr.structured.copyMathmlTip')} disabled={busy || !joined(mathmls)} onClick={() => copy(joined(mathmls))} />
+        <BarButton icon={PenLine} tip={t('capture.structured.editLatex')} on={editing !== null} disabled={busy} onClick={() => setEditing((v) => (v === null ? 0 : null))} />
         <span className="cap-trbar__sep" />
         {busy ? (
           <span className="cap-trbar__spin" aria-label={t('capture.structured.runningFormula')}>

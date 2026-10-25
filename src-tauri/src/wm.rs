@@ -271,6 +271,93 @@ pub fn track_glass(window: &WebviewWindow) {
     });
 }
 
+/// 本程序自己截图时，开着毛玻璃的面板（划词面板、剪贴板面板）换成页面自己画的实心底。
+///
+/// Windows 的抓屏（WGC）里，系统模糊背板会无视圆角裁剪、画成整块矩形，冻结的画面里面板四角露出方块；
+/// 窗口区域裁圆角又只能整像素地裁，四角是一级一级的台阶。所以抓屏前：通知面板把色调调成不透明
+/// （`glass-snapshot` 事件，页面换好、画完了回 `window_glass_snapshot_ready`），再把背板藏起来，
+/// 抓到的面板就全是页面画的，圆角带抗锯齿。抓完（这个值丢掉时）换回去。
+/// macOS 的系统材质抓屏里是对的，什么都不做。
+pub struct GlassSnapshot {
+    app: AppHandle,
+    windows: Vec<WebviewWindow>,
+}
+
+/// 页面回了"已经换好"的窗口
+static SNAPSHOT_READY: parking_lot::Mutex<Vec<String>> = parking_lot::Mutex::new(Vec::new());
+static SNAPSHOT_WAKE: parking_lot::Condvar = parking_lot::Condvar::new();
+
+/// 页面换好实心底、画完了一帧（`window_glass_snapshot_ready`）
+pub fn glass_snapshot_ready(label: &str) {
+    SNAPSHOT_READY.lock().push(label.to_string());
+    SNAPSHOT_WAKE.notify_all();
+}
+
+impl GlassSnapshot {
+    /// 抓屏之前调；没有开着的毛玻璃面板（或者不是 Windows）时返回 None，不耽误时间
+    pub fn begin(app: &AppHandle) -> Option<Self> {
+        if !cfg!(windows) {
+            return None;
+        }
+        let labels: Vec<String> = GLASS
+            .lock()
+            .as_ref()
+            .map(|m| m.keys().cloned().collect())
+            .unwrap_or_default();
+        let windows: Vec<WebviewWindow> = labels
+            .iter()
+            .filter_map(|l| app.get_webview_window(l))
+            .filter(|w| w.is_visible().unwrap_or(false))
+            .collect();
+        if windows.is_empty() {
+            return None;
+        }
+        SNAPSHOT_READY.lock().clear();
+        for w in &windows {
+            let _ = app.emit_to(w.label(), events::GLASS_SNAPSHOT, true);
+        }
+        // 等页面换好（最多 150ms：页面卡住了也不能让截图一直等）
+        let deadline = std::time::Instant::now() + std::time::Duration::from_millis(150);
+        let mut ready = SNAPSHOT_READY.lock();
+        while !windows.iter().all(|w| ready.iter().any(|l| l == w.label())) {
+            if SNAPSHOT_WAKE.wait_until(&mut ready, deadline).timed_out() {
+                tracing::debug!("面板没及时换成实心底，照常截图");
+                break;
+            }
+        }
+        drop(ready);
+        // 背板藏起来（要在 UI 线程上动）；合成器下一帧才生效，再等两帧
+        let (tx, rx) = std::sync::mpsc::channel();
+        let ws = windows.clone();
+        let _ = app.run_on_main_thread(move || {
+            for w in &ws {
+                platform::fade_backdrop(w, false, 0);
+            }
+            let _ = tx.send(());
+        });
+        let _ = rx.recv_timeout(std::time::Duration::from_millis(100));
+        std::thread::sleep(std::time::Duration::from_millis(34));
+        Some(Self {
+            app: app.clone(),
+            windows,
+        })
+    }
+}
+
+impl Drop for GlassSnapshot {
+    fn drop(&mut self) {
+        let ws = std::mem::take(&mut self.windows);
+        for w in &ws {
+            let _ = self.app.emit_to(w.label(), events::GLASS_SNAPSHOT, false);
+        }
+        let _ = self.app.run_on_main_thread(move || {
+            for w in &ws {
+                platform::fade_backdrop(w, true, 0);
+            }
+        });
+    }
+}
+
 /// 提示条、划词按钮这类小浮层显示出来时让抓屏看得到：远程控制、屏幕共享的对面看到的画面是抓屏
 /// 抓来的，一直排除的话对面根本看不见它们（远程用划词时按钮"不出现"就是这个原因）。
 /// 正在截图 / 长截图 / 录 GIF 时不放开，免得被拍进去；收起时调 `conceal_floating`。

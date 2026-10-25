@@ -281,8 +281,8 @@ export default function OcrView() {
     (kind: StructuredKind, wanted?: 'local' | 'ai') => {
       if (!job) return;
       structJob.current = job.id;
-      // 表格默认本地识别；公式只有 AI
-      const engine = kind === 'formula' ? 'ai' : (wanted ?? 'local');
+      // 表格默认本地识别；公式下载了本地模型也先本地认（没下载的 Rust 那边直接交给 AI）
+      const engine = wanted ?? 'local';
       setStructured({ kind, engine, status: 'running' });
       ocr.structure(job.id, kind, engine).then(
         (text) => structJob.current === job.id && setStructured({ kind, engine, status: 'done', text }),

@@ -421,6 +421,8 @@ pub struct CaptureSettings {
     pub auto_scan_codes: bool,
     /// 识别出的表格 / 公式盖在原处之后，原图怎么看：side = 直接摆在选区左边（放不下就右边）| toggle = 上方小条上点按钮切换
     pub inplace_original: String,
+    /// 录屏（录制准备）时选区框的拖柄，和截图的分开设：bar | halfBar（默认，不挡要录的画面）| dot
+    pub record_handles: String,
     pub snap_threshold: u32,
     /// none（默认，右键什么都不做）| exit | cancelSelection
     pub right_click: String,
@@ -476,6 +478,7 @@ impl Default for CaptureSettings {
             element_level: "element".into(),
             auto_scan_codes: true,
             inplace_original: "side".into(),
+            record_handles: "halfBar".into(),
             snap_threshold: 8,
             right_click: "none".into(),
             toolbar_tools: owned(&TOOLBAR_TOOLS),
@@ -712,7 +715,8 @@ pub struct FrameStyle {
     pub style: String,
     /// 圆角（逻辑像素）。只影响框的样子，截下来的图仍是矩形
     pub radius: u32,
-    /// 四条边中间的拖柄：bar = 小圆条，dot = 小圆点（四个角一直是圆点）
+    /// 四条边中间的拖柄：bar = 小圆条 | halfBar = 半圆条（只露出框外的那一半，不挡选区里的内容）
+    /// | dot = 小圆点（四个角一直是圆点，半圆条时也只露出框外的部分）
     pub handles: String,
 }
 
@@ -738,7 +742,7 @@ impl FrameStyle {
         ) {
             self.style = "solid".into();
         }
-        if !matches!(self.handles.as_str(), "bar" | "dot") {
+        if !matches!(self.handles.as_str(), "bar" | "halfBar" | "dot") {
             self.handles = "bar".into();
         }
         let hex = self.color.strip_prefix('#').unwrap_or("");
@@ -803,6 +807,9 @@ pub struct AiSettings {
     pub providers: Vec<AiProvider>,
     /// 默认模型，格式 `服务商id/模型名`；空 = 第一个可用的
     pub default_model: String,
+    /// 识别表格 / 公式（AI 看图）用的模型，格式同上；空 = 跟默认模型一样。看图认表格、公式不需要大模型，
+    /// 单独选个快的，几秒就认完（大模型经中转常要十几二十秒）
+    pub vision_model: String,
     pub system_prompt: String,
     pub temperature: f64,
     /// 0 = 用服务商的默认值
@@ -924,6 +931,7 @@ impl Default for AiSettings {
         Self {
             providers: Vec::new(),
             default_model: String::new(),
+            vision_model: String::new(),
             system_prompt,
             temperature: 0.7,
             max_tokens: 0,
@@ -1503,6 +1511,9 @@ impl Settings {
         c.ocr_mask_opacity = c.ocr_mask_opacity.clamp(0.0, 0.9);
         if !matches!(c.instant_action.as_str(), "select" | "copy" | "save") {
             c.instant_action = "select".into();
+        }
+        if !matches!(c.record_handles.as_str(), "bar" | "halfBar" | "dot") {
+            c.record_handles = "halfBar".into();
         }
         if !matches!(c.inplace_original.as_str(), "side" | "toggle") {
             c.inplace_original = "side".into();
