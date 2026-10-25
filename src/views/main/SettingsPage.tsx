@@ -29,6 +29,7 @@ import {
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
+import { UI_LANGUAGE_NAMES, UI_LANGUAGES } from '@/i18n';
 import { formatBytes, relativeTime } from '@/lib/format';
 import { useEvent } from '@/lib/events';
 import { clipboard, ocr, record, system, update as updater } from '@/lib/ipc';
@@ -259,8 +260,7 @@ export function SettingsPage({ section }: { section: string | null }) {
                 value={settings.general.language}
                 options={[
                   { value: 'system', label: t('settings.general.languageSystem') },
-                  { value: 'zh-CN', label: '简体中文' },
-                  { value: 'en-US', label: 'English' },
+                  ...UI_LANGUAGES.map((l) => ({ value: l, label: UI_LANGUAGE_NAMES[l] })),
                 ]}
                 onChange={(v) => set((d) => void (d.general.language = v))}
               />
@@ -371,7 +371,7 @@ export function SettingsPage({ section }: { section: string | null }) {
             </div>
             <Row title={t('settings.capture.toolbarStyle')} desc={t('settings.capture.toolbarStyleDesc')}>
               <Segmented
-                value={c.toolbarStyle === 'frosted' || c.toolbarStyle === 'flat' ? c.toolbarStyle : 'glass'}
+                value={c.toolbarStyle === 'frosted' || c.toolbarStyle === 'glass' ? c.toolbarStyle : 'flat'}
                 options={[
                   { value: 'glass', label: t('settings.capture.toolbarStyleOpt.glass') },
                   { value: 'frosted', label: t('settings.capture.toolbarStyleOpt.frosted') },

@@ -636,8 +636,10 @@ html[data-view='capture'] #root {
 }
 
 /* 磨砂玻璃工具条：底图是冻结画面缩小模糊后的图（CaptureView 的 glassOf），整屏大小铺开、按工具条自己的位置
-   （--gx / --gy，和它的 translate 一样）往回挪，露出来的正好是它底下那块画面。纯页面画的，拖动时每一帧都在 */
-.cap-root[data-toolbar-style='frosted'][data-glass-ready] :is(.an-toolbar:not(.rec-toolbar, .rec-bar), .an-subtoolbar, .an-groupbar) {
+   （--gx / --gy，和它的 translate 一样）往回挪，露出来的正好是它底下那块画面。纯页面画的，拖动时每一帧都在。
+   录制的工具条、录制栏、移动把手也一样：录制时露出来的是真实桌面、底图是开始截图时的画面，
+   工具条大多在选区外面，那里一般不怎么变，模糊之后看不出差别 */
+.cap-root[data-toolbar-style='frosted'][data-glass-ready] :is(.an-toolbar, .an-subtoolbar, .an-groupbar, .rec-move) {
   background-image:
     linear-gradient(color-mix(in srgb, var(--cn-glass-bg-thin) 55%, transparent), color-mix(in srgb, var(--cn-glass-bg-thin) 55%, transparent)),
     var(--cap-glass);
@@ -1388,15 +1390,23 @@ html[data-view='capture'] #root {
   touch-action: none;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
 }
+.an-flat .rec-move {
+  background: var(--cn-bg-elevated);
+  backdrop-filter: none;
+  box-shadow:
+    0 1px 3px rgba(0, 0, 0, 0.18),
+    0 0 0 0.5px var(--cn-separator);
+}
 .rec-move--dragging {
   cursor: grabbing;
   color: var(--cn-accent);
 }
-/* 准备时选区右下角的提示：格式、麦克风、声音 */
+/* 准备时选区底部正中的提示：格式、麦克风、声音 */
 .rec-hints {
   position: absolute;
   display: flex;
   gap: 4px;
+  transform: translateX(-50%);
   pointer-events: none;
 }
 .rec-hint {
@@ -1432,6 +1442,18 @@ html[data-view='capture'] #root {
   text-align: center;
   cursor: grab;
   touch-action: none;
+}
+/* 摆位置：框能拖，描一圈强调色、轻轻呼吸，看得出现在可以拖 */
+.rec-camera--placing {
+  cursor: grab;
+  outline: 2px solid var(--cn-accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--cn-accent) 35%, transparent);
+  animation: rec-camera-pulse 1.4s ease-in-out infinite;
+}
+@keyframes rec-camera-pulse {
+  50% {
+    box-shadow: 0 0 0 6px color-mix(in srgb, var(--cn-accent) 18%, transparent);
+  }
 }
 .rec-camera:active {
   cursor: grabbing;
@@ -1496,11 +1518,12 @@ html[data-view='capture'] #root {
   pointer-events: none;
   z-index: 2;
 }
+/* 进度条 / 播放时间的样子：压在选区框和拖柄上面（贴着选区的下沿，框粗一点就被盖住了） */
 .rec-progress-preview {
   position: absolute;
-  height: 4px;
+  z-index: 6;
   pointer-events: none;
-  background: rgba(0, 0, 0, 0.18);
+  background: rgba(0, 0, 0, 0.22);
 }
 .rec-progress-preview i {
   display: block;
@@ -1508,6 +1531,7 @@ html[data-view='capture'] #root {
 }
 .rec-time-preview {
   position: absolute;
+  z-index: 6;
   padding: 2px 8px;
   border-radius: 6px;
   pointer-events: none;

@@ -1,8 +1,9 @@
 // 录制准备 / 录制中的几样东西：
 // - 效果预览：准备时（还没开始录）就在选区里按设置画出鼠标高亮、轨迹、点击涟漪、按着的鼠标键、滚动箭头和
 //   动图的进度条 —— 用户选了什么效果当场就看得到，不用录了才知道。录的时候这些由 Rust 画进每一帧（屏幕上不画）
-// - 演示工具：录制工具条左边一组画图工具（箭头、矩形、画笔……），准备时、录的时候都能在选区里画，画的会录进去。
-//   录的时候只有选着工具，选区里才接鼠标；没选工具时鼠标照常操作下面的程序
+// - 演示工具：录制工具条左边一组画图工具（箭头、矩形、画笔……），准备时、录的时候都能画，选区里的会录进去，
+//   画出选区的部分淡一点（录不进去）。选着工具时整块屏都接鼠标（哪里都能画），右键 / Esc / 再点一下工具放下；
+//   没选工具时鼠标照常操作下面的程序
 // - 录的时候选区里有标注、开着按键显示：遮罩要能被录进去（没有的时候不能，全屏录制时工具条压在选区里）
 
 import clsx from 'clsx';
@@ -180,16 +181,18 @@ export function EffectsPreview({ rect, s }: { rect: Rect; s: number }) {
   return (
     <>
       <canvas ref={canvas} className="rec-preview" style={{ left: sel.x, top: sel.y, width: sel.width, height: sel.height }} />
-      {anim && rec.progress !== 'off' && <ProgressPreview sel={sel} kind={rec.progress} color={rec.effects.progressColor} />}
+      {anim && rec.progress !== 'off' && <ProgressPreview sel={sel} s={s} kind={rec.progress} color={rec.effects.progressColor} />}
     </>
   );
 }
 
 /** 动图底下的进度条 / 播放时间（准备时停在三成的位置给人看样子） */
-function ProgressPreview({ sel, kind, color }: { sel: { x: number; y: number; width: number; height: number }; kind: 'bar' | 'time'; color: string }) {
+function ProgressPreview({ sel, s, kind, color }: { sel: { x: number; y: number; width: number; height: number }; s: number; kind: 'bar' | 'time'; color: string }) {
   if (kind === 'bar') {
+    // 和录出来的一样粗（Rust 的 draw_decor：画面高的 1/120，3 到 8 个像素），屏幕上至少 3px 看得清
+    const h = Math.max(3, Math.min(8, Math.max(3, (sel.height * s) / 120)) / s);
     return (
-      <div className="rec-progress-preview" style={{ left: sel.x, top: sel.y + sel.height - 4, width: sel.width }}>
+      <div className="rec-progress-preview" style={{ left: sel.x, top: sel.y + sel.height - h, width: sel.width, height: h }}>
         <i style={{ width: '30%', background: color }} />
       </div>
     );
@@ -215,7 +218,7 @@ export function DemoTools({ engine }: { engine: AnnotationEngine }) {
       {DEMO_TOOLS.map((id) => {
         const I = TOOL_ICONS[id];
         return (
-          <Tooltip key={id} content={t(`tools.${id}`)} side="top">
+          <Tooltip key={id} content={`${t(`tools.${id}`)} · ${t('record.toolHint')}`} side="top">
             <button
               type="button"
               className={clsx('an-btn', tool === id && 'an-btn--active')}
@@ -243,15 +246,25 @@ export function DemoTools({ engine }: { engine: AnnotationEngine }) {
   );
 }
 
-/** 录制中选着画图工具：选区这块报给 Rust 当成能点的区域（遮罩接鼠标，用来画）；没选工具就不报（鼠标穿透） */
-export function LiveDrawRegion({ rect, s, report }: { rect: Rect; s: number; report: (id: string, r: { x: number; y: number; width: number; height: number } | null) => void }) {
+/**
+ * 选着画图工具：整块屏报给 Rust 当成能点的区域（遮罩接鼠标，哪里都能画，出了选区的部分画淡一点）；
+ * 没选工具就不报（鼠标穿透，照常操作底下的程序）
+ */
+export function LiveDrawRegion({
+  s,
+  viewport,
+  report,
+}: {
+  s: number;
+  viewport: { width: number; height: number };
+  report: (id: string, r: { x: number; y: number; width: number; height: number } | null) => void;
+}) {
   const tool = useOverlay((x) => x.tool);
-  const sel = css(rect, s);
   useLayoutEffect(() => {
-    report('draw', tool ? sel : null);
+    report('draw', tool ? { x: 0, y: 0, width: viewport.width, height: viewport.height } : null);
     return () => report('draw', null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tool, sel.x, sel.y, sel.width, sel.height]);
+  }, [tool, viewport.width, viewport.height, s]);
   return null;
 }
 

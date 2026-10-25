@@ -21,6 +21,10 @@ export interface TranslatedBlock {
   lineHeight: number;
   source: string;
   text: string;
+  /** 原文是粗体（标题、表头） */
+  bold: boolean;
+  /** 按原文墨的上下范围估的字号（物理像素）；0 = 估不出来，按行高算 */
+  fontSize: number;
 }
 
 type Rgb = [number, number, number];
@@ -86,12 +90,12 @@ export function lineColors(src: PixelSource, r: Rect): { bg: string; fg: string;
   return { bg: css(bg), fg: css(fg), light: luma(bg) > 140 };
 }
 
-/** 从原文行高起步，排不进框就缩小。 */
-export function fitFontSize(text: string, r: Rect, lineHeight: number, minSize: number): number {
-  let size = Math.max(minSize, lineHeight * 0.74);
+/** 从原文的字号起步，排不进框就缩小。 */
+export function fitFontSize(text: string, r: Rect, start: number, minSize: number, bold = false): number {
+  let size = Math.max(minSize, start);
   for (let i = 0; i < 24 && size > minSize; i += 1) {
     const pad = Math.max(1, size * 0.08);
-    const lines = wrapLabel(text, size, r.width - pad * 2);
+    const lines = wrapLabel(text, size, r.width - pad * 2, bold);
     if (lines.length * size * LABEL_LINE_HEIGHT <= r.height * 1.06) break;
     size = Math.max(minSize, size * 0.92);
   }
@@ -130,9 +134,11 @@ export function buildLabels(blocks: TranslatedBlock[], src: PixelSource | null, 
   // 字号：同组按组里的中位行高起步各自排版，再不超过组里排出来的中位字号 —— 一组里字号一致，
   // 只有实在放不下的那块会更小
   const sizes = new Array<number>(list.length).fill(0);
-  for (const group of groupByLineHeight(list.map((b) => b.lineHeight))) {
-    const lh = median(group.map((i) => list[i]!.lineHeight));
-    const fits = group.map((i) => fitFontSize(list[i]!.text.trim(), rects[i]!, lh, 9 * scale));
+  // 起步字号：原文墨的高度估出来的（识字框的高矮不准，同样大的字能差三成）；估不出来按行高
+  const start = (b: TranslatedBlock) => (b.fontSize > 0 ? b.fontSize : b.lineHeight * 0.74);
+  for (const group of groupByLineHeight(list.map(start))) {
+    const s0 = median(group.map((i) => start(list[i]!)));
+    const fits = group.map((i) => fitFontSize(list[i]!.text.trim(), rects[i]!, s0, 9 * scale, list[i]!.bold));
     const cap = median(fits);
     group.forEach((i, k) => (sizes[i] = Math.min(fits[k]!, cap)));
   }
@@ -146,6 +152,7 @@ export function buildLabels(blocks: TranslatedBlock[], src: PixelSource | null, 
       color: css(colors.fg),
       bg: css(colors.bg),
       fontSize: sizes[i]!,
+      bold: b.bold,
       group: TRANSLATION_GROUP,
     };
   });

@@ -295,11 +295,7 @@ async fn ask_model(
     ctx: &Context,
     items: &[ClipItem],
 ) -> AppResult<(Vec<i64>, Option<String>)> {
-    let lang = if crate::i18n::english() {
-        "English"
-    } else {
-        "Simplified Chinese"
-    };
+    let lang = crate::i18n::language_name();
     let system = format!(
         "You pick which item from the user's clipboard history they most likely want to paste next, based on what \
 they are doing right now. Reply with JSON only, no prose: {{\"ids\": [up to {PICKS} ids, best first], \"reason\": \

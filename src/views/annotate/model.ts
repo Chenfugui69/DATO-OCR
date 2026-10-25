@@ -62,7 +62,7 @@ export type Annotation =
    * 文字块：铺一层底色盖住原来的字，再在框里自动换行写新字。截图原位翻译用（`group: 'translation'`），
    * `hidden` 时不画也不导出（"看原文"）
    */
-  | { kind: 'label'; id: string; rect: Rect; text: string; color: string; bg: string; fontSize: number; group?: string; hidden?: boolean };
+  | { kind: 'label'; id: string; rect: Rect; text: string; color: string; bg: string; fontSize: number; bold?: boolean; group?: string; hidden?: boolean };
 
 /** 二级工具条里的选项（CSS 像素，创建标注时乘缩放因子）。会话内记忆（规格 02 §3.7.4）。 */
 export interface ToolOptions {

@@ -6,12 +6,13 @@
 // 数学相关的标签和少数几个属性。复制给别的程序用的是纯文本（制表符分隔 / Markdown / LaTeX / MathML）。
 
 import { ArrowLeft, Copy, FileSearch, FileSpreadsheet, RotateCw, Sparkles } from 'lucide-react';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import { capture, ocr } from '@/lib/ipc';
 import { Button, EmptyState, Spinner } from '@/ui/controls';
 import { notify, Tooltip } from '@/ui/overlays';
+import { latexToMathml } from '@/views/capture/formulaRender';
 
 import { tableGrid, toExcelText, toHtmlTable, toMarkdown, unmatchedNumbers, type Cell } from './structured';
 import './structured.css';
@@ -76,7 +77,7 @@ export function sanitizeMathml(source: string): string {
   return clean(root);
 }
 
-/** 模型回答：LaTeX，一行 ===MATHML===，MathML */
+/** 模型回答：LaTeX（以前的回答后面还有一行 ===MATHML=== 和 MathML，现在 MathML 都是本地转的） */
 export function splitFormula(text: string): { latex: string; mathml: string } {
   const [latex = '', mathml = ''] = text.split(/^\s*===MATHML===\s*$/m);
   return { latex: latex.trim(), mathml: sanitizeMathml(mathml) };
@@ -249,12 +250,17 @@ export function FormulaView({ text, onCopy }: { text: string; onCopy: (text: str
   const { t } = useTranslation();
   const parsed = useMemo(() => splitFormula(text), [text]);
   const [latex, setLatex] = useState(parsed.latex);
+  // 预览按现在的 LaTeX 本地转（改了马上看到）；改到一半转不了就留着上一次转好的
+  const fresh = useMemo(() => latexToMathml(latex), [latex]);
+  const lastGood = useRef('');
+  if (fresh) lastGood.current = fresh;
+  const mathml = fresh ?? (lastGood.current || parsed.mathml);
   return (
     <>
       <div className="ocr-struct__body">
-        {parsed.mathml ? (
+        {mathml ? (
           // 已经过 sanitizeMathml：只剩 MathML 标签和排版属性
-          <div className="ocr-formula" dangerouslySetInnerHTML={{ __html: parsed.mathml }} />
+          <div className="ocr-formula" dangerouslySetInnerHTML={{ __html: mathml }} />
         ) : (
           <p className="ocr-struct__hint">{t('ocr.structured.noPreview')}</p>
         )}
@@ -273,7 +279,7 @@ export function FormulaView({ text, onCopy }: { text: string; onCopy: (text: str
           </Button>
         </Tooltip>
         <Tooltip content={t('ocr.structured.copyMathmlTip')} side="top">
-          <Button size="sm" icon={Copy} disabled={!parsed.mathml} onClick={() => onCopy(parsed.mathml)}>
+          <Button size="sm" icon={Copy} disabled={!mathml} onClick={() => onCopy(mathml)}>
             MathML
           </Button>
         </Tooltip>

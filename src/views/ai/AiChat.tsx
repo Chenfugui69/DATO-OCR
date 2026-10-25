@@ -242,10 +242,13 @@ export function AiChat({
   const thinking: ThinkingLevel = cfg?.thinking ?? 'auto';
 
   const streamingNow = turns.some((m) => m.streaming);
-  // 不在回复的时候（刚打开、换了一段对话）：直接到底
+  // 不在回复的时候（刚打开、换了一段对话）：直接到底。还没聊过（开场的说明、带上的内容、快捷提问）
+  // 从顶上看起：窄的对话栏里放不下时，以前一打开就滚到最底下，标题和说明被卷到上面看不见
   useLayoutEffect(() => {
     const el = listRef.current;
-    if (el && stick.current && !streamingNow) el.scrollTop = el.scrollHeight;
+    if (!el) return;
+    if (turns.length === 0) el.scrollTop = 0;
+    else if (stick.current && !streamingNow) el.scrollTop = el.scrollHeight;
   }, [turns, streamingNow]);
   // 正在回复：页面平滑地跟到底部（气泡是平滑长高的，一下子跳到底会一顿一顿）。
   // 每帧往底部靠一截；用户自己往上翻了（stick = false）就不跟，翻回底部再接着跟

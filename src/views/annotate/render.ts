@@ -227,11 +227,11 @@ function drawMosaicRect(ctx: Ctx, a: Extract<Annotation, { kind: 'mosaicRect' }>
 }
 
 /** 文字块排版：按框宽自动换行。英文按词断，中日韩按字断。 */
-export function wrapLabel(text: string, fontSize: number, maxWidth: number): string[] {
+export function wrapLabel(text: string, fontSize: number, maxWidth: number, bold = false): string[] {
   measureCtx ??= new OffscreenCanvas(1, 1).getContext('2d');
   const ctx = measureCtx;
   if (!ctx) return [text];
-  ctx.font = textFont({ fontSize, bold: false });
+  ctx.font = textFont({ fontSize, bold });
   const out: string[] = [];
   for (const para of text.split('\n')) {
     // 词：连续的拉丁字母数字算一个，其他字符（汉字、标点、空格）各算一个
@@ -269,12 +269,12 @@ function drawLabel(ctx: Ctx, a: Extract<Annotation, { kind: 'label' }>, progress
   ctx.fillStyle = a.bg;
   ctx.fillRect(r.x, r.y, r.width, r.height);
   const pad = Math.max(1, a.fontSize * 0.08);
-  const lines = wrapLabel(a.text, a.fontSize, r.width - pad * 2);
+  const lines = wrapLabel(a.text, a.fontSize, r.width - pad * 2, a.bold);
   const lh = a.fontSize * LABEL_LINE_HEIGHT;
   const total = lines.length * lh;
   // 字少就在框里竖直居中，多了从顶上排（超出的部分照画，不裁）
   const top = total < r.height ? r.y + (r.height - total) / 2 : r.y;
-  ctx.font = textFont({ fontSize: a.fontSize, bold: false });
+  ctx.font = textFont({ fontSize: a.fontSize, bold: !!a.bold });
   ctx.textBaseline = 'middle';
   ctx.fillStyle = a.color;
   if (progress >= 1) {

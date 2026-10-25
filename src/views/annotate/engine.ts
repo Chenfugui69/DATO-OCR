@@ -156,6 +156,8 @@ export class AnnotationEngine {
   draft: Annotation | null = null;
   text: TextDraft | null = null;
   clip: Rect | null = null;
+  /** 选区外面的那截也画出来、但淡一些（录制框外面不压暗，要看得出画出框的部分不会录进去）；false = 裁掉 */
+  ghostOutside = false;
   backdrop: Backdrop = { pixels: null, bitmap: null };
   /** 物理像素 / CSS 像素，用来把工具选项换成物理尺寸 */
   scale = 1;
@@ -228,6 +230,13 @@ export class AnnotationEngine {
     // （4K 画布清一次就要几毫秒，还得把整张画布重新上传给合成器）
     if (this.annotations.length === 0 && !this.watermark && this.committedEmpty) return;
     this.renderCommitted();
+  }
+
+  setGhostOutside(on: boolean) {
+    if (this.ghostOutside === on) return;
+    this.ghostOutside = on;
+    this.renderCommitted();
+    this.renderDraft();
   }
 
   setBackdrop(b: Backdrop) {
@@ -977,7 +986,25 @@ export class AnnotationEngine {
     ctx.clearRect(0, 0, c.width, c.height);
   }
 
-  private withClip(ctx: CanvasRenderingContext2D, fn: () => void) {
+  /** `area`：这次画到的范围（图像坐标），选区外变淡只处理这一块 */
+  private withClip(ctx: CanvasRenderingContext2D, fn: () => void, area?: Rect) {
+    const c = this.clip;
+    if (c && this.ghostOutside) {
+      // 整个画上，再把选区外面的不透明度减掉一半（destination-out 按比例擦）
+      ctx.save();
+      fn();
+      ctx.restore();
+      const a = area ?? { x: this.origin.x, y: this.origin.y, width: ctx.canvas.width, height: ctx.canvas.height };
+      ctx.save();
+      ctx.globalCompositeOperation = 'destination-out';
+      ctx.fillStyle = 'rgba(0,0,0,0.55)';
+      ctx.beginPath();
+      ctx.rect(a.x, a.y, a.width, a.height);
+      ctx.rect(c.x, c.y, c.width, c.height);
+      ctx.fill('evenodd');
+      ctx.restore();
+      return;
+    }
     ctx.save();
     if (this.clip) {
       ctx.beginPath();
@@ -1038,7 +1065,7 @@ export class AnnotationEngine {
     ctx.setTransform(1, 0, 0, 1, -this.origin.x, -this.origin.y);
     ctx.clearRect(dirty.x - 2, dirty.y - 2, dirty.width + 4, dirty.height + 4);
     this.lastDraftBounds = b;
-    this.withClip(ctx, () => drawAnnotation(ctx, d, this.backdrop));
+    this.withClip(ctx, () => drawAnnotation(ctx, d, this.backdrop), { x: b.x - 2, y: b.y - 2, width: b.width + 4, height: b.height + 4 });
   }
 
   private get visible(): Annotation[] {

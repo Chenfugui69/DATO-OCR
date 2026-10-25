@@ -1503,3 +1503,103 @@ html[data-view='main'][data-glass='off'] body {
 .glass-tune__sliders > button {
   align-self: flex-start;
 }
+
+/* 纯色划词圆点的配色：一行颜色可能比较长，放不下就折行；"跟随主题"是一颗小胶囊 */
+.glass-tune__row .frame-swatches {
+  flex-wrap: wrap;
+  row-gap: 6px;
+}
+.solid-auto {
+  height: 22px;
+  padding: 0 8px;
+}
+
+/* AI 设置顶上的新手教程：一行标题，点开是几步说明，每步带网页链接 */
+.ai-guide {
+  border-bottom: 0.5px solid var(--cn-separator);
+  background: color-mix(in srgb, var(--cn-accent) 6%, transparent);
+}
+.ai-guide__head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 44px;
+  padding: 8px 16px;
+  border: none;
+  background: none;
+  color: var(--cn-accent);
+  font: var(--cn-text-body);
+  text-align: left;
+  cursor: pointer;
+}
+.ai-guide__title {
+  font-weight: 600;
+}
+.ai-guide__sub {
+  flex: 1;
+  color: var(--cn-label-secondary);
+  font: var(--cn-text-footnote);
+}
+.ai-guide__chev {
+  color: var(--cn-label-tertiary);
+  transition: transform 160ms var(--cn-ease-out);
+}
+.ai-guide[data-open] .ai-guide__chev {
+  transform: rotate(180deg);
+}
+.ai-guide__body {
+  padding: 0 16px 14px 39px;
+  color: var(--cn-label);
+  font: var(--cn-text-callout);
+  animation: cn-fade-in 160ms var(--cn-ease-out);
+}
+.ai-guide__intro {
+  margin: 0 0 10px;
+  color: var(--cn-label-secondary);
+  line-height: 1.6;
+}
+.ai-guide__steps {
+  margin: 0;
+  padding-left: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  line-height: 1.6;
+}
+.ai-guide__steps li::marker {
+  color: var(--cn-accent);
+  font-weight: 600;
+}
+.ai-guide__steps b {
+  display: block;
+  font-weight: 600;
+}
+.ai-guide__steps span {
+  color: var(--cn-label-secondary);
+}
+.ai-guide__link {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  margin-right: 10px;
+  color: var(--cn-accent);
+  text-decoration: none;
+  font-weight: 500;
+  cursor: pointer;
+}
+.ai-guide__link:hover {
+  text-decoration: underline;
+}
+.ai-guide__code {
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: var(--cn-fill-tertiary);
+  color: var(--cn-label);
+  font: 12px/1.4 var(--cn-font-mono, ui-monospace, monospace);
+  user-select: text;
+}
+.ai-guide__more {
+  margin: 12px 0 0;
+  color: var(--cn-label-secondary);
+}

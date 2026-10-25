@@ -483,7 +483,7 @@ impl Default for CaptureSettings {
             toolbar_groups: default_groups(),
             toolbar_order: owned(&TOOLBAR_ORDER),
             toolbar_hidden: Vec::new(),
-            toolbar_style: "glass".into(),
+            toolbar_style: "flat".into(),
             finish_action: "copy".into(),
             save_to_library: true,
             save_directory: None,
@@ -1172,6 +1172,8 @@ pub struct SelectionTranslateSettings {
     pub button_style: String,
     /// 自定义玻璃的各项（样式选"自定义"时用）
     pub glass: GlassTuning,
+    /// 纯色圆点的配色（样式选"纯色"时用）
+    pub solid: SolidDot,
     /// 选中的是系统语言的文字（中文系统里选中文）时不弹按钮
     pub skip_system_language: bool,
     /// 选中这些语言的文字时不弹按钮（语言代码：zh、en、ja……）
@@ -1191,6 +1193,7 @@ impl Default for SelectionTranslateSettings {
             button_position: "bottomRight".into(),
             button_style: "liquid".into(),
             glass: GlassTuning::default(),
+            solid: SolidDot::default(),
             skip_system_language: false,
             skip_languages: Vec::new(),
             button_size: 28,
@@ -1247,6 +1250,47 @@ impl GlassTuning {
         ] {
             *v = (*v).min(100);
         }
+    }
+}
+
+/// 纯色划词圆点的配色。颜色是 #RRGGBB，空 = 跟着深浅色主题（浅色白底、深色深灰底，图标是强调色）
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase", default)]
+pub struct SolidDot {
+    /// 圆点的底色
+    pub background: String,
+    /// 圆点里图标的颜色
+    pub icon: String,
+    /// 边框颜色
+    pub border: String,
+    /// 边框粗细（逻辑像素，0 ~ 4；0 = 没有边框）
+    pub border_width: f64,
+    /// 阴影浓淡（0 ~ 100；0 = 没有阴影）
+    pub shadow: u32,
+}
+
+impl Default for SolidDot {
+    fn default() -> Self {
+        Self {
+            background: String::new(),
+            icon: String::new(),
+            border: String::new(),
+            border_width: 0.5,
+            shadow: 50,
+        }
+    }
+}
+
+impl SolidDot {
+    fn sanitize(&mut self) {
+        for c in [&mut self.background, &mut self.icon, &mut self.border] {
+            let ok = c.len() == 7 && c.starts_with('#') && c[1..].chars().all(|ch| ch.is_ascii_hexdigit());
+            if !ok {
+                c.clear();
+            }
+        }
+        self.border_width = if self.border_width.is_finite() { self.border_width.clamp(0.0, 4.0) } else { 0.5 };
+        self.shadow = self.shadow.min(100);
     }
 }
 
@@ -1487,7 +1531,7 @@ impl Settings {
         migrate_record_action(c);
         fix_toolbar(c);
         if !matches!(c.toolbar_style.as_str(), "glass" | "frosted" | "flat") {
-            c.toolbar_style = "glass".into();
+            c.toolbar_style = "flat".into();
         }
         c.snap_threshold = c.snap_threshold.min(32);
         c.jpg_quality = c.jpg_quality.clamp(40, 100);
@@ -1506,6 +1550,7 @@ impl Settings {
             sel.button_position = "bottomRight".into();
         }
         sel.glass.sanitize();
+        sel.solid.sanitize();
         if !matches!(
             sel.button_style.as_str(),
             "liquid" | "frosted" | "solid" | "custom"

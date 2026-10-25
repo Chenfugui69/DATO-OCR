@@ -687,17 +687,20 @@ export default function TranslatePopup() {
   // 被盖住的那一截同步裁掉：面板调了不透明度时抽屉是半透明的，不裁的话下面的译文和输入框会透上来，
   // 动画一结束（翻译区变矮）又突然消失
   const paneFull = baseSize.current.h - pad * 2;
+  const cut = sheet?.open ? Math.max(0, paneFull - transH) : 0;
   const paneStyle: React.CSSProperties | undefined =
     mode !== 'ai'
       ? undefined
       : layout === 'side'
         ? { width: transW, maxWidth: sheet ? 'none' : undefined }
         : sheet
-          ? {
+          ? ({
               height: paneFull,
-              clipPath: `inset(0 0 ${sheet.open ? Math.max(0, paneFull - transH) : 0}px 0)`,
-              transition: `${sheet.animate ? `${transition(['clip-path'])}, ` : ''}background-color ${ANIM_MS}ms ${EASE}`,
-            }
+              clipPath: `inset(0 0 ${cut}px 0)`,
+              // 译文最下面那段淡出贴着抽屉的上沿一起动（POPUP_CSS 的 .is-sheet），不是等抽屉升完才冒出来
+              '--pop-cut': `${cut}px`,
+              transition: `${sheet.animate ? `${transition(['clip-path', '--pop-cut'])}, ` : ''}background-color ${ANIM_MS}ms ${EASE}`,
+            } as React.CSSProperties)
           : { height: transH };
   /**
    * 过渡期间对话区贴着外框底边（侧边是右边），高度（宽度）从 0 长到最终值，和外框用同一条缓动曲线：
@@ -736,7 +739,7 @@ export default function TranslatePopup() {
       <div ref={shellRef} className={shellClass} style={shellStyle}>
         <div
           ref={transRef}
-          className={`pop-pane pop-pane--translate${(mode === 'translate' || (sheet && layout === 'drawer')) && text ? ' has-ask' : ''}`}
+          className={`pop-pane pop-pane--translate${(mode === 'translate' || (sheet && layout === 'drawer')) && text ? ' has-ask' : ''}${sheet && layout === 'drawer' ? ' is-sheet' : ''}`}
           key={seq}
           style={paneStyle}
         >
@@ -936,6 +939,15 @@ html:not([data-platform='mac'])[data-theme='light'] .pop-shell.is-blur {
 .pop-shell.is-drawer .pop-pane--translate:not(.has-ask) .pop__body {
   -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 46px), transparent 100%);
           mask-image: linear-gradient(to bottom, #000 calc(100% - 46px), transparent 100%); }
+/* 抽屉升起 / 收回的过程中：同样的淡出，只是量的是还露在抽屉上面的那截（被盖住的 --pop-cut 不算），
+   --pop-cut 和抽屉用同一条曲线过渡，淡出一直贴着抽屉的上沿。以前过渡时用的是输入框那套遮罩，
+   抽屉升完才换成这个，淡出要晚零点几秒才出来 */
+@property --pop-cut { syntax: '<length>'; inherits: true; initial-value: 0px; }
+.pop-shell.is-drawer .pop-pane--translate.is-sheet .pop__body {
+  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 46px), transparent 100%);
+          mask-image: linear-gradient(to bottom, #000 calc(100% - 46px), transparent 100%);
+  -webkit-mask-size: 100% calc(100% - var(--pop-cut)); mask-size: 100% calc(100% - var(--pop-cut));
+  -webkit-mask-repeat: no-repeat; mask-repeat: no-repeat; }
 .pop-shell.is-drawer .pop-pane--translate:not(.has-ask) .tr-box { padding-bottom: 0; }
 .pop-shell.is-drawer .pop-pane--translate:not(.has-ask) .tr-box__cards { padding-bottom: 22px; }
 .has-ask .tr-box { padding-bottom: 74px; }

@@ -5,12 +5,13 @@ import { ChevronDown, KeyRound, Plus, Radar, RotateCcw, Trash2, X } from 'lucide
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
-import i18n from '@/i18n';
+import { isChineseUi } from '@/i18n';
 import { ai } from '@/lib/ipc';
 import { THINKING_LEVELS, type AiProvider, type QuickPrompt, type Settings } from '@/lib/types';
 import { Button, IconButton, Segmented, Select, Slider, Switch, TextField } from '@/ui/controls';
 import { DropdownMenu, notify, promptDialog } from '@/ui/overlays';
 
+import { AiGuide } from './AiGuide';
 import { Group, Row } from './settingsParts';
 import { normalizeAiBaseUrl } from './aiUrl';
 
@@ -28,7 +29,7 @@ const PRESETS: { name: string; en?: string; kind: AiProvider['kind']; baseUrl: s
 ];
 
 /** 预设在当前界面语言下叫什么 */
-const presetName = (p: (typeof PRESETS)[number]) => (i18n.language.startsWith('en') && p.en ? p.en : p.name);
+const presetName = (p: (typeof PRESETS)[number]) => (!isChineseUi() && p.en ? p.en : p.name);
 
 const newId = () => crypto.randomUUID().replace(/-/g, '').slice(0, 10);
 
@@ -97,6 +98,7 @@ export function AiSettingsGroups({ settings, set }: { settings: Settings; set: (
   return (
     <>
       <Group id="ai" title={t('settings.section.ai')} note={t('settings.ai.note')}>
+        <AiGuide hasProvider={cfg.providers.length > 0} />
         {cfg.providers.length === 0 && <Row title={t('settings.ai.noProviders')} desc={t('settings.ai.noProvidersDesc')} />}
         {cfg.providers.map((p) => {
           const found = detected[p.id];

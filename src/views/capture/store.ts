@@ -78,6 +78,10 @@ export interface OverlayState {
   recordQuiet: boolean;
   /** 开始录之前的倒数还剩几秒；null = 没在倒数 */
   countdown: number | null;
+  /** 点了开始、录制还没真正开始：选区里准备时才有的提示、预览先撤掉，免得录进第一帧 */
+  recordGo: boolean;
+  /** 正在摆摄像头：刚打开摄像头（或再点一下摄像头按钮）时摄像头框能拖，点别处就结束 */
+  cameraPlacing: boolean;
   /** 录制栏里展开的那个弹层 */
   recordPanel: 'mouse' | 'progress' | 'countdown' | 'effects' | 'settings' | null;
 }
@@ -124,6 +128,8 @@ export const initialOverlay = (): Omit<OverlayState, 'options'> => ({
   recordPrep: false,
   recordQuiet: false,
   countdown: null,
+  recordGo: false,
+  cameraPlacing: false,
   recordPanel: null,
   autoCodes: [],
   toolbarGroup: null,
@@ -134,4 +140,7 @@ export const initialOverlay = (): Omit<OverlayState, 'options'> => ({
 export const useOverlay = create<OverlayState>(() => ({ ...initialOverlay(), options: defaultToolOptions() }));
 
 export const set = useOverlay.setState;
+
+/** 工具条（CSS 像素）位置写给磨砂玻璃的底图对齐用，见 capture.css 的 --gx / --gy */
+export const glassAt = (x: number, y: number) => ({ '--gx': `${x}px`, '--gy': `${y}px` }) as React.CSSProperties;
 export const get = useOverlay.getState;

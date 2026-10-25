@@ -5,6 +5,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { ArrowUpCircle, ChevronRight, Sparkles, Wrench, Zap, type LucideIcon } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 
+import { isChineseUi } from '@/i18n';
 import { useEvent } from '@/lib/events';
 import { formatBytes } from '@/lib/format';
 import { update } from '@/lib/ipc';
@@ -58,10 +59,10 @@ function Section({ icon: Icon, title, items, tone }: { icon: LucideIcon; title: 
 }
 
 export function UpdateDialog({ status, open, onClose }: { status: UpdateStatus; open: boolean; onClose: () => void }) {
-  const { t, i18n } = useTranslation();
+  const { t } = useTranslation();
   const info = status.available;
   if (!info) return null;
-  const changes: UpdateChanges = (i18n.language.startsWith('en') && info.changesEn) || info.changes;
+  const changes: UpdateChanges = (!isChineseUi() && info.changesEn) || info.changes;
   const empty = !changes.added.length && !changes.fixed.length && !changes.improved.length;
   const busy = status.stage === 'downloading' || status.stage === 'verifying' || status.stage === 'installing';
   const percent = status.progress != null ? Math.round(status.progress * 100) : null;

@@ -5,7 +5,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
-import type { GlassTuning } from '@/lib/types';
+import type { GlassTuning, SolidDot } from '@/lib/types';
 import { Segmented } from '@/ui/controls';
 import { GlassDot, GlassDotStyles, type DotStyle } from '@/views/translate/SelectionButton';
 
@@ -44,7 +44,7 @@ function drawSample(canvas: HTMLCanvasElement, dark: boolean) {
   });
 }
 
-export function GlassPreview({ style, tuning, size }: { style: DotStyle; tuning: GlassTuning; size: number }) {
+export function GlassPreview({ style, tuning, solid, size }: { style: DotStyle; tuning: GlassTuning; solid?: SolidDot; size: number }) {
   const { t } = useTranslation();
   const [dark, setDark] = useState(false);
   const sample = useRef<HTMLCanvasElement>(null);
@@ -95,8 +95,10 @@ export function GlassPreview({ style, tuning, size }: { style: DotStyle; tuning:
   };
 
   const dot = useMemo(
-    () => <GlassDot style={style} tuning={tuning} size={size} backdrop={style === 'solid' ? null : (backdrop?.url ?? null)} dark={backdrop?.dark ?? null} />,
-    [style, tuning, size, backdrop],
+    () => (
+      <GlassDot style={style} tuning={tuning} solid={solid} size={size} backdrop={style === 'solid' ? null : (backdrop?.url ?? null)} dark={backdrop?.dark ?? null} />
+    ),
+    [style, tuning, solid, size, backdrop],
   );
 
   return (

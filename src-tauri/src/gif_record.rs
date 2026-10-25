@@ -136,6 +136,8 @@ pub struct GifStateEvent {
     pub monitor_id: u64,
     /// 本屏局部物理坐标
     pub rect: PhysicalRect,
+    /// 录完回到录制准备（`active` = false 时）：录制框留在 `rect`，接着录下一段 / 打开文件夹
+    pub prep: bool,
 }
 
 #[derive(Clone, Serialize)]
@@ -246,6 +248,7 @@ pub fn start(
         active: true,
         monitor_id: monitor.id.0,
         rect: local,
+        prep: false,
     };
     let (cx, cy) = (
         global.x + global.width as i32 / 2,
@@ -283,10 +286,14 @@ pub fn start(
     if format == RecordFormat::Mp4 {
         out = ((out.0 & !1).max(2), (out.1 & !1).max(2));
     }
+    // 录完回到录制准备，同一次截图里能接着录好几段（上一段可能还在编码）：文件名带上开始的时间
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_millis());
     let tmp = st
         .paths
         .temp()
-        .join(format!("rec-{}.{}", session.id, format.ext()));
+        .join(format!("rec-{}-{stamp}.{}", session.id, format.ext()));
     let (tx, rx) = sync_channel::<Msg>(QUEUE);
     let enc_path = tmp.clone();
     let video_fps = rec.fps.clamp(5, 60);
@@ -459,18 +466,40 @@ fn record(mut ctx: RecordCtx, encoder: std::thread::JoinHandle<AppResult<Stats>>
         let _ = ctx.tx.send(Msg::End);
     }
     drop(ctx.tx);
-    let result = encoder.join();
 
+    // 录完（不是丢掉、没出错、不用先剪辑）：录制框留着，回到录制准备 —— 接着录下一段、打开文件夹看刚录的
+    // 都方便，Esc / 关闭才收掉。丢掉、出错、要先剪辑（剪辑窗口别被遮罩压着）时整个收掉。
+    // 界面先换，编码的收尾（GIF 可能还要一会儿）在后面等：这时已经能开始录下一段
     *ACTIVE.lock() = None;
+    let back = !cancelled
+        && !ctx.edit
+        && state(&app)
+            .capture
+            .current()
+            .is_some_and(|s| s.id == ctx.session_id);
     let _ = app.emit(
         events::GIF_STATE,
         GifStateEvent {
             active: false,
-            monitor_id: 0,
-            rect: PhysicalRect::default(),
+            monitor_id: if back { ctx.monitor.id.0 } else { 0 },
+            rect: if back { ctx.local } else { PhysicalRect::default() },
+            prep: back,
         },
     );
-    capture::end_session(&app, ctx.session_id, false);
+    if back {
+        let ui = app.clone();
+        let _ = app.run_on_main_thread(move || {
+            // 录制中按设置切过遮罩进不进录像（平时不进）：回到准备，和截图开着时一样
+            overlay::for_each(&ui, |w| platform::set_overlay_capturable(w, true));
+        });
+        if let Err(err) = capture::record_prep::enter(&app, ctx.session_id, ctx.monitor.id) {
+            tracing::warn!("录完回到录制准备失败：{err}");
+            capture::end_session(&app, ctx.session_id, false);
+        }
+    } else {
+        capture::end_session(&app, ctx.session_id, false);
+    }
+    let result = encoder.join();
 
     if let Err(err) = outcome {
         tracing::error!("GIF 录制启动失败：{err}");
@@ -673,6 +702,7 @@ pub fn resume_ui(app: &AppHandle) {
                 active: true,
                 monitor_id: a.monitor.id.0,
                 rect: a.rect,
+                prep: false,
             },
             a.capturable,
         )

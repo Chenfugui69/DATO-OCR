@@ -16,6 +16,7 @@ interface Line {
   width: number;
   height: number;
   fontSize: number;
+  bold: boolean;
   lineHeight: number;
   text: string;
 }
@@ -27,12 +28,12 @@ function labelLines(engine: AnnotationEngine): Line[] {
     if (a.kind !== 'label' || a.group !== TRANSLATION_GROUP) continue;
     const r = a.rect;
     const pad = Math.max(1, a.fontSize * 0.08);
-    const lines = wrapLabel(a.text, a.fontSize, r.width - pad * 2);
+    const lines = wrapLabel(a.text, a.fontSize, r.width - pad * 2, a.bold);
     const lh = a.fontSize * LABEL_LINE_HEIGHT;
     const total = lines.length * lh;
     const top = total < r.height ? r.y + (r.height - total) / 2 : r.y;
     lines.forEach((text, i) =>
-      out.push({ key: `${a.id}-${i}`, x: r.x + pad, y: top + i * lh, width: r.width - pad * 2, height: lh, fontSize: a.fontSize, lineHeight: lh, text }),
+      out.push({ key: `${a.id}-${i}`, x: r.x + pad, y: top + i * lh, width: r.width - pad * 2, height: lh, fontSize: a.fontSize, bold: !!a.bold, lineHeight: lh, text }),
     );
   }
   return out;
@@ -44,7 +45,7 @@ function sourceLines(blocks: TranslatedBlock[]): Line[] {
     const lh = b.lineHeight > 0 ? b.lineHeight : b.height;
     // 块有几行：按高度除行高；每行高度均分，字号取行高的八成
     const rows = Math.max(1, Math.round(b.height / lh));
-    return { key: `src-${i}`, x: b.x, y: b.y, width: b.width, height: b.height, fontSize: lh * 0.78, lineHeight: b.height / rows, text: b.source };
+    return { key: `src-${i}`, x: b.x, y: b.y, width: b.width, height: b.height, fontSize: lh * 0.78, bold: b.bold, lineHeight: b.height / rows, text: b.source };
   });
 }
 
@@ -79,7 +80,7 @@ export function TranslationText({
             top: l.y,
             width: l.width,
             height: l.height,
-            font: `400 ${l.fontSize}px ${TEXT_FONT}`,
+            font: `${l.bold ? 600 : 400} ${l.fontSize}px ${TEXT_FONT}`,
             lineHeight: `${l.lineHeight}px`,
           }}
         >

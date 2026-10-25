@@ -25,6 +25,44 @@ html[data-view='editor'][data-glass='off'] body {
   display: grid;
   grid-template-rows: minmax(0, 1fr);
   padding: 0 var(--cn-space-3) var(--cn-space-3);
+  /* 开 AI 列时窗口还没变宽的那一下，这一列排在窗口外面 */
+  overflow: hidden;
+}
+/* AI 列：窗口长宽了才从右边滑进来；关的时候先滑出去，窗口再缩回去（OcrView 的 toggleAi） */
+.ocr-ai[data-phase='opening'],
+.ocr-splitter[data-phase='opening'] {
+  opacity: 0;
+}
+.ocr-ai[data-phase='open'] {
+  animation: ocr-ai-in 300ms var(--cn-ease-out) both;
+}
+.ocr-ai[data-phase='closing'] {
+  animation: ocr-ai-out 180ms var(--cn-ease-in) both;
+  pointer-events: none;
+}
+.ocr-splitter[data-phase='open'] {
+  animation: ocr-fade-in 300ms var(--cn-ease-out) both;
+}
+.ocr-splitter[data-phase='closing'] {
+  opacity: 0;
+  transition: opacity 180ms var(--cn-ease-in);
+}
+@keyframes ocr-ai-in {
+  from {
+    opacity: 0;
+    transform: translateX(32px);
+  }
+}
+@keyframes ocr-ai-out {
+  to {
+    opacity: 0;
+    transform: translateX(32px);
+  }
+}
+@keyframes ocr-fade-in {
+  from {
+    opacity: 0;
+  }
 }
 .ocr-image {
   position: relative;

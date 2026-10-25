@@ -22,6 +22,7 @@ mod gif_record;
 mod hotkeys;
 mod i18n;
 mod i18n_en;
+mod i18n_tw;
 mod image_store;
 mod imaging;
 mod library;

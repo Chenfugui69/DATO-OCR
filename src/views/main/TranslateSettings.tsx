@@ -11,7 +11,8 @@ import { useTranslation } from 'react-i18next';
 import { useEvent } from '@/lib/events';
 import { system, translate } from '@/lib/ipc';
 import { accelLabel, isMac } from '@/lib/platform';
-import type { GlassTuning, Settings } from '@/lib/types';
+import type { GlassTuning, Settings, SolidDot } from '@/lib/types';
+import { ColorPicker } from '@/ui/ColorPicker';
 import { Button, Segmented, Select, Slider, Switch, TextField } from '@/ui/controls';
 import { notify } from '@/ui/overlays';
 import { SpeakButton } from '@/ui/SpeakButton';
@@ -132,7 +133,32 @@ export function TranslateSettingsGroups({ settings, set }: { settings: Settings;
             <div className="set-row__desc">{t('settings.selection.previewDesc')}</div>
           </div>
           <div className="glass-tune">
-            <GlassPreview style={sel.buttonStyle} tuning={sel.glass} size={sel.buttonSize} />
+            <GlassPreview style={sel.buttonStyle} tuning={sel.glass} solid={sel.solid} size={sel.buttonSize} />
+            {sel.buttonStyle === 'solid' && (
+              <div className="glass-tune__sliders">
+                {(['background', 'icon', 'border'] as const).map((k) => (
+                  <SolidColorRow
+                    key={k}
+                    label={t(`settings.selection.solidDot.${k}`)}
+                    value={sel.solid[k]}
+                    onChange={(c) => set((d) => void (d.translate.selection.solid[k] = c))}
+                  />
+                ))}
+                <label className="glass-tune__row">
+                  <span className="glass-tune__name">{t('settings.selection.solidDot.borderWidth')}</span>
+                  <Slider value={sel.solid.borderWidth} min={0} max={4} step={0.5} onChange={(v) => set((d) => void (d.translate.selection.solid.borderWidth = v))} />
+                  <span className="glass-tune__value cn-numeric">{sel.solid.borderWidth}</span>
+                </label>
+                <label className="glass-tune__row">
+                  <span className="glass-tune__name">{t('settings.selection.solidDot.shadow')}</span>
+                  <Slider value={sel.solid.shadow} min={0} max={100} step={1} onChange={(v) => set((d) => void (d.translate.selection.solid.shadow = v))} />
+                  <span className="glass-tune__value cn-numeric">{sel.solid.shadow}</span>
+                </label>
+                <Button size="sm" variant="ghost" icon={RotateCcw} onClick={() => set((d) => void (d.translate.selection.solid = { ...DEFAULT_SOLID }))}>
+                  {t('settings.selection.solidDot.reset')}
+                </Button>
+              </div>
+            )}
             {sel.buttonStyle === 'custom' && (
               <div className="glass-tune__sliders">
                 {GLASS_KEYS.map((k) => (
@@ -311,7 +337,47 @@ export function TranslateSettingsGroups({ settings, set }: { settings: Settings;
 }
 
 /** "这些语言不弹"能选的：本地能认出来的几种（别的拉丁字母语言都算英文） */
-const SKIP_LANGS = ['zh', 'en', 'ja', 'ko', 'ru', 'ar', 'th'];
+const SKIP_LANGS = ['zh', 'zh-TW', 'en', 'ja', 'ko', 'ru', 'ar', 'th'];
+
+/** 纯色圆点的默认配色（和 Rust 的 SolidDot::default 一样）：颜色跟着主题 */
+const DEFAULT_SOLID: SolidDot = { background: '', icon: '', border: '', borderWidth: 0.5, shadow: 50 };
+const SOLID_PRESETS = ['#FFFFFF', '#1C1C1E', '#0A84FF', '#34C759', '#FF9500', '#FF3B30'];
+
+/** 纯色圆点的一种颜色：几个常用色、自己取色、"跟随主题"（空） */
+function SolidColorRow({ label, value, onChange }: { label: string; value: string; onChange: (hex: string) => void }) {
+  const { t } = useTranslation();
+  const custom = !!value && !SOLID_PRESETS.includes(value.toUpperCase());
+  return (
+    <div className="glass-tune__row">
+      <span className="glass-tune__name">{label}</span>
+      <div className="frame-swatches">
+        <button type="button" className="set-chip solid-auto" data-on={!value || undefined} onClick={() => onChange('')}>
+          {t('settings.selection.solidDot.auto')}
+        </button>
+        {SOLID_PRESETS.map((c) => (
+          <button
+            key={c}
+            type="button"
+            className="frame-swatch"
+            data-active={value.toUpperCase() === c || undefined}
+            style={{ background: c }}
+            title={c}
+            onClick={() => onChange(c)}
+          />
+        ))}
+        <ColorPicker value={value || '#0A84FF'} onChange={onChange} onCommit={onChange}>
+          <button
+            type="button"
+            className="frame-swatch frame-swatch--custom"
+            data-active={custom || undefined}
+            title={t('settings.frame.custom')}
+            style={custom ? { background: value } : undefined}
+          />
+        </ColorPicker>
+      </div>
+    </div>
+  );
+}
 
 /** 朗读设置里能单独选声音的语言 */
 const SPEECH_LANGS = ['zh', 'zh-TW', 'en', 'ja', 'ko'] as const;

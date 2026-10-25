@@ -316,7 +316,7 @@ export default function EditorView() {
           )}
         </div>
       </div>
-      <footer className={cfg?.toolbarStyle === 'flat' ? 'ed-dock an-flat' : 'ed-dock'}>
+      <footer className={(cfg?.toolbarStyle ?? 'flat') === 'flat' ? 'ed-dock an-flat' : 'ed-dock'}>
         {openGroup && groups.find((g) => g.id === openGroup) && (
           <GroupBar
             style={{ position: 'static' }}

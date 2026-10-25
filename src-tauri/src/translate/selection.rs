@@ -521,11 +521,16 @@ fn on_event(app: &AppHandle, event: SelectionEvent) {
     }
 }
 
-/// 系统的语言（zh、en、ja……，取系统首选语言的语言部分）
+/// 系统的语言（zh、en、ja……，取系统首选语言的语言部分；繁体中文的系统是 zh-TW，和检测结果对得上）
 pub fn system_language() -> String {
-    sys_locale::get_locale()
-        .and_then(|l| l.split(['-', '_']).next().map(str::to_ascii_lowercase))
-        .unwrap_or_else(|| "en".into())
+    let Some(locale) = sys_locale::get_locale() else {
+        return "en".into();
+    };
+    let l = locale.to_ascii_lowercase().replace('_', "-");
+    if l.starts_with("zh") && (l.contains("hant") || ["-tw", "-hk", "-mo"].iter().any(|s| l.ends_with(s))) {
+        return "zh-TW".into();
+    }
+    l.split('-').next().unwrap_or("en").to_string()
 }
 
 /// 选中的文字是这种语言时要不要不弹按钮

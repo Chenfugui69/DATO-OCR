@@ -47,7 +47,7 @@ import type { AnnotationEngine } from '@/views/annotate/engine';
 
 import { placeToolbar, type Rect } from './geometry';
 import { DemoTools } from './RecordPreview';
-import { get, set, useOverlay } from './store';
+import { get, glassAt, set, useOverlay } from './store';
 
 type Viewport = { width: number; height: number };
 type CssRect = { x: number; y: number; width: number; height: number };
@@ -57,8 +57,8 @@ const stop = (e: React.SyntheticEvent) => e.stopPropagation();
 /** 鼠标轨迹 / 点击的颜色可选这几种（空 = 不画） */
 const SWATCHES = ['', '#ff3b30', '#34c759', '#0a84ff', '#ffd60a'];
 const COUNTDOWNS = [0, 3, 5, 10];
-/** 把手中心在选区右下角外面多远（别和调大小的角柄叠在一起） */
-const HANDLE_OUT = 18;
+/** 把手中心在选区右边外面多远（别和调大小的角柄叠在一起） */
+const HANDLE_OUT = 22;
 
 const hms = (ms: number) => {
   const s = Math.floor(ms / 1000);
@@ -83,6 +83,7 @@ export function RecordToolbar({
   live,
   engine,
   onStart,
+  onCancelCountdown,
   onExit,
 }: {
   rect: Rect;
@@ -93,6 +94,9 @@ export function RecordToolbar({
   /** 截图的标注：演示工具画在它上面 */
   engine: AnnotationEngine;
   onStart: () => void;
+  /** 倒数时再点开始：不录了，录制框还在 */
+  onCancelCountdown: () => void;
+  /** 关掉（准备时：整个截图收掉，不退回截图；录制中：这段不要了） */
   onExit: () => void;
 }) {
   const { t } = useTranslation();
@@ -118,7 +122,7 @@ export function RecordToolbar({
       <div
         ref={ref}
         className={clsx('an-toolbar cn-glass rec-toolbar', pos.inside && 'cap-toolbar--inside', autoHide && 'rec-toolbar--autohide')}
-        style={{ transform: `translate(${pos.x}px, ${pos.y}px)` }}
+        style={{ transform: `translate(${pos.x}px, ${pos.y}px)`, ...glassAt(pos.x, pos.y) }}
         onPointerDown={stop}
       >
         <DemoTools engine={engine} />
@@ -130,7 +134,7 @@ export function RecordToolbar({
           </Tooltip>
         ) : (
           <Tooltip content={countdown != null ? t('record.cancelCountdown') : t('record.start')} shortcut="Enter" side="top">
-            <button type="button" className="an-btn rec-btn--start" aria-label={t('record.start')} onClick={countdown != null ? onExit : onStart}>
+            <button type="button" className="an-btn rec-btn--start" aria-label={t('record.start')} onClick={countdown != null ? onCancelCountdown : onStart}>
               <span className="rec-dot" />
             </button>
           </Tooltip>
@@ -173,22 +177,37 @@ export function RecordToolbar({
           </button>
         </Tooltip>
       </div>
-      {!live && <RecordBar toolbar={{ x: pos.x, y: pos.y, height: size.height }} above={!pos.inside && pos.y < sel.y} viewport={viewport} s={s} />}
+      {!live && <RecordBar toolbar={{ x: pos.x, y: pos.y, width: size.width, height: size.height }} above={!pos.inside && pos.y < sel.y} viewport={viewport} s={s} />}
     </>
   );
 }
 
-/** 开 / 关麦克风、摄像头：第一次开先问系统要权限 */
-async function toggleMedia(kind: 'microphone' | 'camera', on: boolean) {
+/** 开 / 关麦克风、摄像头：第一次开先问系统要权限。返回改没改成 */
+async function toggleMedia(kind: 'microphone' | 'camera', on: boolean): Promise<boolean> {
   if (on) {
     const access = await record.mediaAccess(kind).catch(() => 'unsupported' as const);
     const granted = access === 'granted' || (access === 'notDetermined' && (await record.mediaRequest(kind).catch(() => 'denied' as const)) === 'granted');
     if (!granted) {
       notify.error(new Error(i18n.t('settings.record.denied', { name: i18n.t(`settings.record.${kind}`) })));
-      return;
+      return false;
     }
   }
   saveRecord((r) => void (kind === 'microphone' ? (r.microphone = on) : (r.camera = on)));
+  return true;
+}
+
+/**
+ * 录制栏上的摄像头按钮：关着 → 打开，并且进入"摆位置"（摄像头框能拖，点别处结束）；
+ * 开着、没在摆 → 再摆一次；正在摆 → 关掉摄像头
+ */
+function cameraButton(on: boolean) {
+  const placing = get().cameraPlacing;
+  if (!on) void toggleMedia('camera', true).then((ok) => ok && set({ cameraPlacing: true }));
+  else if (!placing) set({ cameraPlacing: true });
+  else {
+    set({ cameraPlacing: false });
+    void toggleMedia('camera', false);
+  }
 }
 
 
@@ -257,17 +276,19 @@ function Swatches({ value, onChange, label, icon: I }: { value: string; onChange
   );
 }
 
-function RecordBar({ toolbar, above, viewport, s }: { toolbar: { x: number; y: number; height: number }; above: boolean; viewport: Viewport; s: number }) {
+function RecordBar({ toolbar, above, viewport, s }: { toolbar: { x: number; y: number; width: number; height: number }; above: boolean; viewport: Viewport; s: number }) {
   const { t } = useTranslation();
   const settings = useSettings();
   const panel = useOverlay((x) => x.recordPanel);
+  const placing = useOverlay((x) => x.cameraPlacing);
   const ref = useRef<HTMLDivElement>(null);
   const size = useElementSize(ref, { width: 560, height: 40 });
   // 录制栏和它弹出来的面板：准备时遮罩别处是穿透的，这些地方要能点
-  useReportRegion(ref, true, s, [toolbar.x, toolbar.y, toolbar.height, above, size.width, size.height, panel, !!settings], true);
+  useReportRegion(ref, true, s, [toolbar.x, toolbar.y, toolbar.width, toolbar.height, above, size.width, size.height, panel, !!settings], true);
   if (!settings) return null;
   const rec = settings.record;
-  const x = Math.max(8, Math.min(toolbar.x, viewport.width - size.width - 8));
+  // 和上面的录制工具条居中对齐
+  const x = Math.max(8, Math.min(toolbar.x + (toolbar.width - size.width) / 2, viewport.width - size.width - 8));
   let y = above ? toolbar.y - 6 - size.height : toolbar.y + toolbar.height + 6;
   if (y + size.height > viewport.height - 4 || y < 4) y = above ? toolbar.y + toolbar.height + 6 : toolbar.y - 6 - size.height;
   const open = (p: typeof panel) => set({ recordPanel: get().recordPanel === p ? null : p });
@@ -280,7 +301,13 @@ function RecordBar({ toolbar, above, viewport, s }: { toolbar: { x: number; y: n
     { value: 'webp', label: 'WebP', disabled: true },
   ];
   return (
-    <div ref={ref} className={clsx('an-toolbar cn-glass rec-bar', popUp && 'rec-bar--up')} style={{ transform: `translate(${x}px, ${y}px)` }} onPointerDown={stop} onWheel={stop}>
+    <div
+      ref={ref}
+      className={clsx('an-toolbar cn-glass rec-bar', popUp && 'rec-bar--up')}
+      style={{ transform: `translate(${x}px, ${y}px)`, ...glassAt(x, y) }}
+      onPointerDown={stop}
+      onWheel={stop}
+    >
       <div className="rec-formats" role="radiogroup" aria-label={t('record.format')}>
         {formats.map((f) => (
           <Tooltip key={f.value} content={f.disabled ? t('record.webpPending') : t(`record.formatTip.${f.value}`)} side="top">
@@ -312,7 +339,12 @@ function RecordBar({ toolbar, above, viewport, s }: { toolbar: { x: number; y: n
         )}
       </BarButton>
       <BarButton icon={Keyboard} label={t('record.keys')} active={rec.keystrokes} onClick={() => saveRecord((r) => void (r.keystrokes = !r.keystrokes))} />
-      <BarButton icon={Camera} label={t('record.camera')} active={rec.camera} onClick={() => void toggleMedia('camera', !rec.camera)} />
+      <BarButton
+        icon={Camera}
+        label={!rec.camera ? t('record.camera') : placing ? t('record.cameraOff') : t('record.cameraMove')}
+        active={rec.camera}
+        onClick={() => cameraButton(rec.camera)}
+      />
       <BarButton
         icon={Gauge}
         label={silent(rec.format) ? t('record.progress') : t('record.progressAnimOnly')}
@@ -623,8 +655,9 @@ export function MoveHandle({ rect, s, viewport, live }: { rect: Rect; s: number;
   const { t } = useTranslation();
   const ref = useRef<HTMLButtonElement>(null);
   const sel = css(rect, s);
+  // 贴在选区右边、底边和选区的下框齐平：不往下伸出去，和下面的录制工具条、录制栏挤在一起
   const cx = Math.min(viewport.width - 16, sel.x + sel.width + HANDLE_OUT);
-  const cy = Math.min(viewport.height - 16, sel.y + sel.height + HANDLE_OUT);
+  const cy = Math.max(16, sel.y + sel.height - 14);
   const [dragging, setDragging] = useState(false);
   useReportRegion(ref, true, s, [cx, cy, dragging]);
   const down = (e: React.PointerEvent<HTMLButtonElement>) => {
@@ -673,7 +706,7 @@ export function MoveHandle({ rect, s, viewport, live }: { rect: Rect; s: number;
         ref={ref}
         type="button"
         className={clsx('rec-move cn-glass', dragging && 'rec-move--dragging')}
-        style={{ transform: `translate(${cx - 14}px, ${cy - 14}px)` }}
+        style={{ transform: `translate(${cx - 14}px, ${cy - 14}px)`, ...glassAt(cx - 14, cy - 14) }}
         aria-label={t('record.move')}
         onPointerDown={down}
       >
@@ -683,15 +716,17 @@ export function MoveHandle({ rect, s, viewport, live }: { rect: Rect; s: number;
   );
 }
 
-/** 准备时选区右下角（把手左边）的提示：格式、麦克风、声音 */
+/** 准备时选区底部正中的提示：格式、麦克风、声音（点开始时先撤掉，不会录进去） */
 export function RecordHints({ rect, s }: { rect: Rect; s: number }) {
   const { t } = useTranslation();
   const rec = useSettings()?.record;
+  const tool = useOverlay((x) => x.tool);
   if (!rec) return null;
   const sel = css(rect, s);
   const mute = silent(rec.format);
   return (
-    <div className="rec-hints" style={{ right: `calc(100% - ${sel.x + sel.width - 8}px)`, top: sel.y + sel.height - 34 }}>
+    <div className="rec-hints" style={{ left: sel.x + sel.width / 2, top: sel.y + sel.height - 34 }}>
+      {tool && <span className="rec-hint">{t('record.toolHint')}</span>}
       <span className="rec-hint">
         <Video size={12} strokeWidth={1.75} />
         {rec.format.toUpperCase()}
@@ -712,19 +747,54 @@ export function RecordHints({ rect, s }: { rect: Rect; s: number }) {
   );
 }
 
-/** 开了摄像头：选区里摄像头画面的位置框（默认左下角），拖到哪录出来就在哪 */
+/**
+ * 开了摄像头：选区里摄像头画面的位置框（默认左下角），拖到哪录出来就在哪。
+ * 平时遮罩在这里是穿透的（框底下的程序照常点）；刚打开摄像头、或者再点一下摄像头按钮时进入"摆位置"：
+ * 框能拖，点屏幕上别的地方（不管点在哪个程序上）就结束、恢复穿透
+ */
 export function CameraFrame({ rect, s }: { rect: Rect; s: number }) {
   const { t } = useTranslation();
   const rec = useSettings()?.record;
+  const placing = useOverlay((x) => x.cameraPlacing);
   const [drag, setDrag] = useState<[number, number] | null>(null);
-  if (!rec?.camera) return null;
+  const ref = useRef<HTMLDivElement>(null);
+  const on = !!rec?.camera;
   const sel = css(rect, s);
-  const size = Math.min(rec.cameraPx, sel.width - 16, sel.height - 16);
-  if (size < 24) return null;
-  const margin = Math.min(32, Math.max(8, size / 10));
-  const at = drag ?? rec.cameraAt;
-  const x = at ? at[0] * sel.width : margin;
-  const y = at ? at[1] * sel.height : sel.height - margin - size;
+  const size = rec ? Math.min(rec.cameraPx, sel.width - 16, sel.height - 16) : 0;
+  // 和 Rust（record_fx 的 draw_camera）一样：边距按物理像素 8 ~ 32，位置夹在选区里（选区缩小过、
+  // 存下的位置在外面时也不跑出去）
+  const margin = Math.min(32, Math.max(8, (size * s) / 10)) / s;
+  const at = drag ?? rec?.cameraAt ?? null;
+  const x = Math.min(Math.max(0, at ? at[0] * sel.width : margin), Math.max(0, sel.width - size));
+  const y = Math.min(Math.max(0, at ? at[1] * sel.height : sel.height - margin - size), Math.max(0, sel.height - size));
+  const shown = on && size >= 24;
+  // 摆位置时这块要能点
+  useLayoutEffect(() => {
+    if (!shown || !placing) return;
+    setRegion('camera', { x: sel.x + x, y: sel.y + y, width: size, height: size }, s);
+    return () => setRegion('camera', null, s);
+  }, [shown, placing, sel.x, sel.y, x, y, size, s]);
+  // 点了别处（Rust 转过来的鼠标，点在别的程序上也收得到）：摆完了。点在录制条、录制栏上的不算
+  const pressed = useRef(0);
+  useEvent('record-prep-pointer', (p) => {
+    const down = p.buttons & ~pressed.current;
+    pressed.current = p.buttons;
+    if (!down || !get().cameraPlacing || !p.at) return;
+    const cx = p.at[0] / s;
+    const cy = p.at[1] / s;
+    const inside = (el: Element | null) => {
+      const r = el?.getBoundingClientRect();
+      return !!r && cx >= r.left && cx <= r.right && cy >= r.top && cy <= r.bottom;
+    };
+    if (inside(ref.current) || [...document.querySelectorAll('.rec-toolbar, .rec-bar, .rec-pop')].some(inside)) return;
+    set({ cameraPlacing: false });
+  });
+  // 摄像头关了、离开准备：不在摆了
+  useEffect(() => {
+    if (!on) set({ cameraPlacing: false });
+    return () => set({ cameraPlacing: false });
+  }, [on]);
+  if (!rec || !shown) return null;
   const radius = rec.cameraShape === 'circle' ? '50%' : rec.cameraShape === 'rounded' ? size * 0.18 : 4;
   const down = (e: React.PointerEvent<HTMLDivElement>) => {
     if (e.button !== 0) return;
@@ -749,13 +819,14 @@ export function CameraFrame({ rect, s }: { rect: Rect; s: number }) {
   };
   return (
     <div
-      className="rec-camera"
+      ref={ref}
+      className={clsx('rec-camera', placing && 'rec-camera--placing')}
       style={{ transform: `translate(${sel.x + x}px, ${sel.y + y}px)`, width: size, height: size, borderRadius: radius }}
       title={t('record.cameraDrag')}
       onPointerDown={down}
     >
       <Camera size={Math.max(14, size * 0.18)} strokeWidth={1.5} />
-      <span>{t('record.cameraDrag')}</span>
+      <span>{placing ? t('record.cameraDrag') : t('record.cameraHint')}</span>
     </div>
   );
 }

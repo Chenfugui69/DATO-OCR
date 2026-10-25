@@ -22,7 +22,7 @@ import { useTranslation } from 'react-i18next';
 import { useEvent } from '@/lib/events';
 import { translate } from '@/lib/ipc';
 import { useSettings } from '@/lib/settings';
-import type { GlassTuning } from '@/lib/types';
+import type { GlassTuning, SolidDot } from '@/lib/types';
 import { BrandMark } from '@/ui/BrandMark';
 
 import { drawLens, lensBlur, lensFromTuning } from './liquidLens';
@@ -37,6 +37,7 @@ export type DotStyle = 'liquid' | 'frosted' | 'solid' | 'custom';
 export function GlassDot({
   style,
   tuning,
+  solid: solidColors,
   size,
   backdrop,
   dark,
@@ -46,6 +47,8 @@ export function GlassDot({
 }: {
   style: DotStyle;
   tuning?: GlassTuning;
+  /** 纯色圆点的配色（底色、图标、边框、阴影） */
+  solid?: SolidDot;
   size: number;
   backdrop: string | null;
   dark: boolean | null;
@@ -94,6 +97,14 @@ export function GlassDot({
     vars['--hi'] = ((custom.highlight / 100) * (tone === 'dark' ? 0.45 : 1)).toFixed(3);
     vars['--glow'] = ((custom.highlight / 200) * (tone === 'dark' ? 0.4 : 1)).toFixed(3);
   }
+  // 纯色：用户配的颜色、边框、阴影（没配的颜色跟着主题，见 GlassDotStyles）
+  if (solid && solidColors) {
+    if (solidColors.background) vars['--solid-bg'] = solidColors.background;
+    if (solidColors.icon) vars['--solid-fg'] = solidColors.icon;
+    if (solidColors.border) vars['--edge'] = solidColors.border;
+    vars['--edge-w'] = `${solidColors.borderWidth}px`;
+    vars['--drop'] = ((solidColors.shadow / 100) * 0.36).toFixed(3);
+  }
   const blur = custom ? (lensBlur(custom) * size) / 28 : 0;
   return (
     <div
@@ -132,7 +143,7 @@ export function GlassDotStyles() {
           width: calc(100% - 24px); height: calc(100% - 24px); border-radius: 50%;
           display: grid; place-items: center;
           color: rgba(50, 50, 56, 0.82);
-          box-shadow: 0 0 0 0.5px var(--edge), 0 1px 2px rgba(0, 0, 0, calc(var(--drop) * 0.8)), 0 3px 8px rgba(0, 0, 0, var(--drop));
+          box-shadow: 0 0 0 var(--edge-w, 0.5px) var(--edge), 0 1px 2px rgba(0, 0, 0, calc(var(--drop) * 0.8)), 0 3px 8px rgba(0, 0, 0, var(--drop));
           transition: color 140ms var(--cn-ease-out), transform 160ms var(--cn-ease-out);
           /* 出场要快：选完字眼睛就在找它 */
           animation: selbtn-in 140ms var(--cn-ease-out);
@@ -189,8 +200,8 @@ export function GlassDotStyles() {
         .selbtn:hover { color: rgba(0, 0, 0, 0.9); transform: scale(1.08); }
         [data-theme='dark'] .selbtn:not([data-tone='light']):hover, .selbtn[data-tone='dark']:hover { color: #fff; }
         /* 纯色：一块实心的圆，图标用主题色；深色模式换成深灰底。放在最后、选择器写重一点，盖过上面玻璃的颜色规则 */
-        .selbtn.selbtn[data-style='solid'], .selbtn.selbtn[data-style='solid']:hover { background: #fff; color: var(--cn-accent); --edge: rgba(0, 0, 0, 0.14); }
-        [data-theme='dark'] .selbtn.selbtn[data-style='solid'], [data-theme='dark'] .selbtn.selbtn[data-style='solid']:hover { background: #2c2c2e; color: var(--cn-accent); --edge: rgba(0, 0, 0, 0.5); }
+        .selbtn.selbtn[data-style='solid'], .selbtn.selbtn[data-style='solid']:hover { background: var(--solid-bg, #fff); color: var(--solid-fg, var(--cn-accent)); --edge: rgba(0, 0, 0, 0.14); }
+        [data-theme='dark'] .selbtn.selbtn[data-style='solid'], [data-theme='dark'] .selbtn.selbtn[data-style='solid']:hover { background: var(--solid-bg, #2c2c2e); color: var(--solid-fg, var(--cn-accent)); --edge: rgba(0, 0, 0, 0.5); }
         @keyframes selbtn-in { from { opacity: 0; transform: scale(0.7); } }
 
     `}</style>
@@ -208,6 +219,7 @@ export default function SelectionButton() {
       <GlassDot
         style={sel?.buttonStyle ?? 'liquid'}
         tuning={sel?.glass}
+        solid={sel?.solid}
         // 圆点多大由设置定（窗口已经按它摆好了），里面的图标跟着按比例变
         size={sel?.buttonSize ?? 28}
         backdrop={shown.backdrop}

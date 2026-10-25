@@ -10,6 +10,7 @@ import { currentMonitor, getCurrentWindow } from '@tauri-apps/api/window';
 import clsx from 'clsx';
 import { ChevronDown, Copy, FileSearch, Languages, RotateCw, ScanText, Sparkles } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { flushSync } from 'react-dom';
 import { useTranslation } from 'react-i18next';
 
 import { useEvent } from '@/lib/events';
@@ -32,6 +33,15 @@ const AI_MIN = 300;
 const AI_MAX = 900;
 /** 列之间拖动条的宽度 */
 const GUTTER = 8;
+/** AI 列滑出去用多久；最大化时（窗口不变宽）几列让出地方的过渡用多久 */
+const AI_OUT_MS = 180;
+const AI_GRID_MS = 280;
+
+/** AI 列的几个阶段：opening = 窗口在变宽、面板还藏着；closing = 面板在滑出去 */
+type AiPhase = 'closed' | 'opening' | 'open' | 'closing';
+
+const nextFrame = () => new Promise<void>((r) => requestAnimationFrame(() => r()));
+const wait = (ms: number) => new Promise<void>((r) => window.setTimeout(r, ms));
 
 function loadNumber(key: string, fallback: number, min: number, max: number): number {
   try {
@@ -75,7 +85,17 @@ export default function OcrView() {
   const [texts, setTexts] = useState<string[]>([]);
   const [hover, setHover] = useState<number | null>(null);
   const [showTranslate, setShowTranslate] = useState(false);
-  const [showAi, setShowAi] = useState(false);
+  const [ai, setAi] = useState<AiPhase>('closed');
+  const showAi = ai !== 'closed';
+  /** 网格里给 AI 列留着地方（关的时候面板先滑出去，再收这一列） */
+  const [aiCols, setAiCols] = useState(false);
+  /** 窗口变宽 / 变窄的那一下，图片、文字两列按像素定住，不跟着挤一下再弹回来 */
+  const [frozen, setFrozen] = useState<[number, number] | null>(null);
+  /** 最大化时窗口不能变宽：几列的宽度用过渡挪出地方 */
+  const [gridAnim, setGridAnim] = useState(false);
+  const imageRef = useRef<HTMLDivElement>(null);
+  const sideRef = useRef<HTMLDivElement>(null);
+  const aiBusy = useRef(false);
   const [keepBreaks, setKeepBreaks] = useState(false);
   /** 图片占 图片 + 文字 两列的比例 */
   const [split, setSplit] = useState(() => loadNumber('ocr.split', 0.5, 0.2, 0.8));
@@ -167,17 +187,14 @@ export default function OcrView() {
     listRef.current?.querySelector(`[data-index="${hover}"]`)?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
   }, [hover]);
 
-  // AI 是第三列：打开时窗口往右加宽一列，关掉时缩回去（放不下就贴着屏幕右边往左挪）
-  const toggleAi = async () => {
-    const next = !showAi;
-    setShowAi(next);
+  /** 窗口往右长出 / 收回一列 AI 的宽度（长不下就贴着屏幕右边往左挪），等页面真的变了宽再回来 */
+  const resizeForAi = async (dir: 1 | -1) => {
     const win = getCurrentWindow();
-    if (await win.isMaximized()) return;
     const scale = await win.scaleFactor();
     const size = (await win.innerSize()).toLogical(scale);
-    const width = size.width + (next ? 1 : -1) * (aiWidthRef.current + GUTTER);
-    await win.setSize(new LogicalSize(Math.max(640, width), size.height));
-    if (next) {
+    const width = Math.max(640, size.width + dir * (aiWidthRef.current + GUTTER));
+    await win.setSize(new LogicalSize(width, size.height));
+    if (dir > 0) {
       const monitor = await currentMonitor();
       if (monitor) {
         const pos = (await win.outerPosition()).toLogical(scale);
@@ -185,6 +202,70 @@ export default function OcrView() {
         const x = Math.max(monitor.position.x / scale, Math.min(pos.x, right - width));
         if (x !== pos.x) await win.setPosition(new LogicalPosition(x, pos.y));
       }
+    }
+    // 改窗口大小要过进程，页面的宽度晚一两帧才变
+    const t0 = performance.now();
+    while (Math.abs(window.innerWidth - width) > 2 && performance.now() - t0 < 500) await nextFrame();
+    await nextFrame();
+  };
+
+  // AI 是第三列：打开时窗口往右加宽一列、对话面板从右边滑进来；关掉时面板先滑出去，窗口再缩回去。
+  // 以前是这一列直接冒出来、先把图片和文字两列挤窄，窗口变宽后再弹回去
+  const toggleAi = async () => {
+    if (aiBusy.current) return;
+    aiBusy.current = true;
+    try {
+      const maximized = await getCurrentWindow().isMaximized();
+      const measure = (): [number, number] | null => {
+        const a = imageRef.current?.getBoundingClientRect().width;
+        const b = sideRef.current?.getBoundingClientRect().width;
+        return a && b ? [a, b] : null;
+      };
+      if (ai === 'closed') {
+        if (maximized) {
+          // 先按 0 宽排上这一列，下一帧再过渡到正常宽度
+          flushSync(() => setAi('opening'));
+          await nextFrame();
+          setGridAnim(true);
+          setAiCols(true);
+          setAi('open');
+          await wait(AI_GRID_MS);
+          setGridAnim(false);
+          return;
+        }
+        // 1. 两列按现在的宽度定住，AI 列排在它们右边（窗口还没变宽，它在窗口外面），面板先藏着
+        flushSync(() => {
+          setFrozen(measure());
+          setAiCols(true);
+          setAi('opening');
+        });
+        // 2. 窗口往右长出一列
+        await resizeForAi(1);
+        // 3. 两列换回按比例（窗口宽了，算出来还是这么宽，不会跳），面板滑进来
+        setFrozen(null);
+        setAi('open');
+        return;
+      }
+      if (ai !== 'open') return;
+      setAi('closing');
+      if (maximized) {
+        setGridAnim(true);
+        setAiCols(false);
+        await wait(AI_GRID_MS);
+        setGridAnim(false);
+        setAi('closed');
+        return;
+      }
+      await wait(AI_OUT_MS);
+      flushSync(() => {
+        setFrozen(measure());
+        setAiCols(false);
+        setAi('closed');
+      });
+      await resizeForAi(-1);
+      setFrozen(null);
+    } finally {
+      aiBusy.current = false;
     }
   };
 
@@ -236,12 +317,14 @@ export default function OcrView() {
         <div
           className="ocr-body"
           style={{
-            gridTemplateColumns: showAi
-              ? `minmax(0, ${split}fr) ${GUTTER}px minmax(0, ${1 - split}fr) ${GUTTER}px minmax(${AI_MIN}px, ${aiWidth}px)`
-              : `minmax(0, ${split}fr) ${GUTTER}px minmax(0, ${1 - split}fr)`,
+            // 一直是五列（AI 那两列关着时宽 0）：最大化时开关 AI 列能过渡
+            gridTemplateColumns: `${
+              frozen ? `${frozen[0]}px ${GUTTER}px ${frozen[1]}px` : `minmax(0, ${split}fr) ${GUTTER}px minmax(0, ${1 - split}fr)`
+            } ${aiCols ? `${GUTTER}px ${frozen ? `${aiWidth}px` : `minmax(${AI_MIN}px, ${aiWidth}px)`}` : '0px minmax(0px, 0px)'}`,
+            transition: gridAnim ? `grid-template-columns ${AI_GRID_MS}ms var(--cn-ease-out)` : undefined,
           }}
         >
-          <div className="ocr-image">
+          <div ref={imageRef} className="ocr-image">
             <ImageViewer
               src={assetUrl(job.imagePath)}
               width={job.width}
@@ -277,6 +360,7 @@ export default function OcrView() {
             }}
           />
           <div
+            ref={sideRef}
             className={clsx('ocr-side', showTranslate && job.status === 'done' && 'ocr-side--split')}
             style={showTranslate && job.status === 'done' ? { gridTemplateRows: `minmax(0, ${textSplit}fr) ${GUTTER}px minmax(0, ${1 - textSplit}fr)` } : undefined}
           >
@@ -353,6 +437,7 @@ export default function OcrView() {
             <>
               <div
                 className="ocr-splitter"
+                data-phase={ai}
                 onPointerDown={(e) => {
                   // 拖的是 AI 列的左边：往左拖变宽，图片和文字两列按比例让出空间
                   const body = e.currentTarget.parentElement?.getBoundingClientRect();
@@ -370,7 +455,7 @@ export default function OcrView() {
                   );
                 }}
               />
-              <div className="ocr-translate ocr-ai">
+              <div className="ocr-translate ocr-ai" data-phase={ai} style={gridAnim ? { minWidth: aiWidth } : undefined}>
                 <AiChat context={{ text: fullText, images: [], source: 'ocr' }} resetKey={job.id} />
               </div>
             </>
@@ -393,7 +478,7 @@ export default function OcrView() {
           disabled={job?.status !== 'done' || !fullText}
           onClick={() => void toggleAi()}
         >
-          {showAi ? t('ai.hide') : t('ai.ask')}
+          {ai === 'opening' || ai === 'open' ? t('ai.hide') : t('ai.ask')}
         </Button>
         <DropdownMenu
           align="start"

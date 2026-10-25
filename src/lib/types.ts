@@ -85,6 +85,8 @@ export interface Settings {
       buttonStyle: 'liquid' | 'frosted' | 'solid' | 'custom';
       /** 自定义玻璃（样式选"自定义"时用） */
       glass: GlassTuning;
+      /** 纯色圆点的配色（样式选"纯色"时用） */
+      solid: SolidDot;
       /** 选中系统语言的文字时不弹按钮 */
       skipSystemLanguage: boolean;
       /** 选中这些语言的文字时不弹按钮 */
@@ -398,6 +400,8 @@ export interface GifStateEvent {
   active: boolean;
   monitorId: number;
   rect: PhysicalRect;
+  /** 录完回到录制准备（active = false 时）：录制框留在 rect */
+  prep: boolean;
 }
 
 export interface GifProgress {
@@ -785,7 +789,8 @@ export interface ClipChanged {
 
 /** 截图原位翻译的结果（坐标是本屏局部物理像素） */
 export interface RegionTranslation {
-  blocks: { x: number; y: number; width: number; height: number; lineHeight: number; source: string; text: string }[];
+  /** bold：原文是粗体（标题、表头），译文也用粗体 */
+  blocks: { x: number; y: number; width: number; height: number; lineHeight: number; source: string; text: string; bold: boolean; fontSize: number }[];
   provider: string;
   from: string;
   to: string;
@@ -837,6 +842,17 @@ export type MailCodesStatus = (
 };
 
 /** 划词按钮的自定义玻璃：都是 0 ~ 100，默认值就是"液态玻璃"的样子 */
+/** 纯色划词圆点的配色：颜色 #RRGGBB，空 = 跟着深浅色主题 */
+export interface SolidDot {
+  background: string;
+  icon: string;
+  border: string;
+  /** 边框粗细（0 ~ 4） */
+  borderWidth: number;
+  /** 阴影浓淡（0 ~ 100） */
+  shadow: number;
+}
+
 export interface GlassTuning {
   dispersion: number;
   blur: number;

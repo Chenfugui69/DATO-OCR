@@ -64,7 +64,7 @@ import { saveTemplate } from '@/views/annotate/templates';
 import { GifUI } from './GifUI';
 import { LongshotUI } from './LongshotUI';
 import { Magnifier } from './Magnifier';
-import { get, initialOverlay, set, useOverlay, type CaptureStructured, type LoadingLine } from './store';
+import { get, glassAt, initialOverlay, set, useOverlay, type CaptureStructured, type LoadingLine } from './store';
 import { TranslationText } from './TranslationText';
 
 const MONITOR_ID = Number(windowLabel().replace('capture-', ''));
@@ -332,6 +332,8 @@ async function startSession() {
   // 录制中又开了一次截图：录制的会话记下来，截完（gif-state 回来时）放回去
   const phase0 = get().phase;
   if (phase0 === 'gif' || phase0 === 'gif-other') recordingSession = get().session;
+  const oldGlass = get().glass;
+  if (oldGlass) URL.revokeObjectURL(oldGlass);
 
   engine.reset();
   // 水印每次截图都从关着开始（工具的其他选项照旧记着）
@@ -453,9 +455,6 @@ async function glassOf(bmp: ImageBitmap): Promise<string> {
   return URL.createObjectURL(await canvas.convertToBlob({ type: 'image/png' }));
 }
 
-/** 工具条（CSS 像素）位置写给磨砂玻璃的底图对齐用，见 capture.css 的 --gx / --gy */
-const glassAt = (x: number, y: number) => ({ '--gx': `${x}px`, '--gy': `${y}px` }) as React.CSSProperties;
-
 function endSession() {
   pendingMove = null;
   if (moveFrame) cancelAnimationFrame(moveFrame);
@@ -463,13 +462,15 @@ function endSession() {
   pixels = null;
   bitmap?.close();
   bitmap = null;
+  // 录制中开的截图结束、要换回录制界面：这次的磨砂底图留给录制的工具条
   const glass = get().glass;
-  if (glass) URL.revokeObjectURL(glass);
+  const keepGlass = recordingSession ? glass : null;
+  if (glass && !keepGlass) URL.revokeObjectURL(glass);
   engine.reset();
   window.clearTimeout(childTimer);
   window.clearTimeout(elementTimer);
   elementCache.clear();
-  set({ ...initialOverlay() });
+  set({ ...initialOverlay(), glass: keepGlass });
 }
 
 function cancel() {
@@ -509,14 +510,14 @@ function intentAction(intent: CaptureIntent): FinishAction {
   return intent === 'normal' ? 'copy' : intent;
 }
 
-async function finish(action: FinishAction | 'cancel') {
+async function finish(action: FinishAction | 'cancel'): Promise<boolean> {
   const { session, selection, busy } = get();
-  if (!session || busy) return;
+  if (!session || busy) return false;
   if (action === 'cancel') {
     cancel();
-    return;
+    return true;
   }
-  if (!selection) return;
+  if (!selection) return false;
   if (engine.text) engine.commitText();
   rememberSelection(MONITOR_ID, selection);
   set({ busy: true, sizePanel: false });
@@ -533,9 +534,11 @@ async function finish(action: FinishAction | 'cancel') {
       },
       layer?.png ?? new Uint8Array(),
     );
+    return true;
   } catch (err) {
     notify.error(err);
     reportError('capture-finish', err);
+    return false;
   } finally {
     set({ busy: false });
   }
@@ -565,11 +568,10 @@ function enterRecordPrep() {
 
 let countdownTimer: number | undefined;
 
-function exitRecordPrep() {
+/** 倒数时再点一下开始 / 按 Esc：不录了，录制框还在 */
+function cancelCountdown() {
   window.clearInterval(countdownTimer);
-  set({ recordPrep: false, recordQuiet: false, countdown: null, recordPanel: null });
-  const s = get().session;
-  if (s) void gif.prep(s.sessionId, MONITOR_ID, false).catch((err) => reportError('record-prep', err));
+  set({ countdown: null });
 }
 
 /** 开始录：设置里有倒数就先倒数（选区正中一个大数字），再开始 */
@@ -581,8 +583,11 @@ function startRecording() {
   if (settings?.record.progress === 'time') sendGlyphs();
   const go = () => {
     window.clearInterval(countdownTimer);
-    set({ countdown: null, recordPanel: null });
-    void finish('record');
+    // 选区里准备时才有的东西（格式提示、效果预览、摄像头的位置框）先撤掉、画到屏上，再开始录：一帧也别录进去
+    flushSync(() => set({ countdown: null, recordPanel: null, recordGo: true }));
+    requestAnimationFrame(() =>
+      requestAnimationFrame(() => void finish('record').then((ok) => !ok && set({ recordGo: false }))),
+    );
   };
   const n = settings?.record.countdown ?? 0;
   if (n <= 0) return go();
@@ -817,6 +822,12 @@ function onPointerDown(e: React.PointerEvent) {
   // 选区面板、按钮组的二级条开着时点别处：先收起（它们自己的点击不会冒泡到这里）
   if (st.sizePanel || st.toolbarGroup) set({ sizePanel: false, toolbarGroup: null });
   if (e.button === 2) {
+    // 录制框里选着画图工具（这时整块屏都收鼠标）：右键放下工具，鼠标又能穿过去操作底下的程序
+    if ((st.recordPrep || st.phase === 'gif') && st.tool) {
+      set({ tool: null });
+      swallowMenu = true;
+      return;
+    }
     // 打字时右键和左键一样：提交文字，不退出截图（防止打完字误触右键全没了）
     if (engine.text) {
       engine.commitText();
@@ -835,8 +846,8 @@ function onPointerDown(e: React.PointerEvent) {
   }
   (e.target as Element).setPointerCapture?.(e.pointerId);
 
-  // 录制中选着演示工具：在选区里画（没选工具时遮罩是穿透的，收不到点击）
-  if (st.phase === 'gif' && st.tool && st.tool !== 'text' && st.selection && contains(st.selection, p)) {
+  // 录制中选着演示工具：哪里都能画（出了录制框的部分画淡一点，录不进去）；没选工具时遮罩是穿透的，收不到点击
+  if (st.phase === 'gif' && st.tool && st.tool !== 'text' && st.selection) {
     engine.select(null);
     engine.begin(st.tool, p, st.options);
     return;
@@ -873,7 +884,8 @@ function onPointerDown(e: React.PointerEvent) {
   }
   engine.select(null);
   if (st.tool) {
-    if (!contains(sel, p)) return;
+    // 录制框外面也能画（画淡一点，录不进去）；截图时只在选区里画
+    if (!contains(sel, p) && !st.recordPrep) return;
     if (st.tool === 'text') engine.startText(p, st.options);
     else engine.begin(st.tool, p, st.options);
     return;
@@ -1127,10 +1139,12 @@ function onKeyDown(e: KeyboardEvent) {
 
   if (key === 'Escape') {
     e.preventDefault();
-    // 录制准备：先收起弹层，再停掉倒数 / 退回普通截图
+    // 录制准备：先收起弹层，再停掉倒数，再放下画图工具，再按一次整个关掉（不退回截图）
     if (st.recordPrep) {
       if (st.recordPanel) set({ recordPanel: null });
-      else exitRecordPrep();
+      else if (st.countdown != null) cancelCountdown();
+      else if (st.tool) set({ tool: null });
+      else cancel();
       return;
     }
     // 先收起二维码结果 / 选区面板，再取消选中的标注，再按一次才退出截图
@@ -1938,6 +1952,7 @@ export default function CaptureView() {
   const structured = useOverlay((x) => x.structured);
   const recordPrep = useOverlay((x) => x.recordPrep);
   const recordQuiet = useOverlay((x) => x.recordQuiet);
+  const recordGo = useOverlay((x) => x.recordGo);
   const glass = useOverlay((x) => x.glass);
   const autoCodes = useOverlay((x) => x.autoCodes);
   const shape = useOverlay((x) => x.shape);
@@ -1964,6 +1979,9 @@ export default function CaptureView() {
   useEffect(() => {
     engine.attach(committed.current, drafting.current);
   }, [session?.sessionId]);
+  // 录制框外面不压暗：画出框的那截标注照样画、但淡一些，看得出不会录进去
+  const ghost = recordPrep || phase === 'gif';
+  useEffect(() => engine.setGhostOutside(ghost), [ghost]);
 
   useEffect(() => {
     const unsubs: Promise<() => void>[] = [
@@ -1987,6 +2005,12 @@ export default function CaptureView() {
       on('gif-state', (p) => {
         if (!p.active) {
           recordingSession = null;
+          // 录完回到录制准备：录制框留着（Rust 已经把遮罩换回准备时的穿透），接着录 / 打开文件夹 / Esc 关掉
+          if (p.prep && get().session) {
+            if (p.monitorId === MONITOR_ID) {
+              set({ phase: 'editing', selection: p.rect, gif: null, recordPrep: true, recordQuiet: true, recordGo: false, countdown: null, recordPanel: null });
+            } else set({ phase: 'passive', recordQuiet: true });
+          }
           return;
         }
         // 录制中开的截图结束了：截图那次的会话已经收掉，换回录制的
@@ -1994,7 +2018,7 @@ export default function CaptureView() {
         recordingSession = null;
         if (p.monitorId === MONITOR_ID) {
           // 准备时画的演示标注、选着的演示工具都留着（录进去）
-          set({ phase: 'gif', selection: p.rect, gif: null, recordPrep: false, countdown: null, recordPanel: null });
+          set({ phase: 'gif', selection: p.rect, gif: null, recordPrep: false, recordGo: false, countdown: null, recordPanel: null });
         } else set({ phase: 'gif-other' });
       }),
       on('gif-progress', (p) => set({ gif: p })),
@@ -2052,12 +2076,12 @@ export default function CaptureView() {
 
   return (
     <div
-      className={clsx('cap-root', cfg?.toolbarStyle === 'flat' && 'an-flat')}
+      className={clsx('cap-root', (cfg?.toolbarStyle ?? 'flat') === 'flat' && 'an-flat')}
       // 自动化测试读预选框用（几何，物理像素）
       data-hover={(phase === 'detect' || phase === 'pressing') && hover ? `${hover.x},${hover.y},${hover.width},${hover.height}` : undefined}
       data-phase={phase}
-      // 工具条样式：半透明（默认）/ 磨砂玻璃（底图生成好了才有 data-glass）/ 扁平
-      data-toolbar-style={cfg?.toolbarStyle ?? 'glass'}
+      // 工具条样式：扁平（默认）/ 半透明 / 磨砂玻璃（底图生成好了才有 data-glass-ready）
+      data-toolbar-style={cfg?.toolbarStyle ?? 'flat'}
       data-glass-ready={glass ? '' : undefined}
       style={{
         // 只有框选时是十字；编辑时按工具：画笔、手绘马赛克是圆圈，文字是 I 形，挪动标注是四向箭头
@@ -2103,14 +2127,23 @@ export default function CaptureView() {
           </div>
           {recordPrep ? (
             <>
-              <EffectsPreview rect={selection} s={s} />
+              {!recordGo && <EffectsPreview rect={selection} s={s} />}
               <KeyHud rect={selection} s={s} />
               <PrepEdges rect={selection} s={s} viewport={viewport} />
-              <LiveDrawRegion rect={selection} s={s} report={(id, r) => setRegion(id, r, s)} />
-              <RecordToolbar rect={selection} s={s} viewport={viewport} live={false} engine={engine} onStart={startRecording} onExit={exitRecordPrep} />
+              <LiveDrawRegion s={s} viewport={viewport} report={(id, r) => setRegion(id, r, s)} />
+              <RecordToolbar
+                rect={selection}
+                s={s}
+                viewport={viewport}
+                live={false}
+                engine={engine}
+                onStart={startRecording}
+                onCancelCountdown={cancelCountdown}
+                onExit={cancel}
+              />
               <MoveHandle rect={selection} s={s} viewport={viewport} live={false} />
-              <RecordHints rect={selection} s={s} />
-              <CameraFrame rect={selection} s={s} />
+              {!recordGo && <RecordHints rect={selection} s={s} />}
+              {!recordGo && <CameraFrame rect={selection} s={s} />}
               <Countdown rect={selection} s={s} />
             </>
           ) : (
@@ -2138,10 +2171,10 @@ export default function CaptureView() {
       {phase === 'gif' && selection && (
         <>
           <GifUI rect={selection} s={s} />
-          <RecordToolbar rect={selection} s={s} viewport={viewport} live engine={engine} onStart={() => {}} onExit={() => void gif.cancel()} />
+          <RecordToolbar rect={selection} s={s} viewport={viewport} live engine={engine} onStart={() => {}} onCancelCountdown={() => {}} onExit={() => void gif.cancel()} />
           <MoveHandle rect={selection} s={s} viewport={viewport} live />
           <KeyHud rect={selection} s={s} />
-          <LiveDrawRegion rect={selection} s={s} report={(id, r) => setRegion(id, r, s)} />
+          <LiveDrawRegion s={s} viewport={viewport} report={(id, r) => setRegion(id, r, s)} />
           <LiveCapturable engine={engine} />
         </>
       )}

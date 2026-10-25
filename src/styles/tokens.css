@@ -177,3 +177,18 @@
   --cn-shadow-lg: 0 8px 32px rgba(0, 0, 0, 0.44), 0 2px 8px rgba(0, 0, 0, 0.28);
   --cn-shadow-xl: 0 16px 48px rgba(0, 0, 0, 0.5), 0 4px 12px rgba(0, 0, 0, 0.3);
 }
+
+/* 繁体、日文、韩文界面：汉字要用各自地区的字形（同一个字简繁日韩写法不一样，用简体字体显示日文
+   会出现中国式的字形），换成各系统自带的对应 UI 字体 */
+:root:lang(zh-TW) {
+  --cn-font-sans: -apple-system, 'SF Pro Text', 'PingFang TC', 'Segoe UI Variable Text', 'Segoe UI', 'Microsoft JhengHei UI',
+    'Microsoft JhengHei', system-ui, sans-serif;
+}
+:root:lang(ja) {
+  --cn-font-sans: -apple-system, 'SF Pro Text', 'Hiragino Sans', 'Hiragino Kaku Gothic ProN', 'Segoe UI Variable Text', 'Segoe UI',
+    'Yu Gothic UI', 'Meiryo UI', 'Meiryo', system-ui, sans-serif;
+}
+:root:lang(ko) {
+  --cn-font-sans: -apple-system, 'SF Pro Text', 'Apple SD Gothic Neo', 'Segoe UI Variable Text', 'Segoe UI', 'Malgun Gothic',
+    system-ui, sans-serif;
+}
