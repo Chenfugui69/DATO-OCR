@@ -98,6 +98,8 @@ pub struct Progress {
     pub preview_version: u64,
     /// 最近接缝在预览图里的 y（预览像素）
     pub seam: Option<f64>,
+    /// 最近一次是往上拼的（往回滚）：预览条往上长
+    pub grew_up: bool,
 }
 
 pub fn start(
@@ -586,6 +588,7 @@ fn emit_progress(app: &AppHandle, status: &'static str) {
             failures: a.failures,
             preview_version: a.preview_version,
             seam: a.stitcher.last_seam.map(|y| f64::from(y) * a.thumb_scale),
+            grew_up: a.stitcher.grew_up,
         }
     };
     let _ = app.emit(events::LONGSHOT_PROGRESS, progress);

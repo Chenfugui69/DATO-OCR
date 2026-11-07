@@ -10,7 +10,7 @@ use std::sync::Arc;
 use image::RgbaImage;
 use parking_lot::Mutex;
 use serde::Serialize;
-use tauri::{AppHandle, Manager};
+use tauri::{AppHandle, Emitter, Manager};
 
 use crate::error::{AppError, AppResult};
 use crate::platform::{self, FloatingKind};
@@ -370,6 +370,8 @@ pub fn release_click_through(app: &AppHandle) {
             let _ = window.set_ignore_cursor_events(false);
         }
     }
+    // 贴图上"穿透中"的标记收起来
+    let _ = app.emit("pin-click-through", false);
 }
 
 pub fn close_all(app: &AppHandle) {

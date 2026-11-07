@@ -11,7 +11,7 @@
 import { PhysicalPosition, PhysicalSize } from '@tauri-apps/api/dpi';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import clsx from 'clsx';
-import { Copy, FileSpreadsheet, PenLine, Sigma, Table2, X } from 'lucide-react';
+import { Copy, FileSpreadsheet, MousePointerClick, PenLine, Sigma, Table2, X } from 'lucide-react';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
@@ -148,6 +148,9 @@ function PinFormula({
   );
 }
 
+/** 右键菜单里不透明度那一排的几档（%） */
+const OPACITY_STEPS = [30, 50, 70, 100];
+
 export default function PinView() {
   const { t } = useTranslation();
   const [info, setInfo] = useState<PinInfo | null>(null);
@@ -155,6 +158,9 @@ export default function PinView() {
   const [opacity, setOpacity] = useState(1);
   const [collapsed, setCollapsed] = useState(false);
   const [onTop, setOnTop] = useState(true);
+  /** 鼠标穿透中：贴图上挂一个标记，告诉用户怎么取消（这时贴图收不到鼠标，右键菜单也打不开） */
+  const [through, setThrough] = useState(false);
+  useEvent('pin-click-through', (on) => setThrough(on));
   const [closing, setClosing] = useState(false);
   const zoomRef = useRef(1);
   const [texts, setTexts] = useState<PinText[] | null>(null);
@@ -389,9 +395,12 @@ export default function PinView() {
       flipH: () => void transform('flipH').catch(notify.error),
       flipV: () => void transform('flipV').catch(notify.error),
       originalSize: () => void applyZoom(1),
-      opacity: () => setOpacity(1),
-      // 鼠标穿透：点到贴图上等于点到它下面的窗口；从托盘菜单"取消贴图的鼠标穿透"恢复
+      ...Object.fromEntries(OPACITY_STEPS.map((v) => [`opacity${v}`, () => setOpacity(v / 100)])),
+      // 鼠标穿透：点到贴图上等于点到它下面的窗口；从托盘菜单"取消贴图的鼠标穿透"恢复。
+      // 不透明的贴图穿透了也看不到后面，等于白穿透：顺手调成半透明（本来就更透的不动）
       clickThrough: () => {
+        setOpacity((o) => Math.min(o, 0.5));
+        setThrough(true);
         void win.setIgnoreCursorEvents(true);
         void system.toast('info', t('pin.clickThroughHint'));
       },
@@ -423,7 +432,11 @@ export default function PinView() {
       },
       sep,
       item('originalSize', t('pin.originalSize'), { disabled: zoomRef.current === 1 }),
-      item('opacity', t('pin.fullOpacity'), { disabled: opacity === 1 }),
+      {
+        kind: 'row',
+        label: t('pin.opacity'),
+        items: OPACITY_STEPS.map((v) => ({ id: `opacity${v}`, label: `${v}%`, text: `${v}%`, on: Math.round(opacity * 100) === v })),
+      },
       item('clickThrough', t('pin.clickThrough')),
       item('onTop', t('pin.alwaysOnTop'), { checked: onTop }),
       sep,
@@ -618,10 +631,20 @@ export default function PinView() {
           </div>
         </div>
       )}
+      {/* 穿透中的标记：不跟着贴图变透明，一直看得清；贴图太窄就只留图标 */}
+      {through && !collapsed && (
+        <div className="pin-through" style={{ left: info.margin + 6, top: info.margin + 6, maxWidth: Math.max(28, imgW - 12) }} title={t('pin.throughBadge')}>
+          <MousePointerClick size={12} strokeWidth={1.8} />
+          {imgW >= 140 && <span>{t('pin.throughBadge')}</span>}
+        </div>
+      )}
       <style>{`
         html[data-view='pin'], html[data-view='pin'] body { background: transparent !important; }
         /* 不做出现动画：贴图要原地、原样接替截图选区，一缩一放就成了"跳一下" */
         .pin-root { position: fixed; inset: 0; }
+        .pin-through { position: absolute; z-index: 7; display: flex; align-items: center; gap: 5px; height: 22px; padding: 0 8px; border-radius: 11px; background: var(--cn-accent); color: #fff; font: 500 11px/1 var(--cn-font-sans); white-space: nowrap; overflow: hidden; box-shadow: 0 2px 8px rgba(0,0,0,0.25); pointer-events: none; animation: pin-through-in 220ms var(--cn-ease-out); }
+        .pin-through span { overflow: hidden; text-overflow: ellipsis; }
+        @keyframes pin-through-in { from { opacity: 0; transform: translateY(-3px); } }
         .pin-root[data-closing] { animation: pin-out 120ms var(--cn-ease-in) forwards; }
         .pin-frame { position: relative; line-height: 0; border-radius: 2px; box-shadow: 0 4px 12px rgba(0,0,0,0.28), 0 0 0 0.5px rgba(0,0,0,0.25); transition: opacity 120ms; }
         .pin-frame img { display: block; }

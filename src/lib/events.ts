@@ -43,6 +43,8 @@ export interface EventMap {
   /** 自己画的右键菜单：要显示的菜单项（菜单窗口收）/ 选了哪一项（要菜单的窗口收） */
   'popmenu-items': { owner: string; items: PopItem[] };
   'popmenu-select': string;
+  /** 贴图的鼠标穿透被（托盘菜单）取消了 */
+  'pin-click-through': boolean;
   'clipboard-changed': ClipChanged;
   'clipboard-panel-show': { style: 'bottom' | 'vertical' };
   /** 大预览窗口要显示哪一条 */

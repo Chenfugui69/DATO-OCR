@@ -285,6 +285,8 @@ pub struct Stitcher {
     checkpoint: Option<Snapshot>,
     /// 最近一次并入的接缝位置（长图坐标），预览条上画一条线方便发现拼歪
     pub last_seam: Option<u32>,
+    /// 最近一次是往上拼的（往回滚、内容加在长图顶上）：预览条跟着往上长
+    pub grew_up: bool,
     /// 上个撤销点以来单帧滚过的最多行数（日志里看滚得有多快）
     pub max_step: u32,
 }
@@ -313,6 +315,7 @@ impl Stitcher {
             history: Vec::new(),
             checkpoint: None,
             last_seam: None,
+            grew_up: false,
             max_step: 0,
         }
     }
@@ -540,6 +543,7 @@ impl Stitcher {
             let take = (i64::from(self.content_len) + c - self.view_top.max(0)).min(c) as u32;
             if overflow > 0 {
                 self.last_seam = Some(self.header as u32 + self.content_len);
+                self.grew_up = false;
             }
             self.slices.push_back(Slice {
                 frame: index,
@@ -558,6 +562,7 @@ impl Stitcher {
             self.content_len += rows;
             self.view_top = 0;
             self.last_seam = Some(self.header as u32 + rows);
+            self.grew_up = true;
         } else {
             return false;
         }

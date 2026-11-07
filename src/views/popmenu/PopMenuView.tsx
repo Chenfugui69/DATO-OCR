@@ -121,10 +121,18 @@ export default function PopMenuView() {
               <div key={i} className="pm-row" role="group" aria-label={it.label}>
                 <span className="pm-row__label">{it.label}</span>
                 {it.items.map((b) => {
-                  const I = ICONS[b.icon] ?? Copy;
+                  const I = (b.icon && ICONS[b.icon]) || Copy;
                   return (
-                    <button key={b.id} type="button" className="pm-icon" title={b.label} aria-label={b.label} onClick={() => void popmenu.pick(b.id)}>
-                      <I size={16} strokeWidth={1.6} />
+                    <button
+                      key={b.id}
+                      type="button"
+                      className={clsx('pm-icon', b.text && 'pm-icon--text', b.on && 'is-on')}
+                      title={b.label}
+                      aria-label={b.label}
+                      aria-pressed={b.on}
+                      onClick={() => void popmenu.pick(b.id)}
+                    >
+                      {b.text ?? <I size={16} strokeWidth={1.6} />}
                     </button>
                   );
                 })}
@@ -180,6 +188,8 @@ export default function PopMenuView() {
           background: transparent; color: var(--cn-label-secondary); cursor: default;
         }
         .pm-icon:hover { background: var(--cn-bg-hover); color: var(--cn-label); }
+        .pm-icon--text { width: auto; min-width: 34px; padding: 0 5px; font: 500 11.5px/1 var(--cn-font-sans); font-variant-numeric: tabular-nums; }
+        .pm-icon.is-on { background: var(--cn-accent); color: var(--cn-label-on-accent, #fff); }
       `}</style>
     </div>
   );

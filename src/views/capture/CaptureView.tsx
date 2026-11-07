@@ -7,7 +7,7 @@ import clsx from 'clsx';
 import './capture.css';
 import '@/views/annotate/annotate.css';
 
-import { Copy, Eye, Languages, Lock, Move, X } from 'lucide-react';
+import { Columns2, Copy, Eye, Languages, Lock, Move, X } from 'lucide-react';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { flushSync } from 'react-dom';
 import { useTranslation } from 'react-i18next';
@@ -643,7 +643,7 @@ async function recognizeStructure(kind: 'table' | 'formula', wanted?: 'local' | 
   // 和原位翻译盖在同一块地方：先把译文去掉
   if (engine.hasGroup(TRANSLATION_GROUP)) {
     engine.removeGroup(TRANSLATION_GROUP);
-    set({ showOriginal: false, moveLabels: false, translatedBlocks: [] });
+    set({ showOriginal: false, compare: false, moveLabels: false, translatedBlocks: [] });
   }
   // 表格默认本地识别；公式下载了本地模型也先本地认（没下载的 Rust 那边直接交给 AI）
   const how = wanted ?? 'local';
@@ -801,7 +801,7 @@ async function translateInPlace() {
     // 默认锁着：鼠标在译文上是选字，打开"移动"才能拖
     engine.setGroupLocked(TRANSLATION_GROUP, true);
     engine.revealGroup(TRANSLATION_GROUP, (rc) => revealDelay(rc.y, selection));
-    set({ showOriginal: false, moveLabels: false, translatedBlocks: r.blocks, translatedText: r.blocks.map((b) => b.text).join('\n') });
+    set({ showOriginal: false, compare: false, moveLabels: false, translatedBlocks: r.blocks, translatedText: r.blocks.map((b) => b.text).join('\n') });
   } catch (err) {
     notify.error(err);
   } finally {
@@ -1601,6 +1601,7 @@ function TranslationBar({ css }: { css: { x: number; y: number; width: number } 
   useEngineVersion(engine);
   const showOriginal = useOverlay((x) => x.showOriginal);
   const moveLabels = useOverlay((x) => x.moveLabels);
+  const compare = useOverlay((x) => x.compare);
   const text = useOverlay((x) => x.translatedText);
   const ref = useRef<HTMLDivElement>(null);
   const size = useElementSize(ref, { width: 220, height: 34 });
@@ -1639,6 +1640,9 @@ function TranslationBar({ css }: { css: { x: number; y: number; width: number } 
       >
         <Move size={14} strokeWidth={1.75} />
       </button>
+      <button type="button" className={compare ? 'is-on' : ''} title={t('capture.compareTip')} aria-pressed={compare} onClick={() => set({ compare: !compare })}>
+        <Columns2 size={14} strokeWidth={1.75} />
+      </button>
       <span className="cap-trbar__sep" />
       <button
         type="button"
@@ -1657,13 +1661,56 @@ function TranslationBar({ css }: { css: { x: number; y: number; width: number } 
         title={t('capture.removeTranslation')}
         onClick={() => {
           engine.removeGroup(TRANSLATION_GROUP);
-          set({ showOriginal: false, moveLabels: false, translatedBlocks: [] });
+          set({ showOriginal: false, compare: false, moveLabels: false, translatedBlocks: [] });
         }}
       >
         <X size={14} strokeWidth={1.75} />
       </button>
     </div>
   );
+}
+
+/**
+ * 原位翻译后的对照图：选区里的原图（冻结画面里截出来的）并排摆在选区旁边，哪边地方大放哪边，
+ * 放不下就等比缩小。只是看的，不挡鼠标、不进导出的图
+ */
+const COMPARE_GAP = 12;
+const COMPARE_EDGE = 8;
+
+function OriginalCompare({ rect, s, viewport }: { rect: Rect; s: number; viewport: { width: number; height: number } }) {
+  const compare = useOverlay((x) => x.compare);
+  const bitmapReady = useOverlay((x) => x.bitmapReady);
+  const ref = useRef<HTMLCanvasElement>(null);
+  useEngineVersion(engine);
+  const on = compare && bitmapReady && engine.hasGroup(TRANSLATION_GROUP);
+  useEffect(() => {
+    const canvas = ref.current;
+    const ctx = canvas?.getContext('2d');
+    if (!on || !canvas || !ctx || !bitmap) return;
+    canvas.width = Math.max(1, Math.round(rect.width));
+    canvas.height = Math.max(1, Math.round(rect.height));
+    ctx.drawImage(bitmap, rect.x, rect.y, rect.width, rect.height, 0, 0, canvas.width, canvas.height);
+  }, [on, rect.x, rect.y, rect.width, rect.height]);
+  if (!on) return null;
+  const css = { x: rect.x / s, y: rect.y / s, width: rect.width / s, height: rect.height / s };
+  const right = viewport.width - (css.x + css.width) - COMPARE_GAP - COMPARE_EDGE;
+  const left = css.x - COMPARE_GAP - COMPARE_EDGE;
+  const onRight = right >= left;
+  const room = Math.max(right, left);
+  // 两边都几乎没地方（选区差不多占满屏）：缩成选区一半大，压在选区上面的角落里
+  const tight = room < Math.min(160, css.width * 0.35);
+  const scale = Math.min(1, (tight ? css.width * 0.5 : room) / css.width, (viewport.height - COMPARE_EDGE * 2) / css.height);
+  const w = css.width * scale;
+  const h = css.height * scale;
+  const x = tight
+    ? onRight
+      ? css.x + css.width - w - COMPARE_EDGE
+      : css.x + COMPARE_EDGE
+    : onRight
+      ? css.x + css.width + COMPARE_GAP
+      : css.x - COMPARE_GAP - w;
+  const y = Math.min(viewport.height - COMPARE_EDGE - h, Math.max(COMPARE_EDGE, tight ? css.y + css.height - h - COMPARE_EDGE : css.y));
+  return <canvas ref={ref} className="cap-compare" style={{ left: x, top: y, width: w, height: h }} />;
 }
 
 /** 原位翻译后叠在选区上的可选文字（见 TranslationText）。翻译中、打开了"移动"时不显示 */
@@ -1956,6 +2003,7 @@ function Toolbars({
         />
       )}
       <TranslationBar css={css} />
+      <OriginalCompare rect={rect} s={s} viewport={viewport} />
       <TranslateLoading s={s} />
       {intent !== 'normal' && !engine.hasGroup(TRANSLATION_GROUP) && !hasStructured && (
         // 选区左上角是尺寸提示，这条提示靠右上角放；选区太窄就排在尺寸提示右边，不压在它上面

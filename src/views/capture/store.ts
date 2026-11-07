@@ -54,6 +54,8 @@ export interface OverlayState {
   translating: boolean;
   /** 原位翻译后切到"看原文" */
   showOriginal: boolean;
+  /** 原位翻译后在选区旁边并排摆一张原图对照 */
+  compare: boolean;
   /** 原位翻译的全部译文（复制用） */
   translatedText: string;
   /** 原位翻译的各块（原文、位置）：看原文时在上面铺可选的文字 */
@@ -124,6 +126,7 @@ export const initialOverlay = (): Omit<OverlayState, 'options'> => ({
   busy: false,
   translating: false,
   showOriginal: false,
+  compare: false,
   translatedText: '',
   translatedBlocks: [],
   moveLabels: false,
