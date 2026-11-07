@@ -122,10 +122,10 @@ impl CaptureState {
 
     /// 用户在截图 / 录制中途打开了别的窗口：这次（连同录制中开的截图外面那次录制）结束时不抢焦点
     pub fn focus_moved_elsewhere(&self) {
-        for s in [self.current.lock().clone(), self.outer.lock().clone()]
-            .into_iter()
-            .flatten()
-        {
+        // 一把一把地拿，别同时握着两把锁（`end_session` 里是先 outer 后 current）
+        let current = self.current.lock().clone();
+        let outer = self.outer.lock().clone();
+        for s in [current, outer].into_iter().flatten() {
             s.focus_moved.store(true, Ordering::SeqCst);
         }
     }
