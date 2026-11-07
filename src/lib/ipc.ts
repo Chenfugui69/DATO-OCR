@@ -171,7 +171,7 @@ export const pin = {
 export const popmenu = {
   open: (owner: string, items: PopItem[]) => call<void>('popmenu_open', { owner, items }),
   items: () => call<{ owner: string; items: PopItem[] } | null>('popmenu_items'),
-  place: (width: number, height: number) => call<void>('popmenu_place', { width, height }),
+  place: (width: number, height: number, margin: number) => call<void>('popmenu_place', { width, height, margin }),
   pick: (id: string) => call<void>('popmenu_pick', { id }),
   close: () => call<void>('popmenu_close'),
 };

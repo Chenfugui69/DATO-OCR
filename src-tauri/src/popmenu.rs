@@ -67,8 +67,9 @@ pub fn items() -> Option<Pending> {
     PENDING.lock().clone()
 }
 
-/// 页面量好了自己多大（CSS 像素）：在鼠标那里摆好、显示、拿焦点（点别处时失焦收起）
-pub fn place(app: &AppHandle, width: f64, height: f64) -> AppResult<()> {
+/// 页面量好了自己多大（CSS 像素，含四周给阴影留的 `margin`）：在鼠标那里摆好、显示、拿焦点（点别处时失焦收起）。
+/// 摆的是菜单本身（不含阴影那圈）：菜单的角对准鼠标，阴影那圈可以伸到屏幕可用区外面
+pub fn place(app: &AppHandle, width: f64, height: f64, margin: f64) -> AppResult<()> {
     let Some((x, y)) = PENDING.lock().as_ref().map(|p| p.at) else {
         return Ok(());
     };
@@ -78,15 +79,16 @@ pub fn place(app: &AppHandle, width: f64, height: f64) -> AppResult<()> {
         let monitor = wm::monitor_at(x, y);
         let scale = monitor.as_ref().map_or(1.0, |m| m.scale_factor);
         let (pw, ph) = ((width * scale).ceil() as i32, (height * scale).ceil() as i32);
+        let m = (margin * scale).round() as i32;
         let area = monitor.map(|m| m.work_area);
         // 默认在鼠标右下；右边放不下往左翻，下面放不下往上翻
-        let (mut left, mut top) = (x, y);
+        let (mut left, mut top) = (x - m, y - m);
         if let Some(a) = area {
-            if left + pw > a.right() {
-                left = (x - pw).max(a.x);
+            if left + pw - m > a.right() {
+                left = (x - pw + m).max(a.x - m);
             }
-            if top + ph > a.bottom() {
-                top = (y - ph).max(a.y);
+            if top + ph - m > a.bottom() {
+                top = (y - ph + m).max(a.y - m);
             }
         }
         let _ = platform::set_bounds(&w, left, top, pw as u32, ph as u32);

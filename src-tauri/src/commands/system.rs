@@ -248,6 +248,8 @@ pub async fn open_data_folder(app: AppHandle, which: String) -> AppResult<()> {
             let settings = st.settings.read().capture.clone();
             let dir = crate::capture::save_directory(&settings);
             std::fs::create_dir_all(&dir)?;
+            // 录制栏上点的：之后退出录制别把焦点抢回截图前的窗口，不然访达窗口被压下去像是关掉了
+            st.capture.focus_moved_elsewhere();
             dir
         }
         _ => st.paths.root().to_path_buf(),
