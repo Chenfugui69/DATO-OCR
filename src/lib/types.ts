@@ -435,6 +435,19 @@ export interface LongshotProgress {
   failures: number;
   previewVersion: number;
   seam: number | null;
+  /** 最近一次拼在最前面（往上滚） */
+  up: boolean;
+  /** 固定头部、尾部在预览图里的高度（预览像素） */
+  header: number;
+  footer: number;
+}
+
+/** 逐帧报的视口伸出量（预览像素），基于 previewVersion 那版预览图 */
+export interface LongshotLive {
+  previewVersion: number;
+  liveVersion: number;
+  up: number;
+  down: number;
 }
 
 /** 识别出来的一个二维码 / 条码，位置按物理像素 */

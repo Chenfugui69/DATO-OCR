@@ -849,7 +849,6 @@ html[data-view='capture'] #root {
 }
 .ls-preview {
   position: absolute;
-  width: 120px;
   display: flex;
   flex-direction: column;
   border-radius: var(--cn-radius-xl);
@@ -867,23 +866,26 @@ html[data-view='capture'] #root {
     clip-path: inset(0 0 0 0 round var(--cn-radius-xl));
   }
 }
-.ls-preview__scroll {
-  flex: none;
-  overflow-y: auto;
-  overflow-x: hidden;
-  scrollbar-width: none;
-  /* 每拼上一截，图区平滑地往下长出来 */
-  transition: height 280ms cubic-bezier(0.22, 1, 0.36, 1);
-}
-.ls-preview__scroll::-webkit-scrollbar {
-  display: none;
-}
 .ls-preview__img {
   position: relative;
+  flex: none;
+  overflow: hidden;
 }
-.ls-preview__img img {
+/* 整张虚拟长图；显示长度没追上时往上长的要整体上移，把顶上没追上的那截藏起来 */
+.ls-preview__track {
+  position: relative;
+  will-change: transform;
+}
+/* 长度由 useChase 按刷新率平滑地追，不用 CSS 过渡 */
+.ls-preview__strip {
+  position: absolute;
+  left: 0;
+  right: 0;
+  overflow: hidden;
+}
+.ls-preview__strip img {
   display: block;
-  width: 120px;
+  width: 100%;
 }
 .ls-preview__seam {
   position: absolute;

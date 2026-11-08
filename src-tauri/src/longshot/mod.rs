@@ -34,8 +34,10 @@ use crate::{editor, events, imaging, library, wm};
 use stitch::{Motion, Stitcher};
 
 pub const PREVIEW_ID: &str = "longshot-preview";
+/// 当前画面内容区的缩略图：还没并入的那段先用它在预览条上顶着
+pub const LIVE_ID: &str = "longshot-live";
 /// 预览条宽度（逻辑像素）
-const PREVIEW_WIDTH: f64 = 120.0;
+const PREVIEW_WIDTH: f64 = 180.0;
 
 #[derive(Default)]
 pub struct LongshotState {
@@ -64,6 +66,9 @@ struct Active {
     /// 连续几轮滚轮后画面都没动（无限滚动的页面在加载下一批时也会这样）
     still: u32,
     preview_version: u64,
+    /// 上一次报给界面的伸出量（缩略图像素），没变就不再报
+    live_sent: (u32, u32),
+    live_version: u64,
     max_height: u32,
     /// 可点击的界面区域（屏幕物理坐标）
     regions: Vec<PhysicalRect>,
@@ -98,6 +103,24 @@ pub struct Progress {
     pub preview_version: u64,
     /// 最近接缝在预览图里的 y（预览像素）
     pub seam: Option<f64>,
+    /// 最近一次是拼在长图最前面（往上滚）：预览条底边不动、往上长
+    pub up: bool,
+    /// 固定头部、尾部在预览图里的高度（预览像素）：往上伸出的部分插在头部下面，往下的插在尾部上面
+    pub header: f64,
+    pub footer: f64,
+}
+
+/// 逐帧报的"视口伸出长图多少"（还没并入的部分）。界面据此连续地把预览条长出去，
+/// 伸出的那段用 `LIVE_ID` 这张当前画面的缩略图顶着；真正并入后由 `Progress` 接手。
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Live {
+    /// 基于哪一版预览图算的：和界面上显示的预览图版本不一致时界面不用
+    pub preview_version: u64,
+    pub live_version: u64,
+    /// 伸出顶部、底部的高度（预览像素）
+    pub up: f64,
+    pub down: f64,
 }
 
 pub fn start(
@@ -144,6 +167,8 @@ pub fn start(
         failures: 0,
         still: 0,
         preview_version: 0,
+        live_sent: (0, 0),
+        live_version: 0,
         max_height: settings.max_height,
         regions: Vec::new(),
         interactive: false,
@@ -196,6 +221,10 @@ pub fn start(
 const MAX_SETTLE_STEPS: u8 = 8;
 /// 一轮滚动里等下一帧画面最多等多久
 const FRAME_WAIT: Duration = Duration::from_millis(30);
+/// macOS 的连续抓屏是"等一会儿再抓一张"，抓一张本身就要 20～30ms：固定先等 FRAME_WAIT 的话
+/// 一帧要 60ms（实测一秒 16 帧，每帧页面滚了半屏，预览条一跳一跳的）。改成按节拍只等剩下的时间。
+#[cfg(target_os = "macos")]
+const FRAME_PERIOD: Duration = Duration::from_millis(16);
 /// 滚轮停了这么久画面还在变（视频、动图），就不等它停了
 const ROUND_CAP: Duration = Duration::from_millis(1500);
 /// 一轮滚动途中多久刷新一次预览条
@@ -318,7 +347,10 @@ fn round(
     let mut last_motion = Instant::now();
     let mut last_emit = Instant::now();
     let mut dirty = false;
+    #[cfg(target_os = "macos")]
+    let mut last_grab = Instant::now();
     loop {
+        let mut stored_now = false;
         while let Ok(event) = rx.try_recv() {
             match event {
                 HookEvent::Wheel { .. } => last_wheel = Instant::now(),
@@ -333,8 +365,17 @@ fn round(
             return Flow::Stop;
         }
         let t0 = Instant::now();
+        #[cfg(target_os = "macos")]
+        let wait = {
+            let wait = FRAME_PERIOD.saturating_sub(last_grab.elapsed());
+            // 等完就开始抓：节拍从抓的那一刻算
+            last_grab = Instant::now() + wait;
+            wait
+        };
+        #[cfg(not(target_os = "macos"))]
+        let wait = FRAME_WAIT;
         let frame = match recorder {
-            Some(r) => r.next(FRAME_WAIT),
+            Some(r) => r.next(wait),
             None => {
                 std::thread::sleep(FRAME_WAIT);
                 grab(app)
@@ -355,9 +396,11 @@ fn round(
             }
             let was_lost = seen.lost;
             seen.note(fed);
-            dirty |= fed.is_some_and(|f| f.stored) || seen.lost != was_lost;
+            stored_now = fed.is_some_and(|f| f.stored);
+            dirty |= stored_now || seen.lost != was_lost;
         }
-        if dirty && last_emit.elapsed() >= PROGRESS_EVERY {
+        // 长图变了马上报（预览条的逐帧伸长要接着新预览图算，晚了会顿一下）；只是跟丢状态变了才节流
+        if dirty && (stored_now || last_emit.elapsed() >= PROGRESS_EVERY) {
             let t0 = Instant::now();
             emit_progress(app, if seen.lost { "failed" } else { "added" });
             t_emit += t0.elapsed();
@@ -490,6 +533,10 @@ fn feed(app: &AppHandle, frame: RgbaImage, settled: bool) -> Option<Fed> {
     a.next_index += 1;
     let fed = a.stitcher.feed(&frame, index, settled);
     let mut stored = false;
+    if fed.keep || fed.keep_prev.is_some() {
+        // 长图变了：预览图要重做，伸出量从新预览图重新算起
+        a.live_sent = (0, 0);
+    }
     let held = a.held.take();
     if let (Some(wanted), Some((i, image))) = (fed.keep_prev, held.as_ref()) {
         if wanted == *i {
@@ -504,12 +551,57 @@ fn feed(app: &AppHandle, frame: RgbaImage, settled: bool) -> Option<Fed> {
         // 没对上的帧不要；手里那帧还是"最近跟踪上的"，留着
         a.held = held.filter(|(i, _)| fed.keep_prev != Some(*i));
     } else {
+        let live = if stored { None } else { live_update(a, &frame) };
         a.held = Some((index, frame));
+        drop(guard);
+        if let Some((live, thumb)) = live {
+            if let Some(thumb) = thumb {
+                st.images.put(LIVE_ID, Arc::new(thumb));
+            }
+            let _ = app.emit(events::LONGSHOT_LIVE, live);
+        }
+        return Some(Fed {
+            motion: fed.motion,
+            stored,
+        });
     }
     Some(Fed {
         motion: fed.motion,
         stored,
     })
+}
+
+/// 视口伸出长图的量变了：把当前画面内容区缩成预览比例放进图片仓库，返回要报给界面的。
+/// 并入了的这一帧不报（预览图马上要重做，伸出量对的是新预览图），由紧跟着的 `Progress` 接手。
+fn live_update(a: &mut Active, frame: &RgbaImage) -> Option<(Live, Option<RgbaImage>)> {
+    let s = a.thumb_scale;
+    let (up, down) = a.stitcher.overhang();
+    let px = |rows: u32| (f64::from(rows) * s).round() as u32;
+    let sent = (px(up), px(down));
+    if sent == a.live_sent {
+        return None;
+    }
+    a.live_sent = sent;
+    let mut thumb = None;
+    if up > 0 || down > 0 {
+        let (top, rows) = a.stitcher.content_band();
+        let rows = rows.min(frame.height().saturating_sub(top));
+        let (tw, th) = (
+            ((f64::from(frame.width()) * s).round() as u32).max(1),
+            px(rows).max(1),
+        );
+        // 最近邻缩放：每帧都要做，只求快（缩略图本来就小）
+        let band = image::imageops::crop_imm(frame, 0, top, frame.width(), rows);
+        thumb = Some(image::imageops::resize(&*band, tw, th, image::imageops::FilterType::Nearest));
+    }
+    a.live_version += 1;
+    let live = Live {
+        preview_version: a.preview_version,
+        live_version: a.live_version,
+        up: f64::from(up) * s,
+        down: f64::from(down) * s,
+    };
+    Some((live, thumb))
 }
 
 fn store(a: &mut Active, index: usize, frame: &RgbaImage) {
@@ -586,6 +678,9 @@ fn emit_progress(app: &AppHandle, status: &'static str) {
             failures: a.failures,
             preview_version: a.preview_version,
             seam: a.stitcher.last_seam.map(|y| f64::from(y) * a.thumb_scale),
+            up: a.stitcher.grew_up,
+            header: f64::from(a.stitcher.bands().0) * a.thumb_scale,
+            footer: f64::from(a.stitcher.bands().1) * a.thumb_scale,
         }
     };
     let _ = app.emit(events::LONGSHOT_PROGRESS, progress);
@@ -609,6 +704,7 @@ fn take(app: &AppHandle) -> Option<Active> {
     let st = state(app);
     let active = st.longshot.active.lock().take();
     st.images.remove(PREVIEW_ID);
+    st.images.remove(LIVE_ID);
     active
 }
 

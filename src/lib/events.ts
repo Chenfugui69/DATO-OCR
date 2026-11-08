@@ -9,6 +9,7 @@ import type {
   EditorDoc,
   GifProgress,
   GifStateEvent,
+  LongshotLive,
   LongshotProgress,
   LongshotStateEvent,
   OcrJob,
@@ -30,6 +31,8 @@ export interface EventMap {
   'capture-active-monitor': { sessionId: number; monitorId: number | null };
   'longshot-state': LongshotStateEvent;
   'longshot-progress': LongshotProgress;
+  /** 逐帧：视口伸出长图多少（还没并入的部分） */
+  'longshot-live': LongshotLive;
   'gif-state': GifStateEvent;
   'gif-progress': GifProgress;
   /** 录制时按下了一个键（按键显示用）：⌘C、⏎…… */

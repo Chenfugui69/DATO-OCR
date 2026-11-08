@@ -285,6 +285,8 @@ pub struct Stitcher {
     checkpoint: Option<Snapshot>,
     /// 最近一次并入的接缝位置（长图坐标），预览条上画一条线方便发现拼歪
     pub last_seam: Option<u32>,
+    /// 最近一次并入是不是拼在最前面（往上滚）：预览条据此决定往上长还是往下长
+    pub grew_up: bool,
     /// 上个撤销点以来单帧滚过的最多行数（日志里看滚得有多快）
     pub max_step: u32,
 }
@@ -313,6 +315,7 @@ impl Stitcher {
             history: Vec::new(),
             checkpoint: None,
             last_seam: None,
+            grew_up: false,
             max_step: 0,
         }
     }
@@ -540,6 +543,7 @@ impl Stitcher {
             let take = (i64::from(self.content_len) + c - self.view_top.max(0)).min(c) as u32;
             if overflow > 0 {
                 self.last_seam = Some(self.header as u32 + self.content_len);
+                self.grew_up = false;
             }
             self.slices.push_back(Slice {
                 frame: index,
@@ -558,6 +562,7 @@ impl Stitcher {
             self.content_len += rows;
             self.view_top = 0;
             self.last_seam = Some(self.header as u32 + rows);
+            self.grew_up = true;
         } else {
             return false;
         }
@@ -630,6 +635,23 @@ impl Stitcher {
 
     pub fn bands(&self) -> (u32, u32) {
         (self.header as u32, self.footer as u32)
+    }
+
+    /// 视口里还没并入长图、伸到长图外面的行数：（伸出顶部的，伸出底部的）。
+    /// 预览条逐帧按这个长出去，不用等并入。
+    pub fn overhang(&self) -> (u32, u32) {
+        if self.slices.is_empty() {
+            return (0, 0);
+        }
+        let c = self.content() as i64;
+        let up = (-self.view_top).clamp(0, c);
+        let down = (self.view_top + c - i64::from(self.content_len)).clamp(0, c);
+        (up as u32, down as u32)
+    }
+
+    /// 内容区在一帧里的位置：（起始行，行数）
+    pub fn content_band(&self) -> (u32, u32) {
+        (self.header as u32, self.content() as u32)
     }
 }
 
