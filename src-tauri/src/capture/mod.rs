@@ -36,6 +36,16 @@ use crate::{ai, events, imaging, library, longshot, ocr, pin, wm};
 /// 每个窗口最多记这么多子控件（有的程序几千个，再多对框选没帮助，只拖慢）
 const MAX_CHILDREN_PER_WINDOW: usize = 400;
 
+/// 抓屏 + 枚举窗口最多等多久。正常几十毫秒，睡眠唤醒后头一次可能要一两秒；系统的抓屏服务卡住时
+/// 会一直不返回 —— 不设上限的话"截图中"一直占着，之后每次热键都被当成重复按下忽略掉，截图彻底失灵
+const GRAB_TIMEOUT: Duration = Duration::from_secs(8);
+
+/// "截图中"占着、却没有会话（也不在抓屏）超过这么久，就是上一次没收干净（抓屏线程异常退出之类）
+const STUCK_BUSY_AFTER: Duration = Duration::from_secs(15);
+
+/// 会话还在、遮罩却一块都不在屏幕上超过这么久，就是上一次没收干净（遮罩页面被系统回收、前端异常之类）
+const ORPHAN_SESSION_AFTER: Duration = Duration::from_secs(5);
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum CaptureIntent {
@@ -88,6 +98,8 @@ pub struct CaptureState {
     outer: Mutex<Option<Arc<Session>>>,
     /// 截图/长截图进行中。热键再按一次直接忽略（规格 02 §3.9.1）
     busy: AtomicBool,
+    /// `busy` 从什么时候开始占着（自愈判断用）
+    busy_since: Mutex<Option<Instant>>,
     next_id: AtomicU64,
     /// 从主窗口按钮开始的截图：主窗口被收起来了（见 `stash_main`），截图结束（含录完 GIF / 长截图、
     /// 取消、失败）要放回来
@@ -105,7 +117,17 @@ impl CaptureState {
     }
 
     pub(crate) fn release_busy(&self) {
+        *self.busy_since.lock() = None;
         self.busy.store(false, Ordering::SeqCst);
+    }
+
+    /// 占上"截图中"；已经占着就返回 false
+    fn acquire_busy(&self) -> bool {
+        if self.busy.swap(true, Ordering::SeqCst) {
+            return false;
+        }
+        *self.busy_since.lock() = Some(Instant::now());
+        true
     }
 
     /// 现在这次截图是录制中开的
@@ -182,6 +204,7 @@ pub fn image_id(session: u64, monitor: MonitorId) -> String {
 /// 热键 / 托盘入口。抓屏是重活，放工作线程。
 pub fn trigger(app: &AppHandle, intent: CaptureIntent) {
     let st = state(app);
+    recover_if_stuck(app);
     if st.capture.busy.load(Ordering::SeqCst) {
         // 录制中按截图热键：照常开一次截图，录制不停 —— 用 DATO 截图的过程也录进去。
         // 录制的控制条先让位，截完再回来（见 `end_session`）
@@ -229,6 +252,7 @@ fn report_start_failure(app: &AppHandle, err: &AppError) {
 /// 瞬间截屏：按下热键就抓整个桌面（带鼠标指针），让一碰就消失的弹窗、悬停提示来不及反应。
 /// 抓完按设置：照常框选 / 直接复制整屏 / 直接保存整屏。
 pub fn trigger_instant(app: &AppHandle) {
+    recover_if_stuck(app);
     if state(app).capture.busy.load(Ordering::SeqCst) {
         return;
     }
@@ -243,7 +267,7 @@ pub fn trigger_instant(app: &AppHandle) {
 /// `nested`：录制中开的截图（录制占着截图的"忙"，不再抢；录制的会话先收到 `outer`）
 fn start(app: &AppHandle, intent: CaptureIntent, instant: bool, nested: bool) -> AppResult<()> {
     let st = state(app);
-    if !nested && st.capture.busy.swap(true, Ordering::SeqCst) {
+    if !nested && !st.capture.acquire_busy() {
         tracing::debug!("已在截图中，忽略这次热键");
         return Ok(());
     }
@@ -258,19 +282,25 @@ fn start(app: &AppHandle, intent: CaptureIntent, instant: bool, nested: bool) ->
     let glass = wm::GlassSnapshot::begin(app);
     // 窗口和子控件跟抓屏并行枚举，而且必须赶在遮罩出现之前：Chromium 系浏览器发现自己
     // 被完全遮住会把网页内容区那个子窗口藏起来，遮罩一盖上就枚举不到了
-    let (shots, windows, grab_ms, enum_ms) = std::thread::scope(|scope| {
-        let windows = scope.spawn(|| {
-            let t = Instant::now();
-            let w = enumerate_for_detection(&settings);
-            (w, t.elapsed().as_millis() as u64)
-        });
-        let t = Instant::now();
-        let shots = platform::capture_all();
-        let grab_ms = t.elapsed().as_millis() as u64;
-        let (windows, enum_ms) = windows.join().unwrap_or_default();
-        (shots, windows, grab_ms, enum_ms)
-    });
+    let grabbed = grab_with_timeout(&settings);
     drop(glass);
+    let (shots, windows, grab_ms, enum_ms) = match grabbed {
+        Some(grabbed) => grabbed,
+        None => {
+            tracing::error!(
+                timeout_ms = GRAB_TIMEOUT.as_millis() as u64,
+                "系统抓屏迟迟没有返回，放弃这次截图"
+            );
+            (
+                Err(AppError::Capture(
+                    "系统抓屏没有响应，请稍后再试；一直这样的话重启一下 DATO OCR".into(),
+                )),
+                Vec::new(),
+                GRAB_TIMEOUT.as_millis() as u64,
+                0,
+            )
+        }
+    };
     let mut shots = match shots {
         Ok(shots) => shots,
         Err(err) => {
@@ -399,6 +429,129 @@ fn start(app: &AppHandle, intent: CaptureIntent, instant: bool, nested: bool) ->
         }
     });
     Ok(())
+}
+
+type Grabbed = (
+    AppResult<Vec<(MonitorInfo, RgbaImage)>>,
+    Vec<WindowInfo>,
+    u64,
+    u64,
+);
+
+/// 抓全部显示器，同时枚举窗口和子控件（必须赶在遮罩出现之前，见 `start`）。放到单独的线程里做、
+/// 最多等 `GRAB_TIMEOUT`：系统的抓屏服务卡住时这里会一直不返回，等不到就放弃（那个线程留着，
+/// 哪天回来了结果直接丢掉），让上层收回"截图中"，下次热键还能再试。
+fn grab_with_timeout(settings: &CaptureSettings) -> Option<Grabbed> {
+    let (tx, rx) = std::sync::mpsc::sync_channel(1);
+    let settings = settings.clone();
+    std::thread::Builder::new()
+        .name("capture-grab".into())
+        .spawn(move || {
+            #[cfg(debug_assertions)]
+            {
+                let hang = TEST_GRAB_HANG_MS.swap(0, Ordering::SeqCst);
+                if hang > 0 {
+                    tracing::info!(hang, "测试：这次抓屏故意卡住");
+                    std::thread::sleep(Duration::from_millis(hang));
+                }
+            }
+            let grabbed = std::thread::scope(|scope| {
+                let windows = scope.spawn(|| {
+                    let t = Instant::now();
+                    let w = enumerate_for_detection(&settings);
+                    (w, t.elapsed().as_millis() as u64)
+                });
+                let t = Instant::now();
+                let shots = platform::capture_all();
+                let grab_ms = t.elapsed().as_millis() as u64;
+                let (windows, enum_ms) = windows.join().unwrap_or_default();
+                (shots, windows, grab_ms, enum_ms)
+            });
+            let _ = tx.send(grabbed);
+        })
+        .ok()?;
+    rx.recv_timeout(GRAB_TIMEOUT).ok()
+}
+
+/// 调试版：下一次抓屏故意卡这么多毫秒（模拟系统抓屏服务不响应，见 `watchdog::run_demo`）
+#[cfg(debug_assertions)]
+pub static TEST_GRAB_HANG_MS: AtomicU64 = AtomicU64::new(0);
+
+/// 调试版：造出"没收干净"的状态（见 `watchdog::run_demo`）。
+/// `busy`：占着"截图中"却没有会话（像抓屏线程异常退出那样）；
+/// `shown`：把当前会话标成遮罩已上屏（实际并没有），像遮罩显示过、后来没报结束就没了那样
+#[cfg(debug_assertions)]
+pub fn test_simulate(app: &AppHandle, what: &str) {
+    let st = state(app);
+    match what {
+        "busy" => {
+            let _ = st.capture.acquire_busy();
+        }
+        "shown" => {
+            if let Some(session) = st.capture.current() {
+                let mut shown = session.shown.lock();
+                for m in &session.monitors {
+                    shown.insert(m.info.id.0);
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+/// 上一次截图没收干净时把它收回来，免得之后每次热键都被"已在截图中"挡掉、截图彻底失灵。
+/// 两种情况：
+/// - "截图中"占着，却既没有会话、也过了抓屏能用的时间（抓屏线程异常退出之类）；
+/// - 会话还在，遮罩却一块都不在屏幕上（遮罩页面被系统回收、前端出错没报结束之类）。
+///
+/// 长截图、录制、录制准备期间遮罩本来就可能不在前面，不动。热键 / 托盘入口调，在 UI 线程上。
+fn recover_if_stuck(app: &AppHandle) {
+    let st = state(app);
+    if !st.capture.is_busy() || st.longshot.is_active() || crate::gif_record::is_active() {
+        return;
+    }
+    let since = *st.capture.busy_since.lock();
+    match st.capture.current() {
+        None => {
+            let stuck = since.is_some_and(|t| t.elapsed() >= STUCK_BUSY_AFTER);
+            if stuck {
+                tracing::warn!(
+                    busy_ms = since.map_or(0, |t| t.elapsed().as_millis() as u64),
+                    "上一次截图没收干净（没有会话却一直占着），收回"
+                );
+                st.capture.release_busy();
+            }
+        }
+        Some(session) => {
+            if st.capture.is_nested()
+                || record_prep::is_active()
+                || session.started.elapsed() < ORPHAN_SESSION_AFTER
+            {
+                return;
+            }
+            let mut visible = false;
+            overlay::for_each(app, |w| {
+                visible |= w.is_visible().unwrap_or(true);
+            });
+            if !visible {
+                tracing::warn!(
+                    session = session.id,
+                    age_ms = session.started.elapsed().as_millis() as u64,
+                    "上一次截图的会话还在，遮罩却都不在屏幕上，收回"
+                );
+                // 直接在这里收：`end_session` 把藏遮罩、放回"截图中"排到 UI 线程上，
+                // 这次热键紧接着就要用，等不到那一轮
+                if let Some(s) = st.capture.current.lock().take_if(|s| s.id == session.id) {
+                    st.images.remove_prefix(&format!("cap-{}-", s.id));
+                }
+                record_prep::leave(app, false);
+                overlay::hide_all(app);
+                let _ = app.emit(events::CAPTURE_SESSION_END, ());
+                restore_main(app, false);
+                st.capture.release_busy();
+            }
+        }
+    }
 }
 
 /// 自动框选用的窗口列表（按 Z 序）及各自的子控件。

@@ -47,6 +47,7 @@ mod sync;
 mod translate;
 mod tray;
 mod update;
+mod watchdog;
 mod wm;
 
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -176,7 +177,12 @@ pub fn run() {
         ))
         .register_asynchronous_uri_scheme_protocol(image_store::SCHEME, image_store::handle)
         .setup(setup)
-        .on_window_event(on_window_event)
+        .on_window_event(on_window_event);
+    // macOS 内存紧张时会结束后台窗口的网页进程（常驻托盘挂久了最容易碰上）。Tauri 默认会重新加载，
+    // 但不留痕迹；这里自己接管：记一笔、让按需建的窗口重新等页面报到，再重新加载
+    #[cfg(target_os = "macos")]
+    let builder = builder.on_web_content_process_terminate(on_web_content_terminated);
+    let builder = builder
         // 每个窗口的页面都按屏幕刷新率刷新（截图库滚动、拖贴图、划词面板，不止截图遮罩）。
         // 放在这里统一做，新加的窗口也不会漏
         .on_page_load(|webview, payload| {
@@ -492,6 +498,9 @@ fn on_ready(app: &AppHandle) {
     std::thread::spawn(move || mcp::reconfigure(&ui));
     update::start(app);
     platform::watch_system_events(on_system_event);
+    watchdog::start(app, state(app).paths.logs());
+    #[cfg(debug_assertions)]
+    watchdog::run_demo(app);
     std::thread::spawn(platform::warm_up_capture);
     maintenance::spawn(app);
     let ui = app.clone();
@@ -544,6 +553,7 @@ fn on_system_event(event: SystemEvent) {
                 });
             }
             if event == SystemEvent::Resumed {
+                tracing::info!("系统从睡眠中唤醒");
                 // 睡了一觉，邮箱那条连接多半已经断了：关掉让它马上重连，别等到超时
                 otp::mail::kick();
             }
@@ -556,6 +566,23 @@ fn on_system_event(event: SystemEvent) {
             let _ = app.run_on_main_thread(move || wm::refresh_visuals(&ui));
         }
     }
+}
+
+/// 某个窗口的网页进程没了（系统回收内存、网页进程崩溃）。在主线程上、WebKit 的回调里被调用。
+#[cfg(target_os = "macos")]
+fn on_web_content_terminated(webview: &tauri::Webview) {
+    let label = webview.label().to_string();
+    tracing::warn!(%label, "窗口的网页进程被系统结束了，重新加载页面");
+    // 页面重新加载完会再报到；这之前发给它的事件它收不到，按需建的窗口要重新等
+    lifecycle::forget(&label);
+    // 别在 WebKit 的回调里同步重载（Tauri 默认的处理也是先试着借窗口表、借不到就放弃），稍后走事件循环
+    let webview = webview.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        if let Err(err) = webview.reload() {
+            tracing::error!(%label, "重新加载页面失败：{err}");
+        }
+    });
 }
 
 /// 屏幕参数一变就重建遮罩太勤了：菜单栏 / 程序坞出现消失、切全屏空间时，系统一秒连发几十次。

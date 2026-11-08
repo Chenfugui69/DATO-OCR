@@ -103,6 +103,11 @@ pub fn enter(app: &AppHandle, session_id: u64, monitor: MonitorId) -> AppResult<
     Ok(())
 }
 
+/// 正在录制准备
+pub fn is_active() -> bool {
+    PREP.lock().is_some()
+}
+
 /// 页面报上来能点的区域（本屏局部物理坐标）
 pub fn set_regions(regions: Vec<PhysicalRect>) {
     *REGIONS.lock() = regions;
