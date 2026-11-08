@@ -58,8 +58,11 @@ const ICONS: Record<string, LucideIcon> = {
   ...SHEET_ICONS,
 };
 
-/** 菜单四周给阴影留的地方（CSS 像素） */
-const MARGIN = 10;
+/**
+ * 菜单四周给阴影留的地方（CSS 像素）。要装得下下面 .pm-menu 的整个阴影（下方 6 + 18 = 24），
+ * 装不下的话阴影在窗口边上被齐齐切断，菜单外面看着像套了一个方框
+ */
+const MARGIN = 24;
 
 export default function PopMenuView() {
   const [items, setItems] = useState<PopItem[]>([]);
@@ -79,7 +82,7 @@ export default function PopMenuView() {
     const el = box.current;
     if (!el || !items.length) return;
     const r = el.getBoundingClientRect();
-    void popmenu.place(r.width + MARGIN * 2, r.height + MARGIN * 2);
+    void popmenu.place(r.width + MARGIN * 2, r.height + MARGIN * 2, MARGIN);
   }, [items]);
 
   // 点别处：窗口失焦就收起
@@ -118,10 +121,18 @@ export default function PopMenuView() {
               <div key={i} className="pm-row" role="group" aria-label={it.label}>
                 <span className="pm-row__label">{it.label}</span>
                 {it.items.map((b) => {
-                  const I = ICONS[b.icon] ?? Copy;
+                  const I = (b.icon && ICONS[b.icon]) || Copy;
                   return (
-                    <button key={b.id} type="button" className="pm-icon" title={b.label} aria-label={b.label} onClick={() => void popmenu.pick(b.id)}>
-                      <I size={16} strokeWidth={1.6} />
+                    <button
+                      key={b.id}
+                      type="button"
+                      className={clsx('pm-icon', b.text && 'pm-icon--text', b.on && 'is-on')}
+                      title={b.label}
+                      aria-label={b.label}
+                      aria-pressed={b.on}
+                      onClick={() => void popmenu.pick(b.id)}
+                    >
+                      {b.text ?? <I size={16} strokeWidth={1.6} />}
                     </button>
                   );
                 })}
@@ -153,7 +164,7 @@ export default function PopMenuView() {
         .pm-menu {
           display: inline-flex; flex-direction: column; min-width: 200px; padding: 5px;
           border-radius: 10px; background: var(--cn-bg-elevated, var(--cn-bg));
-          box-shadow: 0 8px 28px rgba(0,0,0,0.28), 0 0 0 0.5px var(--cn-separator);
+          box-shadow: 0 6px 18px rgba(0,0,0,0.24), 0 0 0 0.5px var(--cn-separator);
           font: 400 13px/1 var(--cn-font-sans); color: var(--cn-label);
           animation: pm-in 120ms var(--cn-ease-out);
           user-select: none;
@@ -177,6 +188,8 @@ export default function PopMenuView() {
           background: transparent; color: var(--cn-label-secondary); cursor: default;
         }
         .pm-icon:hover { background: var(--cn-bg-hover); color: var(--cn-label); }
+        .pm-icon--text { width: auto; min-width: 34px; padding: 0 5px; font: 500 11.5px/1 var(--cn-font-sans); font-variant-numeric: tabular-nums; }
+        .pm-icon.is-on { background: var(--cn-accent); color: var(--cn-label-on-accent, #fff); }
       `}</style>
     </div>
   );

@@ -70,9 +70,16 @@ pub struct Session {
     pub cursor: Option<(i32, i32)>,
     pub started: Instant,
     shown: Mutex<HashSet<u64>>,
+    /// 截图 / 录制中途用户自己打开了别的窗口（比如录制栏的"打开文件夹"）：结束时别把焦点还给
+    /// 截图前的窗口，不然刚打开的访达窗口被压到后面，看着像被关掉了
+    focus_moved: AtomicBool,
 }
 
 impl Session {
+    /// 结束时要不要把焦点还给截图前的窗口
+    fn restores_focus(&self) -> bool {
+        !self.focus_moved.load(Ordering::SeqCst)
+    }
     pub fn monitor(&self, id: MonitorId) -> Option<&MonitorShot> {
         self.monitors.iter().find(|m| m.info.id == id)
     }
@@ -133,6 +140,16 @@ impl CaptureState {
     /// 现在这次截图是录制中开的
     pub fn is_nested(&self) -> bool {
         self.outer.lock().is_some()
+    }
+
+    /// 用户在截图 / 录制中途打开了别的窗口：这次（连同录制中开的截图外面那次录制）结束时不抢焦点
+    pub fn focus_moved_elsewhere(&self) {
+        // 一把一把地拿，别同时握着两把锁（`end_session` 里是先 outer 后 current）
+        let current = self.current.lock().clone();
+        let outer = self.outer.lock().clone();
+        for s in [current, outer].into_iter().flatten() {
+            s.focus_moved.store(true, Ordering::SeqCst);
+        }
     }
 
     fn take_main_stashed(&self) -> bool {
@@ -372,6 +389,7 @@ fn start(app: &AppHandle, intent: CaptureIntent, instant: bool, nested: bool) ->
         cursor,
         started,
         shown: Mutex::new(HashSet::new()),
+        focus_moved: AtomicBool::new(false),
     });
     {
         let mut current = st.capture.current.lock();
@@ -678,6 +696,7 @@ pub fn end_session(app: &AppHandle, session_id: u64, restore_focus: bool) {
         }
     };
     let Some(session) = session else { return };
+    let restore_focus = restore_focus && session.restores_focus();
     record_prep::leave(app, false);
     st.images.remove_prefix(&format!("cap-{session_id}-"));
     // 录制中开的截图结束了：会话、遮罩都还给录制，录制的控制条回来

@@ -1034,5 +1034,5 @@ export interface RecordEditInfo {
 export type PopItem =
   | { kind: 'item'; id: string; label: string; icon?: string; shortcut?: string; checked?: boolean; disabled?: boolean; danger?: boolean }
   | { kind: 'separator' }
-  /** 一排图标按钮（旋转、翻转这种一组小操作） */
-  | { kind: 'row'; label: string; items: { id: string; icon: string; label: string }[] };
+  /** 一排小按钮（旋转、翻转这种一组小操作）：有 `text` 的显示文字（比如 50%），否则显示图标；`on` 是当前选中的那个 */
+  | { kind: 'row'; label: string; items: { id: string; icon?: string; label: string; text?: string; on?: boolean }[] };

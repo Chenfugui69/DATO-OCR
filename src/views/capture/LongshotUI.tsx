@@ -25,6 +25,10 @@ import { shotUrl } from '@/lib/platform';
 import { bottom, type Rect } from './geometry';
 import { useOverlay } from './store';
 
+/** 预览条四周的留白、图下面那行尺寸信息连同留白有多高（和 capture.css 的 .ls-preview 一致） */
+const PREVIEW_PAD = 6;
+const PREVIEW_CHROME = PREVIEW_PAD + 28;
+
 export function LongshotUI({ rect, s, viewport }: { rect: Rect; s: number; viewport: { width: number; height: number } }) {
   const { t } = useTranslation();
   const progress = useOverlay((x) => x.longshot);
@@ -94,23 +98,24 @@ export function LongshotUI({ rect, s, viewport }: { rect: Rect; s: number; viewp
 
   // 图区最宽、最高多少（下面还有一行尺寸信息）
   const maxW = 180;
-  const maxH = Math.max(120, (up ? viewport.height - previewBottom - 8 : viewport.height - previewY - 16) - 32);
+  const maxH = Math.max(120, (up ? viewport.height - previewBottom - 8 : viewport.height - previewY - 16) - PREVIEW_CHROME);
   // "虚拟长图"（已拼的 + 伸出的）的实际长度，和平滑追着它的显示长度
   const totalH = shown ? shown.h + extUp + extDown : 0;
   const shownH = useChase(totalH);
   // 按显示长度等比塞进 maxW × maxH：越长越窄
   const k = shown ? Math.min(maxW / shown.w, maxH / Math.max(1, shownH)) : 0;
   const previewWidth = shown ? Math.round(shown.w * k) : maxW;
+  const boxW = previewWidth + PREVIEW_PAD * 2;
   const viewH = shownH * k;
   // 还没追上的那截先不露：往下长裁掉底部，往上长裁掉顶部
   const hidden = Math.max(0, totalH - shownH);
   // 预览条放在选区右上角外侧；右边放不下放左边，两边都放不下就贴在选区里面的右上角
   const previewX =
-    css.x + css.width + gap + maxW <= viewport.width - 8
+    css.x + css.width + gap + maxW + PREVIEW_PAD * 2 <= viewport.width - 8
       ? css.x + css.width + gap
-      : css.x - gap - previewWidth >= 8
-        ? css.x - gap - previewWidth
-        : Math.max(8, css.x + css.width - previewWidth - 8);
+      : css.x - gap - boxW >= 8
+        ? css.x - gap - boxW
+        : Math.max(8, css.x + css.width - boxW - 8);
 
   const hasPreview = !!shown;
   useLayoutEffect(() => {
@@ -182,7 +187,7 @@ export function LongshotUI({ rect, s, viewport }: { rect: Rect; s: number; viewp
       </div>
 
       {progress && shown && (
-        <div ref={previewRef} className="ls-preview cn-glass" style={up ? { left: previewX, bottom: previewBottom } : { left: previewX, top: previewY }}>
+        <div ref={previewRef} className="ls-preview cn-glass" style={up ? { left: previewX, bottom: previewBottom, width: boxW } : { left: previewX, top: previewY, width: boxW }}>
           <div className="ls-preview__img" style={{ width: previewWidth, height: viewH }}>
             <div className="ls-preview__track" style={{ height: totalH * k, transform: up ? `translateY(${-hidden * k}px)` : undefined }}>
             {strips.map((p) => (

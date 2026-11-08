@@ -242,12 +242,16 @@ export function wrapLabel(text: string, fontSize: number, maxWidth: number, bold
       if (line && ctx.measureText(next).width > maxWidth) {
         out.push(line.trimEnd());
         line = tok.trimStart();
-        // 单个词就比框宽：硬拆
+        // 单个词就比框宽：硬拆。按整字（码点）拆，每次至少拿走一个字：
+        // 框比一个字还窄（窄格子译成中文、选区只框住半块）时，以前这里拆出空串、line 原样不变，
+        // 死循环一直往 out 里塞空串 —— 网页卡死、内存涨到好几 GB。一个字都放不下就让它超出框
         while (line && ctx.measureText(line).width > maxWidth) {
-          let n = line.length - 1;
-          while (n > 1 && ctx.measureText(line.slice(0, n)).width > maxWidth) n -= 1;
-          out.push(line.slice(0, n));
-          line = line.slice(n);
+          const chars = Array.from(line);
+          if (chars.length <= 1) break;
+          let n = chars.length - 1;
+          while (n > 1 && ctx.measureText(chars.slice(0, n).join('')).width > maxWidth) n -= 1;
+          out.push(chars.slice(0, n).join(''));
+          line = chars.slice(n).join('');
         }
       } else {
         line = next;

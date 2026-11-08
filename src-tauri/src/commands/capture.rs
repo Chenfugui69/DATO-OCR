@@ -809,8 +809,13 @@ pub async fn popmenu_items() -> AppResult<Option<crate::popmenu::Pending>> {
 
 /// 菜单页面量好了自己多大（CSS 像素）：摆到鼠标那里显示
 #[tauri::command]
-pub async fn popmenu_place(app: AppHandle, width: f64, height: f64) -> AppResult<()> {
-    crate::popmenu::place(&app, width, height)
+pub async fn popmenu_place(
+    app: AppHandle,
+    width: f64,
+    height: f64,
+    margin: Option<f64>,
+) -> AppResult<()> {
+    crate::popmenu::place(&app, width, height, margin.unwrap_or(0.0))
 }
 
 /// 选了一项
