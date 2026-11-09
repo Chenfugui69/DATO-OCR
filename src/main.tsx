@@ -59,6 +59,9 @@ class ErrorBoundary extends Component<{ children: ReactNode }, { error: Error | 
  * 不然页面还没开始听，事件就丢了。放在视图后面：它的 effect 在视图的 effect（订阅事件）之后跑；
  * 订阅本身要走一趟 IPC，再稍等一下。
  */
+// 后端每隔几秒问一下"在吗"，页面卡死（死循环）时回不了，后端就结束网页进程重新加载（web_watch.rs）
+(window as unknown as { __datoPing: (seq: number) => void }).__datoPing = () => void invoke('web_pong').catch(() => undefined);
+
 function ReadySignal() {
   useEffect(() => {
     const timer = window.setTimeout(() => void invoke('window_ready').catch(() => undefined), 30);

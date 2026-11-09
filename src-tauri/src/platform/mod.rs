@@ -334,6 +334,18 @@ pub fn unlock_frame_rate(window: &WebviewWindow) {
     sys::effects::unlock_frame_rate(window);
 }
 
+/// 结束这个窗口的网页进程（页面卡死时用，见 web_watch.rs）。结束了返回 true，之后系统会通知
+/// 网页进程没了、页面重新加载；做不到（平台不支持）返回 false，由上层改成重新加载页面。
+pub fn kill_web_content(window: &WebviewWindow) -> bool {
+    #[cfg(target_os = "macos")]
+    return sys::effects::kill_web_content(window);
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = window;
+        false
+    }
+}
+
 /// 窗口藏起来一阵之后，让里面的网页进入省内存状态，再显示时恢复（Windows：WebView2 自己不知道
 /// 宿主窗口藏起来了，见 `windows/webview_idle.rs`；macOS 的 WKWebView 自己会处理）。
 /// 每个窗口的页面开始加载时调（`lib.rs` 的 `on_page_load`）；截图遮罩不调。

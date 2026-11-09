@@ -48,6 +48,7 @@ mod translate;
 mod tray;
 mod update;
 mod watchdog;
+mod web_watch;
 mod wm;
 
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -226,6 +227,7 @@ pub fn run() {
             commands::capture::pin_ready,
             commands::capture::pin_close,
             commands::capture::pin_set_bounds,
+            commands::system::web_pong,
             commands::capture::pin_close_all,
             commands::capture::pin_copy,
             commands::capture::pin_save,
@@ -500,6 +502,7 @@ fn on_ready(app: &AppHandle) {
     update::start(app);
     platform::watch_system_events(on_system_event);
     watchdog::start(app, state(app).paths.logs());
+    web_watch::start(app);
     #[cfg(debug_assertions)]
     watchdog::run_demo(app);
     std::thread::spawn(platform::warm_up_capture);

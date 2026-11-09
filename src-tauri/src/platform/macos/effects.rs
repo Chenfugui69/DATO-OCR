@@ -937,6 +937,46 @@ pub fn window_effects(glass: bool) -> Option<WindowEffectsConfig> {
     })
 }
 
+/// 结束窗口的网页进程（WKWebView 的私有方法 `_killWebContentProcess`，系统版本没有就返回 false）。
+/// 网页卡在死循环里时，重新加载要先交给那个忙着的进程处理，排不上；直接结束进程最干脆，
+/// 之后 WebKit 回调"网页进程没了"，`lib.rs` 那边接着重新加载。
+pub fn kill_web_content(window: &WebviewWindow) -> bool {
+    extern "C" {
+        fn kill(pid: i32, sig: i32) -> i32;
+    }
+    const SIGKILL: i32 = 9;
+    let (tx, rx) = std::sync::mpsc::sync_channel(1);
+    let result = window.with_webview(move |webview| {
+        use objc2::msg_send;
+        let wk = webview.inner().cast::<AnyObject>();
+        let mut killed = false;
+        if !wk.is_null() {
+            // SAFETY: 在主线程上（with_webview 保证），视图是活的；私有方法先问过有没有再调。
+            unsafe {
+                // 先拿网页进程号直接结束（`_killWebContentProcess` 实测对卡在死循环里的进程不起作用，
+                // 它是发消息让那个进程自己退，进程忙着排不上）
+                let has_pid: bool = msg_send![wk, respondsToSelector: sel!(_webProcessIdentifier)];
+                if has_pid {
+                    let pid: i32 = msg_send![wk, _webProcessIdentifier];
+                    if pid > 0 && pid != std::process::id() as i32 {
+                        killed = kill(pid, SIGKILL) == 0;
+                        tracing::info!(pid, killed, "结束卡死的网页进程");
+                    }
+                }
+                if !killed {
+                    let responds: bool = msg_send![wk, respondsToSelector: sel!(_killWebContentProcess)];
+                    if responds {
+                        let _: () = msg_send![wk, _killWebContentProcess];
+                        killed = true;
+                    }
+                }
+            }
+        }
+        let _ = tx.send(killed);
+    });
+    result.is_ok() && rx.recv_timeout(std::time::Duration::from_secs(2)).unwrap_or(false)
+}
+
 /// 让这个窗口里的页面按屏幕的刷新率刷新（120Hz、165Hz）。
 ///
 /// 系统的网页内核默认把页面的刷新压在 60 帧上下（"Prefer Page Rendering Updates near 60fps"，省电）：

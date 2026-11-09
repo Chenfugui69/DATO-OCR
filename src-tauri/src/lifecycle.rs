@@ -54,6 +54,11 @@ pub fn mark_ready(label: &str) {
     }
 }
 
+/// 页面报到过、还没被忘掉（窗口销毁、网页进程没了之后要重新报到）
+pub fn is_ready(label: &str) -> bool {
+    READY.lock().as_ref().is_some_and(|r| r.contains(label))
+}
+
 /// 窗口没了（销毁事件里调）。下次再建要重新等页面报到。
 pub fn forget(label: &str) {
     if let Some(ready) = READY.lock().as_mut() {
@@ -62,10 +67,6 @@ pub fn forget(label: &str) {
     if let Some(hidden) = HIDDEN_SINCE.lock().as_mut() {
         hidden.remove(label);
     }
-}
-
-fn is_ready(label: &str) -> bool {
-    READY.lock().as_ref().is_some_and(|r| r.contains(label))
 }
 
 /// 页面报到时收到通知。已经报到过的话马上就有。

@@ -493,6 +493,12 @@ pub fn window_ready(window: tauri::WebviewWindow) {
     crate::lifecycle::mark_ready(window.label());
 }
 
+/// 页面回应"在吗"（见 web_watch.rs）
+#[tauri::command]
+pub async fn web_pong(window: tauri::WebviewWindow) {
+    crate::web_watch::pong(window.label());
+}
+
 /// 界面实际用的语言（设置是「跟随系统」时由这里按系统语言定，前后端用同一个结果）。
 #[tauri::command]
 pub async fn ui_language(app: AppHandle) -> AppResult<&'static str> {
