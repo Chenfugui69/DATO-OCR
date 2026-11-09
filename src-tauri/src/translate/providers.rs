@@ -128,7 +128,11 @@ pub async fn bing(ctx: &Ctx<'_>) -> AppResult<Output> {
             .send()
             .await?;
         let body: Value = match resp.error_for_status() {
-            Ok(r) => r.json().await.unwrap_or(Value::Null),
+            // 不是 JSON 也留着原文（日志里要看到对面到底回了什么）
+            Ok(r) => {
+                let raw = r.text().await.unwrap_or_default();
+                serde_json::from_str(&raw).unwrap_or(Value::String(raw))
+            }
             Err(err) if attempt == 0 => {
                 tracing::debug!("必应翻译令牌可能过期，刷新重试：{err}");
                 continue;
@@ -147,10 +151,22 @@ pub async fn bing(ctx: &Ctx<'_>) -> AppResult<Output> {
             }
             // 令牌失效时返回的是 {"statusCode":205} 之类，刷新一次再试
             None if attempt == 0 => continue,
-            None => return Err(AppError::Network("必应翻译返回格式异常".into())),
+            None => return Err(malformed("必应", &body)),
         }
     }
     Err(AppError::Network("必应翻译不可用".into()))
+}
+
+/// 翻译源回的东西认不出来：日志里记下开头一段（是对面改了格式、被限流，还是代理塞了个网页），
+/// 报给上层的错误还是原来那句
+fn malformed(name: &str, body: &Value) -> AppError {
+    let raw = match body {
+        Value::String(s) => s.clone(),
+        other => other.to_string(),
+    };
+    let snippet: String = raw.chars().take(200).collect();
+    tracing::warn!(provider = name, len = raw.len(), %snippet, "翻译源返回的内容认不出来");
+    AppError::Network(format!("{name}翻译返回格式异常"))
 }
 
 // ───────────────────────── 腾讯交互翻译（TranSmart） ─────────────────────────
@@ -188,7 +204,7 @@ pub async fn transmart(ctx: &Ctx<'_>, detected: &str) -> AppResult<Output> {
     }
     let out = resp["auto_translation"]
         .as_array()
-        .ok_or_else(|| AppError::Network("腾讯翻译返回格式异常".into()))?
+        .ok_or_else(|| malformed("腾讯", &resp))?
         .iter()
         .map(|v| v.as_str().unwrap_or_default())
         .collect::<Vec<_>>()
@@ -378,7 +394,7 @@ pub async fn youdao(ctx: &Ctx<'_>) -> AppResult<Output> {
             )));
         }
         let text =
-            youdao_text(&resp).ok_or_else(|| AppError::Network("有道翻译返回格式异常".into()))?;
+            youdao_text(&resp).ok_or_else(|| malformed("有道", &resp))?;
         // type 形如 "en2zh-CHS"
         let detected = resp["type"]
             .as_str()
@@ -436,7 +452,7 @@ async fn google_dict(ctx: &Ctx<'_>) -> AppResult<Output> {
         ),
         None => (first.as_str(), None),
     };
-    let text = text.ok_or_else(|| AppError::Network("谷歌翻译返回格式异常".into()))?;
+    let text = text.ok_or_else(|| malformed("谷歌", &resp))?;
     Ok(Output {
         text: text.to_string(),
         detected: detected.map(normalize_detected),

@@ -167,6 +167,8 @@ export default function PinView() {
   const [through, setThrough] = useState(false);
   useEvent('pin-click-through', (on) => setThrough(on));
   const [closing, setClosing] = useState(false);
+  /** 正在拖哪个角：图贴着对角摆，窗口和图哪个先变都不会让钉住的那个角晃 */
+  const [dragCorner, setDragCorner] = useState<Corner | null>(null);
   const zoomRef = useRef(1);
   const [texts, setTexts] = useState<PinText[] | null>(null);
   /** 旋转 / 翻转后图变了，地址加个版本号让 img 重新取 */
@@ -259,6 +261,7 @@ export default function PinView() {
       e.currentTarget.setPointerCapture(e.pointerId);
       const win = getCurrentWindow();
       const [pos, size] = await Promise.all([win.outerPosition(), win.outerSize()]);
+      setDragCorner(corner);
       resizing.current = { corner, sx: e.screenX, sy: e.screenY, z0: zoomRef.current, x0: pos.x, y0: pos.y, w0: size.width, h0: size.height, raf: 0, next: null };
     },
     [info],
@@ -294,12 +297,9 @@ export default function PinView() {
     if (!r) return;
     e.currentTarget.releasePointerCapture(e.pointerId);
     resizing.current = null;
-    // 松手后把缩放取整到 1%，百分比读数干净些
-    if (r.next != null) {
-      const z = Math.round(r.next * 100) / 100;
-      if (z !== zoomRef.current) void applyZoom(z, undefined);
-    }
-  }, [applyZoom]);
+    setDragCorner(null);
+    // 不再取整对齐到 1%：取整那一下会让钉住的角挪一两个像素；百分比读数本来就四舍五入
+  }, []);
 
   const close = useCallback(() => {
     setClosing(true);
@@ -545,7 +545,17 @@ export default function PinView() {
     <div
       className="pin-root"
       data-closing={closing || undefined}
-      style={{ padding: info.margin }}
+      style={
+        dragCorner
+          ? {
+              padding: info.margin,
+              display: 'flex',
+              overflow: 'hidden',
+              justifyContent: dragCorner.includes('w') ? 'flex-end' : 'flex-start',
+              alignItems: dragCorner.includes('n') ? 'flex-end' : 'flex-start',
+            }
+          : { padding: info.margin }
+      }
       onWheel={(e) => {
         if (collapsed) return;
         if (modKey(e)) {
