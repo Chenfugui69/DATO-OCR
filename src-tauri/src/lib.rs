@@ -225,6 +225,7 @@ pub fn run() {
             commands::capture::pin_info,
             commands::capture::pin_ready,
             commands::capture::pin_close,
+            commands::capture::pin_set_bounds,
             commands::capture::pin_close_all,
             commands::capture::pin_copy,
             commands::capture::pin_save,

@@ -142,6 +142,12 @@ export default function EditorView() {
   const anchor = useToolAnchor(barRef, pickedTool ?? tool);
   const room = Math.max(0, (barSize.width - subSize.width) / 2);
   const subShift = anchor == null ? 0 : Math.max(-room, Math.min(room, anchor - barSize.width / 2));
+  // 窗口比工具条窄：整个底栏等比缩小塞进去（两头不被裁掉）。缩放以底边为原点，
+  // 再用负的上外边距把空出来的那截还给画布
+  const dockRef = useRef<HTMLElement>(null);
+  const dockSize = useElementSize(dockRef, { width: 800, height: 60 });
+  const DOCK_PAD = 24;
+  const dockScale = Math.min(1, (dockSize.width - DOCK_PAD) / Math.max(1, barSize.width, subSize.width));
 
   const toPx = (e: { clientX: number; clientY: number }, stage: HTMLElement) => {
     const r = stage.getBoundingClientRect();
@@ -316,7 +322,15 @@ export default function EditorView() {
           )}
         </div>
       </div>
-      <footer className={(cfg?.toolbarStyle ?? 'flat') === 'flat' ? 'ed-dock an-flat' : 'ed-dock'}>
+      <footer
+        ref={dockRef}
+        className={(cfg?.toolbarStyle ?? 'flat') === 'flat' ? 'ed-dock an-flat' : 'ed-dock'}
+        style={
+          dockScale < 1
+            ? { transform: `scale(${dockScale})`, transformOrigin: 'center bottom', marginTop: -dockSize.height * (1 - dockScale) }
+            : undefined
+        }
+      >
         {openGroup && groups.find((g) => g.id === openGroup) && (
           <GroupBar
             style={{ position: 'static' }}

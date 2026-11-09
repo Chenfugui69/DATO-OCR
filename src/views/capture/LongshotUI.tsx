@@ -41,7 +41,7 @@ export function LongshotUI({ rect, s, viewport }: { rect: Rect; s: number; viewp
   let barY = below;
   if (barY + barSize.height > viewport.height) barY = css.y - 8 - barSize.height;
   if (barY < 0) barY = css.y + css.height - barSize.height - 8;
-  const barX = Math.max(8, Math.min(css.x + css.width / 2 - barSize.width / 2, viewport.width - barSize.width - 8));
+  const barX0 = Math.max(8, Math.min(css.x + css.width / 2 - barSize.width / 2, viewport.width - barSize.width - 8));
 
   const gap = 12;
   const previewY = Math.max(8, css.y);
@@ -117,6 +117,14 @@ export function LongshotUI({ rect, s, viewport }: { rect: Rect; s: number; viewp
         ? css.x - gap - boxW
         : Math.max(8, css.x + css.width - boxW - 8);
 
+  // 提示条别钻到预览条底下：预览在右边就把提示条往左推，在左边就往右推
+  const previewRight = previewX > css.x;
+  const barX = !shown
+    ? barX0
+    : previewRight
+      ? Math.max(8, Math.min(barX0, previewX - 8 - barSize.width))
+      : Math.min(viewport.width - barSize.width - 8, Math.max(barX0, previewX + boxW + 8));
+
   const hasPreview = !!shown;
   useLayoutEffect(() => {
     const regions = [barRef.current, previewRef.current]
@@ -163,8 +171,9 @@ export function LongshotUI({ rect, s, viewport }: { rect: Rect; s: number; viewp
 
   return (
     <>
-      <svg className="ls-ants" style={{ left: css.x - 2, top: css.y - 2, width: css.width + 4, height: css.height + 4 }}>
-        <rect x="1" y="1" width={css.width + 2} height={css.height + 2} />
+      {/* 框线画在选区外面、离边留 1px：遮罩可能被抓屏看到（远程），框线不能被拍进长图 */}
+      <svg className="ls-ants" style={{ left: css.x - 3, top: css.y - 3, width: css.width + 6, height: css.height + 6 }}>
+        <rect x="1" y="1" width={css.width + 4} height={css.height + 4} />
       </svg>
 
       <div ref={barRef} className={clsx('ls-bar cn-glass', `ls-bar--${tone}`)} style={{ transform: `translate(${barX}px, ${barY}px)` }}>

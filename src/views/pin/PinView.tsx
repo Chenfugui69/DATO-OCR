@@ -150,6 +150,11 @@ function PinFormula({
 
 /** 右键菜单里不透明度那一排的几档（%） */
 const OPACITY_STEPS = [30, 50, 70, 100];
+/** 贴图缩放范围（滚轮、拖角共用） */
+const MIN_ZOOM = 0.1;
+const MAX_ZOOM = 5;
+/** 贴图的四个角（拖它等比缩放） */
+type Corner = 'nw' | 'ne' | 'sw' | 'se';
 
 export default function PinView() {
   const { t } = useTranslation();
@@ -232,6 +237,69 @@ export default function PinView() {
     },
     [info, dpr],
   );
+
+  /** 拖四个角等比缩放：对角那个角钉住不动。按下时记下窗口位置、大小和缩放 */
+  const resizing = useRef<{
+    corner: Corner;
+    sx: number;
+    sy: number;
+    z0: number;
+    x0: number;
+    y0: number;
+    w0: number;
+    h0: number;
+    raf: number;
+    next: number | null;
+  } | null>(null);
+  const onCornerDown = useCallback(
+    async (corner: Corner, e: React.PointerEvent) => {
+      if (!info || e.button !== 0) return;
+      e.preventDefault();
+      e.stopPropagation();
+      e.currentTarget.setPointerCapture(e.pointerId);
+      const win = getCurrentWindow();
+      const [pos, size] = await Promise.all([win.outerPosition(), win.outerSize()]);
+      resizing.current = { corner, sx: e.screenX, sy: e.screenY, z0: zoomRef.current, x0: pos.x, y0: pos.y, w0: size.width, h0: size.height, raf: 0, next: null };
+    },
+    [info],
+  );
+  const onCornerMove = useCallback(
+    (e: React.PointerEvent) => {
+      const r = resizing.current;
+      if (!r || !info) return;
+      // 位移投到对角线上：拖的方向朝外是放大
+      const dx = (e.screenX - r.sx) * dpr * (r.corner.includes('w') ? -1 : 1);
+      const dy = (e.screenY - r.sy) * dpr * (r.corner.includes('n') ? -1 : 1);
+      const z = r.z0 + (dx * info.width + dy * info.height) / (info.width * info.width + info.height * info.height);
+      r.next = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, z));
+      if (r.raf) return;
+      r.raf = requestAnimationFrame(() => {
+        r.raf = 0;
+        const next = r.next;
+        if (next == null || resizing.current !== r) return;
+        zoomRef.current = next;
+        setZoom(next);
+        const marginPx = Math.round(info.margin * dpr);
+        const w = Math.round(info.width * next) + marginPx * 2;
+        const h = Math.round(info.height * next) + marginPx * 2;
+        const x = r.corner.includes('w') ? r.x0 + r.w0 - w : r.x0;
+        const y = r.corner.includes('n') ? r.y0 + r.h0 - h : r.y0;
+        void pin.setBounds(x, y, w, h);
+      });
+    },
+    [info, dpr],
+  );
+  const onCornerUp = useCallback((e: React.PointerEvent) => {
+    const r = resizing.current;
+    if (!r) return;
+    e.currentTarget.releasePointerCapture(e.pointerId);
+    resizing.current = null;
+    // 松手后把缩放取整到 1%，百分比读数干净些
+    if (r.next != null) {
+      const z = Math.round(r.next * 100) / 100;
+      if (z !== zoomRef.current) void applyZoom(z, undefined);
+    }
+  }, [applyZoom]);
 
   const close = useCallback(() => {
     setClosing(true);
@@ -483,7 +551,7 @@ export default function PinView() {
         if (modKey(e)) {
           setOpacity((o) => Math.min(1, Math.max(0.2, Math.round((o + (e.deltaY < 0 ? 0.1 : -0.1)) * 10) / 10)));
         } else {
-          const next = Math.min(5, Math.max(0.2, Math.round((zoomRef.current + (e.deltaY < 0 ? 0.1 : -0.1)) * 10) / 10));
+          const next = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, Math.round((zoomRef.current + (e.deltaY < 0 ? 0.1 : -0.1)) * 10) / 10));
           if (next !== zoomRef.current) void applyZoom(next, { x: e.clientX, y: e.clientY });
         }
       }}
@@ -597,6 +665,18 @@ export default function PinView() {
               onMouseDown={(e) => e.stopPropagation()}
             />
           )}
+          {(['nw', 'ne', 'sw', 'se'] as const).map((c) => (
+            <span
+              key={c}
+              className={`pin-corner pin-corner--${c}`}
+              onPointerDown={(e) => void onCornerDown(c, e)}
+              onPointerMove={onCornerMove}
+              onPointerUp={onCornerUp}
+              onPointerCancel={onCornerUp}
+              onMouseDown={(e) => e.stopPropagation()}
+              onDoubleClick={(e) => e.stopPropagation()}
+            />
+          ))}
           {zoom !== 1 && <span className="pin-zoom cn-glass-thin cn-numeric">{Math.round(zoom * 100)}%</span>}
           {/* 鼠标移上来才出现：右下角关闭，左边是表格 / 公式的提示（开着时换成它们的几个操作） */}
           <div className="pin-actions" onMouseDown={(e) => e.stopPropagation()} onDoubleClick={(e) => e.stopPropagation()}>
@@ -648,6 +728,11 @@ export default function PinView() {
         .pin-root[data-closing] { animation: pin-out 120ms var(--cn-ease-in) forwards; }
         .pin-frame { position: relative; line-height: 0; border-radius: 2px; box-shadow: 0 4px 12px rgba(0,0,0,0.28), 0 0 0 0.5px rgba(0,0,0,0.25); transition: opacity 120ms; }
         .pin-frame img { display: block; }
+        .pin-corner { position: absolute; z-index: 3; width: 14px; height: 14px; }
+        .pin-corner--nw { left: -4px; top: -4px; cursor: nwse-resize; }
+        .pin-corner--se { right: -4px; bottom: -4px; cursor: nwse-resize; }
+        .pin-corner--ne { right: -4px; top: -4px; cursor: nesw-resize; }
+        .pin-corner--sw { left: -4px; bottom: -4px; cursor: nesw-resize; }
         .pin-text { position: absolute; inset: 0; pointer-events: none; line-height: 1; }
         .pin-text span { position: absolute; white-space: pre; transform-origin: 0 0; color: transparent; font-family: ${TEXT_FONT}; cursor: text; pointer-events: auto; user-select: text; -webkit-user-select: text; }
         .pin-text span::selection { background: rgba(10, 132, 255, 0.32); color: transparent; }

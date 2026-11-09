@@ -73,6 +73,9 @@ struct Active {
     /// 可点击的界面区域（屏幕物理坐标）
     regions: Vec<PhysicalRect>,
     interactive: bool,
+    /// 遮罩现在能不能被抓屏看到（远程控制、屏幕共享的对面才看得到提示条和预览）。
+    /// 提示条、预览都在选区外面时才放开，压进选区就排除，免得被拼进长图
+    capturable: bool,
     /// 被滚动的目标窗口：点过提示条按钮（焦点跑到遮罩上）之后要把焦点还给它
     target: Option<crate::platform::WindowHandle>,
     /// 截图时前台程序名（只采到一帧、按普通截图出图时记进截图库）
@@ -171,6 +174,7 @@ pub fn start(
         live_version: 0,
         max_height: settings.max_height,
         regions: Vec::new(),
+        capturable: false,
         interactive: false,
         target: None,
         source_app: session.source_app.clone(),
@@ -189,7 +193,8 @@ pub fn start(
         platform::backdrop::hide_all();
         overlay::for_each(&ui_app, |w| {
             let _ = w.set_ignore_cursor_events(true);
-            // 采集期间遮罩一直显示着：提示条、预览条不能被拍进长图
+            // 先排除：提示条、预览条不能被拍进长图。页面报上来的界面区域都在选区外面时
+            // 再放开（`set_regions`），远程那边才看得到
             platform::set_overlay_capturable(w, false);
         });
         let _ = ui_app.emit(events::LONGSHOT_STATE, event);
@@ -486,13 +491,36 @@ fn update_interactive(app: &AppHandle, x: i32, y: i32) {
 
 pub fn set_regions(app: &AppHandle, regions: Vec<PhysicalRect>) {
     let st = state(app);
-    if let Some(active) = st.longshot.active.lock().as_mut() {
+    let changed = {
+        let mut guard = st.longshot.active.lock();
+        let Some(active) = guard.as_mut() else { return };
+        // 选区四周留几个像素：选区框画在外面紧挨着，提示条、预览贴得太近也算压进来
+        let capturable = clear_of(active.local, &regions, 4);
         let origin = active.monitor.bounds;
         active.regions = regions
             .into_iter()
             .map(|r| PhysicalRect::new(r.x + origin.x, r.y + origin.y, r.width, r.height))
             .collect();
+        (capturable != active.capturable).then(|| {
+            active.capturable = capturable;
+            capturable
+        })
     };
+    if let Some(on) = changed {
+        let ui = app.clone();
+        let _ = app.run_on_main_thread(move || {
+            overlay::for_each(&ui, |w| platform::set_overlay_capturable(w, on));
+        });
+    }
+}
+
+/// 界面区域（遮罩坐标）都不碰选区四周 `margin` 像素以内
+fn clear_of(sel: PhysicalRect, regions: &[PhysicalRect], margin: i32) -> bool {
+    let (l, t) = (sel.x - margin, sel.y - margin);
+    let (r, b) = (sel.right() + margin, sel.bottom() + margin);
+    regions
+        .iter()
+        .all(|u| u.right() <= l || u.x >= r || u.bottom() <= t || u.y >= b)
 }
 
 fn frame_path(dir: &std::path::Path, index: usize) -> PathBuf {
@@ -812,6 +840,22 @@ pub fn finish(app: &AppHandle) {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn ui_clear_of_selection() {
+        use crate::platform::PhysicalRect;
+        let sel = PhysicalRect::new(100, 100, 200, 200);
+        let r = |x, y, w, h| PhysicalRect::new(x, y, w, h);
+        assert!(super::clear_of(sel, &[], 4));
+        // 选区右边外面
+        assert!(super::clear_of(sel, &[r(310, 100, 50, 50)], 4));
+        // 贴得太近
+        assert!(!super::clear_of(sel, &[r(302, 100, 50, 50)], 4));
+        // 压进选区
+        assert!(!super::clear_of(sel, &[r(250, 120, 80, 40)], 4));
+        // 在下面但横向错开也不算
+        assert!(super::clear_of(sel, &[r(0, 400, 50, 50)], 4));
+    }
+
     use std::collections::HashMap;
     use std::time::{Duration, Instant};
 

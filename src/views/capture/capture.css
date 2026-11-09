@@ -853,7 +853,7 @@ html[data-view='capture'] #root {
   flex-direction: column;
   gap: 0;
   padding: 6px 6px 0;
-  border-radius: var(--cn-radius-2xl);
+  border-radius: var(--cn-radius-lg);
   overflow: hidden;
   box-shadow: var(--cn-shadow-lg), 0 0 0 0.5px var(--cn-separator);
   /* 换到选区另一边时平滑地挪过去；大小是逐帧跟手变的（见 LongshotUI 的 useChase），不加过渡 */
@@ -870,7 +870,7 @@ html[data-view='capture'] #root {
   position: relative;
   flex: none;
   overflow: hidden;
-  border-radius: var(--cn-radius-md);
+  border-radius: var(--cn-radius-sm);
   /* 图的边上一圈细线：浅色网页的截图和毛玻璃底分得开 */
   box-shadow: inset 0 0 0 0.5px var(--cn-separator);
   background: var(--cn-fill-quaternary);

@@ -572,6 +572,24 @@ pub async fn pin_close(app: AppHandle, label: String) -> AppResult<()> {
     Ok(())
 }
 
+/// 贴图拖角缩放：位置和大小一次摆好（分开设的话两步之间对角会晃一下）
+#[tauri::command]
+pub async fn pin_set_bounds(
+    app: AppHandle,
+    window: tauri::WebviewWindow,
+    x: i32,
+    y: i32,
+    width: u32,
+    height: u32,
+) -> AppResult<()> {
+    app.run_on_main_thread(move || {
+        if let Err(err) = platform::place_window(&window, x, y, width, height) {
+            tracing::warn!("贴图改大小失败：{err}");
+        }
+    })?;
+    Ok(())
+}
+
 #[tauri::command]
 pub async fn pin_close_all(app: AppHandle) -> AppResult<()> {
     let ui = app.clone();

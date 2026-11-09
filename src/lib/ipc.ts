@@ -145,6 +145,7 @@ export const pin = {
   /** 图画好了，可以显示窗口了 */
   ready: (label: string) => call<void>('pin_ready', { label }),
   close: (label: string) => call<void>('pin_close', { label }),
+  setBounds: (x: number, y: number, width: number, height: number) => call<void>('pin_set_bounds', { x, y, width, height }),
   /** 贴图里的文字和位置（第一次要时才识别） */
   text: (label: string) => call<PinText[]>('pin_text', { label }),
   scanCodes: (label: string) => call<ScannedCode[]>('pin_scan_codes', { label }),
