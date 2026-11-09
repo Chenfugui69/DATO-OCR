@@ -81,12 +81,15 @@ export interface Settings {
     selection: {
       showButton: boolean;
       buttonPosition: 'bottomRight' | 'topRight' | 'bottomLeft' | 'topLeft';
+      buttonFollow: 'cursor' | 'text';
       /** 划词按钮的样子 */
-      buttonStyle: 'liquid' | 'frosted' | 'solid' | 'custom';
+      buttonStyle: 'liquid' | 'frosted' | 'solid' | 'dot' | 'custom';
       /** 自定义玻璃（样式选"自定义"时用） */
       glass: GlassTuning;
       /** 纯色圆点的配色（样式选"纯色"时用） */
       solid: SolidDot;
+      /** 小圆点的颜色和白边（样式选"小圆点"时用） */
+      plainDot: PlainDot;
       /** 选中系统语言的文字时不弹按钮 */
       skipSystemLanguage: boolean;
       /** 选中这些语言的文字时不弹按钮 */
@@ -866,6 +869,14 @@ export type MailCodesStatus = (
 };
 
 /** 划词按钮的自定义玻璃：都是 0 ~ 100，默认值就是"液态玻璃"的样子 */
+/** "小圆点"样式：颜色 #RRGGBB（空 = 强调色），白边开关 */
+export interface PlainDot {
+  color: string;
+  border: boolean;
+  /** 点的直径：8 / 10 / 12 / 14 */
+  size: number;
+}
+
 /** 纯色划词圆点的配色：颜色 #RRGGBB，空 = 跟着深浅色主题 */
 export interface SolidDot {
   background: string;

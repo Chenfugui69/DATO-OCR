@@ -1175,6 +1175,8 @@ pub struct SelectionTranslateSettings {
     pub show_button: bool,
     /// bottomRight | topRight | bottomLeft | topLeft
     pub button_position: String,
+    /// 按钮摆在哪儿：cursor = 松开鼠标的地方 | text = 选中那段字的角上（问不到文字范围时照旧跟鼠标）
+    pub button_follow: String,
     /// 划词按钮的样子：liquid = 液态玻璃（通透）| frosted = 磨砂玻璃（更实，密集文字上更好认）|
     /// solid = 纯色（没有玻璃效果，弹出最快、最省资源）| custom = 自定义（液态玻璃的各项自己调，见 `glass`）
     pub button_style: String,
@@ -1182,6 +1184,8 @@ pub struct SelectionTranslateSettings {
     pub glass: GlassTuning,
     /// 纯色圆点的配色（样式选"纯色"时用）
     pub solid: SolidDot,
+    /// 小圆点样式的颜色和白边（样式选"小圆点"时用）
+    pub plain_dot: PlainDot,
     /// 选中的是系统语言的文字（中文系统里选中文）时不弹按钮
     pub skip_system_language: bool,
     /// 选中这些语言的文字时不弹按钮（语言代码：zh、en、ja……）
@@ -1199,9 +1203,11 @@ impl Default for SelectionTranslateSettings {
         Self {
             show_button: true,
             button_position: "bottomRight".into(),
+            button_follow: "cursor".into(),
             button_style: "liquid".into(),
             glass: GlassTuning::default(),
             solid: SolidDot::default(),
+            plain_dot: PlainDot::default(),
             skip_system_language: false,
             skip_languages: Vec::new(),
             button_size: 28,
@@ -1299,6 +1305,30 @@ impl SolidDot {
         }
         self.border_width = if self.border_width.is_finite() { self.border_width.clamp(0.0, 4.0) } else { 0.5 };
         self.shadow = self.shadow.min(100);
+    }
+}
+
+/// 小圆点的几档大小（逻辑像素）
+pub const PLAIN_DOT_SIZES: [u32; 4] = [8, 10, 12, 14];
+
+/// "小圆点"样式：一颗实心的小点，没有图标。颜色是 #RRGGBB，空 = 强调色
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase", default)]
+pub struct PlainDot {
+    pub color: String,
+    /// 外面一圈白边（压在深色、彩色内容上也认得出）
+    pub border: bool,
+    /// 点的直径（逻辑像素）：8 / 10 / 12 / 14 四档
+    pub size: u32,
+}
+
+impl Default for PlainDot {
+    fn default() -> Self {
+        Self {
+            color: String::new(),
+            border: true,
+            size: 10,
+        }
     }
 }
 
@@ -1560,11 +1590,26 @@ impl Settings {
         ) {
             sel.button_position = "bottomRight".into();
         }
+        if !matches!(sel.button_follow.as_str(), "cursor" | "text") {
+            sel.button_follow = "cursor".into();
+        }
         sel.glass.sanitize();
         sel.solid.sanitize();
+        {
+            let c = &mut sel.plain_dot.color;
+            let ok = c.len() == 7 && c.starts_with('#') && c[1..].chars().all(|ch| ch.is_ascii_hexdigit());
+            if !ok {
+                c.clear();
+            }
+            let size = &mut sel.plain_dot.size;
+            *size = PLAIN_DOT_SIZES
+                .into_iter()
+                .min_by_key(|s| s.abs_diff(*size))
+                .unwrap_or(10);
+        }
         if !matches!(
             sel.button_style.as_str(),
-            "liquid" | "frosted" | "solid" | "custom"
+            "liquid" | "frosted" | "solid" | "dot" | "custom"
         ) {
             sel.button_style = "liquid".into();
         }

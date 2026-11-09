@@ -22,7 +22,7 @@ use std::time::{Duration, Instant};
 use image::RgbaImage;
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_dialog::DialogExt;
 
 use crate::error::{AppError, AppResult};
@@ -431,19 +431,48 @@ fn start(app: &AppHandle, intent: CaptureIntent, instant: bool, nested: bool) ->
         }
     })?;
 
-    // 看门狗：遮罩迟迟不报到（页面没加载、前端异常）就收回会话，
+    // 看门狗：遮罩迟迟不报到（页面没加载、网页进程没了、前端异常）就收回会话，
     // 否则之后每次热键都会被"已在截图中"挡掉，用户看到的是截图彻底失灵。
+    // 只看"有没有一块报到"不够：多屏时别的屏好了、鼠标所在那块没好，用户眼前什么都没有，
+    // 会话却一直挂着（远程桌面只看得到主屏时尤其如此）。所以鼠标所在那块没好就收回；
+    // 没报到的遮罩页面重新加载，免得下次还是它
     let wd_app = app.clone();
     std::thread::spawn(move || {
         std::thread::sleep(Duration::from_millis(3000));
         let st = state(&wd_app);
-        let stuck = st
-            .capture
-            .current()
-            .is_some_and(|s| s.id == id && s.shown.lock().is_empty());
-        if stuck {
-            tracing::error!(session = id, "遮罩 3 秒内未就绪，取消本次截图");
+        let Some(session) = st.capture.current().filter(|s| s.id == id) else {
+            return;
+        };
+        let missing: Vec<MonitorId> = {
+            let shown = session.shown.lock();
+            session
+                .monitors
+                .iter()
+                .map(|m| m.info.id)
+                .filter(|m| !shown.contains(&m.0))
+                .collect()
+        };
+        if missing.is_empty() {
+            return;
+        }
+        let focus_missing = session.focus_monitor().is_none_or(|m| missing.contains(&m));
+        let all_missing = missing.len() == session.monitors.len();
+        drop(session);
+        tracing::error!(
+            session = id,
+            missing = ?missing.iter().map(|m| m.0).collect::<Vec<_>>(),
+            focus_missing,
+            "遮罩 3 秒内未就绪"
+        );
+        if focus_missing || all_missing {
+            tracing::error!(session = id, "鼠标所在屏的遮罩没出来，取消本次截图");
             end_session(&wd_app, id, true);
+            wm::toast(&wd_app, "error", "截图界面没准备好，已重新加载，请再截一次");
+        }
+        for monitor in missing {
+            if let Some(window) = wd_app.get_webview_window(&overlay::label_for(monitor)) {
+                crate::web_watch::restart(&window);
+            }
         }
     });
     Ok(())

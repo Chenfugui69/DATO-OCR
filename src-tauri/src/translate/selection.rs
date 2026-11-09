@@ -496,8 +496,8 @@ pub fn reconfigure(app: &AppHandle) {
 fn on_event(app: &AppHandle, event: SelectionEvent) {
     // 选中的字不写进日志
     match &event {
-        SelectionEvent::Selected { anchor, end, .. } => {
-            tracing::debug!(?anchor, ?end, "划词事件：选了字");
+        SelectionEvent::Selected { anchor, end, text_rect, .. } => {
+            tracing::debug!(?anchor, ?end, ?text_rect, "划词事件：选了字");
         }
         other => tracing::debug!(event = ?other, "划词事件"),
     }
@@ -508,7 +508,8 @@ fn on_event(app: &AppHandle, event: SelectionEvent) {
             alt,
             ctrl,
             text,
-        } => on_selected(app, anchor, end, alt, ctrl, text.as_deref()),
+            text_rect,
+        } => on_selected(app, anchor, end, alt, ctrl, text.as_deref(), text_rect),
         SelectionEvent::ButtonClicked => button_clicked(app),
         SelectionEvent::Dismiss => {
             hide_button(app);
@@ -611,6 +612,7 @@ fn on_selected(
     alt: bool,
     ctrl: bool,
     text: Option<&str>,
+    text_rect: Option<crate::platform::TextBounds>,
 ) {
     let st = state(app);
     let (sel, offline) = {
@@ -665,8 +667,25 @@ fn on_selected(
             },
         );
         *BUTTON_TEXT.lock() = text.map(str::to_string);
-        show_button(app, start, end, &sel);
+        show_button(app, start, end, text_rect, &sel);
     }
+}
+
+/// 两个点按阅读顺序排（先上后下，同一行先左后右）：(选区开头, 选区结尾)。`line` 以内的上下差算同一行
+fn reading_order(a: (i32, i32), b: (i32, i32), line: i32) -> ((i32, i32), (i32, i32)) {
+    let a_first = if (a.1 - b.1).abs() > line { a.1 < b.1 } else { a.0 <= b.0 };
+    if a_first {
+        (a, b)
+    } else {
+        (b, a)
+    }
+}
+
+/// 点 `p` 离矩形 `r` 不超过 `max`（在里面算 0）
+fn near(r: PhysicalRect, p: (i32, i32), max: i32) -> bool {
+    let dx = (r.x - p.0).max(p.0 - r.right()).max(0);
+    let dy = (r.y - p.1).max(p.1 - r.bottom()).max(0);
+    dx <= max && dy <= max
 }
 
 /// 按钮跟着松开鼠标的那个点走（眼睛和鼠标都在那儿），并且放在选区**外面**：
@@ -679,6 +698,7 @@ fn show_button(
     app: &AppHandle,
     start: (i32, i32),
     end: (i32, i32),
+    text_rect: Option<crate::platform::TextBounds>,
     sel: &crate::settings::SelectionTranslateSettings,
 ) {
     let Some(monitor) = wm::monitor_at(end.0, end.1) else {
@@ -686,31 +706,81 @@ fn show_button(
     };
     let s = monitor.scale_factor.max(0.5);
     let px = |logical: f64| (logical * s).round() as i32;
-    let (dot, inset) = (px(f64::from(sel.button_size)), px(BUTTON_INSET));
+    // 小圆点按点本身的大小摆（窗口小一圈），这样才能紧贴着字
+    let pip = sel.button_style == "dot";
+    let size_pt = if pip { sel.plain_dot.size } else { sel.button_size };
+    let (dot, inset) = (px(f64::from(size_pt)), px(BUTTON_INSET));
     let (mut right, mut below) = match sel.button_position.as_str() {
         "topRight" => (true, false),
         "bottomLeft" => (false, true),
         "topLeft" => (false, false),
         _ => (true, true),
     };
-    // 上下差出大半行就算换行了
-    let rows = end.1 - start.1;
-    if rows.abs() > px(12.0) {
-        below = rows > 0;
-        right = rows > 0;
-    } else if end.0 < start.0 {
-        right = !right;
-    }
-    // 鼠标一般在文字行的中间，往下 / 往上让开半行多一点，免得盖住字
-    let (dx, dy) = (px(4.0), px(14.0));
-    let x = if right { end.0 + dx } else { end.0 - dx - dot };
-    let y = if below { end.1 + dy } else { end.1 - dy - dot };
+    // "跟着文段"：贴在选中那段字的角上（设置里的哪个角就是哪个角，从哪头开始选都一样）。
+    // 问不到文字范围、或者问到的范围离鼠标太远（有的程序报的不准）时照旧跟着鼠标
+    let text_rect = text_rect
+        .filter(|_| sel.button_follow == "text")
+        .filter(|b| near(b.whole, end, px(160.0)));
+    let (x, y) = if let Some(b) = text_rect {
+        // 靠右的位置贴在选区最后一个字后面，靠左的贴在第一个字前面；上下按设置，贴着那个字所在的行。
+        // 倒着选（从下往上、从右往左）时松开鼠标的地方在选区开头：位置整个反过来（右下变左上），
+        // 按钮出现在眼睛和鼠标所在的那一头
+        let backward = reading_order(start, end, px(12.0)).0 == end && start != end;
+        if backward {
+            right = !right;
+            below = !below;
+        }
+        let gap = px(3.0);
+        let edge = if right { b.last } else { b.first };
+        if let Some(r) = edge {
+            if pip {
+                // 小圆点紧贴着那个字：横向挨着字的边，纵向压在那一行的底边 / 顶边上
+                let x = if right { r.right() + px(1.0) } else { r.x - px(1.0) - dot };
+                let y = if below { r.bottom() - dot / 2 } else { r.y - dot / 2 };
+                (x, y)
+            } else {
+                let x = if right { r.right() + gap } else { r.x - gap - dot };
+                let y = if below { r.bottom() + gap } else { r.y - gap - dot };
+                (x, y)
+            }
+        } else {
+            // 问不到单个字（Chrome、Edge、Electron 程序就不答）：选区的头尾就是按下、松开鼠标的那两个点
+            // （按阅读顺序排，从下往上选时结尾是按下的那个点）。整段外框它们报得也不准（常常连后面没选的
+            // 段落一起算进去），只拿来别让按钮跑出文字的左右边
+            let (head, tail) = reading_order(start, end, px(12.0));
+            let p = if right { tail } else { head };
+            let x = if right {
+                p.0.min(b.whole.right()) + px(4.0)
+            } else {
+                p.0.max(b.whole.x) - px(4.0) - dot
+            };
+            // 鼠标一般在文字行的中间，往下 / 往上让开半行多一点
+            let y = if below { p.1 + px(14.0) } else { p.1 - px(14.0) - dot };
+            (x, y)
+        }
+    } else {
+        // 上下差出大半行就算换行了
+        let rows = end.1 - start.1;
+        if rows.abs() > px(12.0) {
+            below = rows > 0;
+            right = rows > 0;
+        } else if end.0 < start.0 {
+            right = !right;
+        }
+        // 鼠标一般在文字行的中间，往下 / 往上让开半行多一点，免得盖住字（小圆点小，让开得少一些）
+        let (dx, dy) = if pip { (px(3.0), px(8.0)) } else { (px(4.0), px(14.0)) };
+        let x = if right { end.0 + dx } else { end.0 - dx - dot };
+        let y = if below { end.1 + dy } else { end.1 - dy - dot };
+        (x, y)
+    };
     let wa = monitor.work_area;
     let x = x.clamp(wa.x, (wa.right() - dot).max(wa.x));
     let y = y.clamp(wa.y, (wa.bottom() - dot).max(wa.y));
-    let dot_rect = PhysicalRect::new(x, y, dot as u32, dot as u32);
     let size = (dot + inset * 2) as u32;
     let rect = PhysicalRect::new(x - inset, y - inset, size, size);
+    // 能点的范围：小圆点太小不好点中，四周各放宽一点（还在窗口留边以内）
+    let grow = if pip { px(5.0) } else { 0 };
+    let dot_rect = PhysicalRect::new(x - grow, y - grow, (dot + grow * 2) as u32, (dot + grow * 2) as u32);
     let generation = BUTTON_GEN.fetch_add(1, Ordering::SeqCst) + 1;
     // 按钮还没显示，这时候把它要盖住的那块画面抓下来：玻璃按它的明暗用浅色或深色，
     // 页面再把这块画面放进珠子里（放大一点、模糊一点），看着像透过玻璃看到的
@@ -718,8 +788,8 @@ fn show_button(
     let below = Some(BUTTON_HANDLE.load(Ordering::SeqCst))
         .filter(|&h| h != 0 && BUTTON_ON_SCREEN.load(Ordering::SeqCst))
         .map(WindowHandle);
-    // 纯色样式不透出底下的画面，也就不用抓（抓屏是弹按钮最费时的一步）
-    let patch = if sel.button_style == "solid" {
+    // 纯色、小圆点不透出底下的画面，也就不用抓（抓屏是弹按钮最费时的一步）
+    let patch = if matches!(sel.button_style.as_str(), "solid" | "dot") {
         None
     } else {
         platform::screen_patch(rect, below)
@@ -790,7 +860,7 @@ fn show_button(
 pub fn demo_button(app: &AppHandle, at: Option<(i32, i32)>) {
     let (x, y) = at.or_else(platform::cursor_position).unwrap_or((400, 400));
     let sel = state(app).settings.read().translate.selection.clone();
-    show_button(app, (x, y), (x, y), &sel);
+    show_button(app, (x, y), (x, y), None, &sel);
 }
 
 fn hide_button(app: &AppHandle) {
@@ -820,4 +890,19 @@ fn hide_button(app: &AppHandle) {
         std::thread::sleep(Duration::from_millis(400));
         reconcile_button(&later);
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::reading_order;
+
+    #[test]
+    fn head_and_tail_follow_reading_order() {
+        // 往下选：按下点在前
+        assert_eq!(reading_order((100, 10), (50, 200), 12), ((100, 10), (50, 200)));
+        // 从下往上选：松开点在前，结尾是按下的那个点
+        assert_eq!(reading_order((50, 200), (100, 10), 12), ((100, 10), (50, 200)));
+        // 同一行从右往左
+        assert_eq!(reading_order((300, 100), (80, 104), 12), ((80, 104), (300, 100)));
+    }
 }

@@ -48,8 +48,9 @@ pub fn prewarm(app: &AppHandle) {
     platform::backdrop::retain(&ids);
     for info in &monitors {
         if app.get_webview_window(&label_for(info.id)).is_none() {
-            if let Err(err) = ensure_one(app, info) {
-                tracing::warn!(monitor = %info.id, "预建遮罩窗口失败：{err}");
+            match ensure_one(app, info) {
+                Ok(window) => check_loaded(app, window),
+                Err(err) => tracing::warn!(monitor = %info.id, "预建遮罩窗口失败：{err}"),
             }
         }
         if let Err(err) = platform::backdrop::ensure(info.id) {
@@ -67,6 +68,28 @@ pub fn prewarm(app: &AppHandle) {
         elapsed_ms = started.elapsed().as_millis() as u64,
         "遮罩窗口预建完成"
     );
+}
+
+/// 新建的遮罩页面过一会儿还没报到（网页进程没起来、加载失败），重新加载一次。
+/// 不然要等到按下截图那一刻才发现这块屏的遮罩是空壳（见 `start` 里的看门狗）。
+fn check_loaded(app: &AppHandle, window: WebviewWindow) {
+    const GRACE: std::time::Duration = std::time::Duration::from_secs(10);
+    let app = app.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(GRACE);
+        let label = window.label().to_string();
+        // 这期间窗口被清掉（屏拔了）、换成了新的，就不归这里管了
+        let current = app.get_webview_window(&label);
+        if current.is_none() || crate::lifecycle::is_ready(&label) {
+            return;
+        }
+        let st = crate::state::state(&app);
+        if st.capture.current().is_some() || st.longshot.is_active() {
+            return;
+        }
+        tracing::warn!(%label, "预建的遮罩页面迟迟没报到，重新加载");
+        crate::web_watch::restart(&window);
+    });
 }
 
 /// 热键路径：把窗口摆到当前显示器几何上，清掉已拔掉的显示器的窗口。**UI 线程。**

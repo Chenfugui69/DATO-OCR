@@ -190,6 +190,7 @@ extern "C" {
     pub static kCFBooleanTrue: CFTypeRef;
 
     pub fn CFRelease(cf: CFTypeRef);
+    pub fn CFRetain(cf: CFTypeRef) -> CFTypeRef;
     pub fn CFGetTypeID(cf: CFTypeRef) -> usize;
     pub fn CFStringGetTypeID() -> usize;
     pub fn CFStringGetLength(string: CFStringRef) -> isize;

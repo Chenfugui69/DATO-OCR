@@ -20,6 +20,15 @@ impl std::fmt::Display for MonitorId {
     }
 }
 
+/// 选中的字在屏幕上的位置（物理像素）：整段的外框，以及第一个字、最后一个字各自的框
+/// （问不到单个字时只有外框）
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub struct TextBounds {
+    pub whole: PhysicalRect,
+    pub first: Option<PhysicalRect>,
+    pub last: Option<PhysicalRect>,
+}
+
 /// 物理像素矩形，原点是虚拟桌面左上角（主屏左上角）。副屏在主屏左/上方时坐标为负。
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PhysicalRect {
@@ -178,13 +187,16 @@ pub enum RecordInput {
 pub enum SelectionEvent {
     /// 刚选了文字：拖选或双击 / 三击。`anchor` 是按下点和松开点的包围盒，
     /// `end` 是松开点；`alt` / `ctrl` 表示选的时候按着这个键；
-    /// `text` 是选中的字（系统肯告诉我们时才有，用来判断该不该弹按钮；None = 不知道）
+    /// `text` 是选中的字（系统肯告诉我们时才有，用来判断该不该弹按钮；None = 不知道）；
+    /// `text_rect` 是选中的字在屏幕上的范围（同样问得到才有）
     Selected {
         anchor: PhysicalRect,
         end: (i32, i32),
         alt: bool,
         ctrl: bool,
         text: Option<String>,
+        /// 选中的字在屏幕上占的范围（系统肯告诉我们时才有，"跟着文段"摆按钮用）
+        text_rect: Option<TextBounds>,
     },
     /// 点了悬浮翻译按钮（这次点击已被吞掉，原程序的选区还在）
     ButtonClicked,

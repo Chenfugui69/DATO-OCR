@@ -113,8 +113,19 @@ fn recover(app: &AppHandle, window: &WebviewWindow, waited: Duration) {
     if label.starts_with(capture::overlay::LABEL_PREFIX) {
         capture::cancel_current(app);
     }
+    restart(window);
+}
+
+/// 结束窗口的网页进程重新加载（macOS），结束不了就直接重新加载。页面加载完会再报到。
+/// 卡死的网页、一直没加载起来的网页（预建的遮罩页面没报到）都走这里。**别在 UI 线程调**：
+/// 结束网页进程要到 UI 线程上走一趟、等它回话。
+pub fn restart(window: &WebviewWindow) {
+    let label = window.label().to_string();
     // 页面重新加载完会再报到；这之前不再问它
     lifecycle::forget(&label);
+    if let Some(map) = PENDING.lock().as_mut() {
+        map.remove(&label);
+    }
     if platform::kill_web_content(window) {
         // 网页进程没了会走 `on_web_content_terminated` 重新加载
         return;

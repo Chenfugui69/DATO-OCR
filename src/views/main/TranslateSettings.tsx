@@ -107,6 +107,16 @@ export function TranslateSettingsGroups({ settings, set }: { settings: Settings;
         <Row title={t('settings.selection.showButton')} desc={t('settings.selection.showButtonDesc')}>
           <Switch checked={sel.showButton} onChange={(v) => set((d) => void (d.translate.selection.showButton = v))} />
         </Row>
+        <Row title={t('settings.selection.follow')} desc={t('settings.selection.followDesc')}>
+          <Segmented
+            value={sel.buttonFollow}
+            options={[
+              { value: 'cursor', label: t('settings.selection.followCursor') },
+              { value: 'text', label: t('settings.selection.followText') },
+            ]}
+            onChange={(v) => set((d) => void (d.translate.selection.buttonFollow = v))}
+          />
+        </Row>
         <Row title={t('settings.selection.position')}>
           <Select
             value={sel.buttonPosition}
@@ -122,6 +132,7 @@ export function TranslateSettingsGroups({ settings, set }: { settings: Settings;
               { value: 'liquid', label: t('settings.selection.liquid') },
               { value: 'frosted', label: t('settings.selection.frosted') },
               { value: 'solid', label: t('settings.selection.solid') },
+              { value: 'dot', label: t('settings.selection.dot') },
               { value: 'custom', label: t('settings.selection.custom') },
             ]}
             onChange={(v) => set((d) => void (d.translate.selection.buttonStyle = v))}
@@ -133,7 +144,33 @@ export function TranslateSettingsGroups({ settings, set }: { settings: Settings;
             <div className="set-row__desc">{t('settings.selection.previewDesc')}</div>
           </div>
           <div className="glass-tune">
-            <GlassPreview style={sel.buttonStyle} tuning={sel.glass} solid={sel.solid} size={sel.buttonSize} />
+            <GlassPreview style={sel.buttonStyle} tuning={sel.glass} solid={sel.solid} plainDot={sel.plainDot} size={sel.buttonStyle === 'dot' ? sel.plainDot.size : sel.buttonSize} />
+            {sel.buttonStyle === 'dot' && (
+              <div className="glass-tune__sliders">
+                <SolidColorRow
+                  label={t('settings.selection.plainDot.color')}
+                  value={sel.plainDot.color}
+                  onChange={(c) => set((d) => void (d.translate.selection.plainDot.color = c))}
+                />
+                <div className="glass-tune__row">
+                  <span className="glass-tune__name">{t('settings.selection.plainDot.size')}</span>
+                  <span>
+                    <Segmented
+                      value={String(sel.plainDot.size)}
+                      options={(['8', '10', '12', '14'] as const).map((v, i) => ({ value: v, label: t(`settings.selection.plainDot.sizes.${i}`) }))}
+                      onChange={(v) => set((d) => void (d.translate.selection.plainDot.size = Number(v)))}
+                    />
+                  </span>
+                </div>
+                <div className="glass-tune__row">
+                  <span className="glass-tune__name">{t('settings.selection.plainDot.border')}</span>
+                  {/* 包一层：这一行的第二个格子会被撑满，开关本身不能被拉长 */}
+                  <span>
+                    <Switch checked={sel.plainDot.border} onChange={(v) => set((d) => void (d.translate.selection.plainDot.border = v))} />
+                  </span>
+                </div>
+              </div>
+            )}
             {sel.buttonStyle === 'solid' && (
               <div className="glass-tune__sliders">
                 {(['background', 'icon', 'border'] as const).map((k) => (
@@ -211,10 +248,13 @@ export function TranslateSettingsGroups({ settings, set }: { settings: Settings;
             })}
           </div>
         </div>
-        <Row title={t('settings.selection.buttonSize')}>
-          <span className="set-row__value cn-numeric">{sel.buttonSize}px</span>
-          <Slider value={sel.buttonSize} min={20} max={48} step={1} onChange={(v) => set((d) => void (d.translate.selection.buttonSize = v))} />
-        </Row>
+        {/* 小圆点的大小在它自己的选项里（四档），这个滑块管的是玻璃 / 纯色按钮 */}
+        {sel.buttonStyle !== 'dot' && (
+          <Row title={t('settings.selection.buttonSize')}>
+            <span className="set-row__value cn-numeric">{sel.buttonSize}px</span>
+            <Slider value={sel.buttonSize} min={20} max={48} step={1} onChange={(v) => set((d) => void (d.translate.selection.buttonSize = v))} />
+          </Row>
+        )}
         <Row title={t('settings.selection.modifier')} desc={t('settings.selection.modifierDesc')}>
           <Segmented
             value={sel.modifier}

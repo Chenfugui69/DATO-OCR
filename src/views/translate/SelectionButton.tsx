@@ -22,12 +22,12 @@ import { useTranslation } from 'react-i18next';
 import { useEvent } from '@/lib/events';
 import { translate } from '@/lib/ipc';
 import { useSettings } from '@/lib/settings';
-import type { GlassTuning, SolidDot } from '@/lib/types';
+import type { GlassTuning, PlainDot, SolidDot } from '@/lib/types';
 import { BrandMark } from '@/ui/BrandMark';
 
 import { drawLens, lensBlur, lensFromTuning } from './liquidLens';
 
-export type DotStyle = 'liquid' | 'frosted' | 'solid' | 'custom';
+export type DotStyle = 'liquid' | 'frosted' | 'solid' | 'dot' | 'custom';
 
 /**
  * 一颗玻璃珠。外面那个元素要比珠子大一圈（四周各 12px，和 Rust 的 BUTTON_INSET 一致），留给投影和悬停放大；
@@ -38,6 +38,7 @@ export function GlassDot({
   style,
   tuning,
   solid: solidColors,
+  plainDot,
   size,
   backdrop,
   dark,
@@ -49,6 +50,8 @@ export function GlassDot({
   tuning?: GlassTuning;
   /** 纯色圆点的配色（底色、图标、边框、阴影） */
   solid?: SolidDot;
+  /** 小圆点的颜色、白边 */
+  plainDot?: PlainDot;
   size: number;
   backdrop: string | null;
   dark: boolean | null;
@@ -106,6 +109,19 @@ export function GlassDot({
     vars['--drop'] = ((solidColors.shadow / 100) * 0.36).toFixed(3);
   }
   const blur = custom ? (lensBlur(custom) * size) / 28 : 0;
+  // 小圆点：一颗实心的点，没有图标、不透底。`size` 就是点的直径（后端按它摆窗口）
+  if (style === 'dot') {
+    const pip = size;
+    return (
+      <div key={replay} className="selbtn selbtn--dot" data-style="dot" title={title} onPointerDown={onPointerDown}>
+        <i
+          className="selbtn__pip"
+          data-border={plainDot?.border === false ? undefined : 'yes'}
+          style={{ width: pip, height: pip, ...(plainDot?.color ? { background: plainDot.color } : null) }}
+        />
+      </div>
+    );
+  }
   return (
     <div
       key={replay}
@@ -202,6 +218,15 @@ export function GlassDotStyles() {
         /* 纯色：一块实心的圆，图标用主题色；深色模式换成深灰底。放在最后、选择器写重一点，盖过上面玻璃的颜色规则 */
         .selbtn.selbtn[data-style='solid'], .selbtn.selbtn[data-style='solid']:hover { background: var(--solid-bg, #fff); color: var(--solid-fg, var(--cn-accent)); --edge: rgba(0, 0, 0, 0.14); }
         [data-theme='dark'] .selbtn.selbtn[data-style='solid'], [data-theme='dark'] .selbtn.selbtn[data-style='solid']:hover { background: var(--solid-bg, #2c2c2e); color: var(--solid-fg, var(--cn-accent)); --edge: rgba(0, 0, 0, 0.5); }
+        /* 小圆点：外面那层不画任何东西，只留点击范围；点本身实心、默认强调色，可带一圈白边 */
+        .selbtn.selbtn--dot, .selbtn.selbtn--dot:hover { background: none; box-shadow: none; overflow: visible; }
+        .selbtn__pip {
+          display: block; border-radius: 50%; background: var(--cn-accent);
+          box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35);
+          transition: transform 160ms var(--cn-ease-out);
+        }
+        .selbtn__pip[data-border='yes'] { box-shadow: 0 0 0 2px #fff, 0 1px 4px rgba(0, 0, 0, 0.4); }
+        .selbtn--dot:hover .selbtn__pip { transform: scale(1.2); }
         @keyframes selbtn-in { from { opacity: 0; transform: scale(0.7); } }
 
     `}</style>
@@ -220,8 +245,9 @@ export default function SelectionButton() {
         style={sel?.buttonStyle ?? 'liquid'}
         tuning={sel?.glass}
         solid={sel?.solid}
+        plainDot={sel?.plainDot}
         // 圆点多大由设置定（窗口已经按它摆好了），里面的图标跟着按比例变
-        size={sel?.buttonSize ?? 28}
+        size={sel?.buttonStyle === 'dot' ? (sel.plainDot?.size ?? 10) : (sel?.buttonSize ?? 28)}
         backdrop={shown.backdrop}
         dark={shown.dark}
         replay={shown.generation}
