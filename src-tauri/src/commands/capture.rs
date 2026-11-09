@@ -846,6 +846,6 @@ pub async fn popmenu_pick(app: AppHandle, id: String) -> AppResult<()> {
 /// 不选了（点别处、Esc）
 #[tauri::command]
 pub async fn popmenu_close(app: AppHandle) -> AppResult<()> {
-    crate::popmenu::hide(&app);
+    crate::popmenu::close(&app);
     Ok(())
 }

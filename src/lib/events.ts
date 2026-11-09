@@ -46,12 +46,22 @@ export interface EventMap {
   /** 自己画的右键菜单：要显示的菜单项（菜单窗口收）/ 选了哪一项（要菜单的窗口收） */
   'popmenu-items': { owner: string; items: PopItem[] };
   'popmenu-select': string;
+  /** 输入翻译那条输入框弹出来了（拿焦点、选中上次的字） */
+  'spotlight-show': null;
+  /** 自己画的菜单没选就关了（点别处、Esc） */
+  'popmenu-closed': null;
   /** 贴图的鼠标穿透被（托盘菜单）取消了 */
   'pin-click-through': boolean;
   'clipboard-changed': ClipChanged;
   'clipboard-panel-show': { style: 'bottom' | 'vertical' };
   /** 大预览窗口要显示哪一条 */
   'clip-preview': number;
+  /** 按住 Shift 的悬浮预览看哪一条（null = 收起） */
+  'clip-peek': number | null;
+  /** 拖卡片时的影子：拖着的那几条（空 = 收起），grab 是鼠标按在卡片上的位置 */
+  'clip-ghost': { items: import('./types').ClipItem[]; grab: [number, number] };
+  /** 拖卡片时鼠标下面是不是输入框 */
+  'clip-ghost-target': boolean;
   /** 多端同步的状态变了，重新拉一次 */
   'sync-changed': null;
   'update-status': UpdateStatus;
@@ -64,7 +74,8 @@ export interface EventMap {
   toast: ToastPayload;
   navigate: string;
   'translate-request': { text: string; reserve?: number; preview?: boolean; input?: boolean };
-  'translate-outside': null;
+  /** 在翻译面板外面按了鼠标；按在面板窗口上时是按下的点（相对窗口，CSS 像素），页面自己看是不是按在面板上 */
+  'translate-outside': [number, number] | null;
   'translate-preview-closed': null;
   'selection-button-show': { generation: number; dark: boolean | null; backdrop: string | null };
   'ai-context': AiContext;

@@ -801,7 +801,9 @@ async function translateInPlace() {
     // 默认锁着：鼠标在译文上是选字，打开"移动"才能拖
     engine.setGroupLocked(TRANSLATION_GROUP, true);
     engine.revealGroup(TRANSLATION_GROUP, (rc) => revealDelay(rc.y, selection));
-    set({ showOriginal: false, compare: false, moveLabels: false, translatedBlocks: r.blocks, translatedText: r.blocks.map((b) => b.text).join('\n') });
+    // 原图对照默认开着，用户在翻译条上关掉过就按记住的来
+    const compare = useSettingsStore.getState().settings?.translate.regionCompare !== false;
+    set({ showOriginal: false, compare, moveLabels: false, translatedBlocks: r.blocks, translatedText: r.blocks.map((b) => b.text).join('\n') });
   } catch (err) {
     notify.error(err);
   } finally {
@@ -1595,6 +1597,10 @@ function Handles({ rect, s, radius, kind: style }: { rect: Rect; s: number; radi
   );
 }
 
+/** 按住"原文"超过这么久算按住看（松开回到译文），短于这个算点一下切换 */
+const HOLD_MS = 280;
+let originalPress: { at: number; was: boolean } | null = null;
+
 /** 原位翻译后浮在选区右上角的小条（左上角是尺寸提示）：译文 / 原文切换、复制译文、去掉译文 */
 function TranslationBar({ css }: { css: { x: number; y: number; width: number } }) {
   const { t } = useTranslation();
@@ -1606,9 +1612,25 @@ function TranslationBar({ css }: { css: { x: number; y: number; width: number } 
   const ref = useRef<HTMLDivElement>(null);
   const size = useElementSize(ref, { width: 220, height: 34 });
   if (!engine.hasGroup(TRANSLATION_GROUP)) return null;
-  const toggle = () => {
-    engine.setGroupHidden(TRANSLATION_GROUP, !showOriginal);
-    set({ showOriginal: !showOriginal });
+  const setOriginal = (v: boolean) => {
+    if (get().showOriginal === v) return;
+    engine.setGroupHidden(TRANSLATION_GROUP, v);
+    set({ showOriginal: v });
+  };
+  // "原文"：按住看原文、松开回到按下前的样子；轻点一下（不到 HOLD_MS）就切换
+  const originalDown = (e: React.PointerEvent<HTMLButtonElement>) => {
+    if (e.button !== 0) return;
+    e.currentTarget.setPointerCapture(e.pointerId);
+    originalPress = { at: performance.now(), was: get().showOriginal };
+    setOriginal(true);
+  };
+  const originalUp = () => {
+    const press = originalPress;
+    originalPress = null;
+    if (!press) return;
+    const held = performance.now() - press.at >= HOLD_MS;
+    // 按住松开：回到按下前；轻点：原来看着原文就切回译文，原来看着译文就留在原文
+    setOriginal(held ? press.was : !press.was);
   };
   return (
     <div
@@ -1618,11 +1640,20 @@ function TranslationBar({ css }: { css: { x: number; y: number; width: number } 
       style={{ left: Math.max(0, css.x + css.width - size.width), top: Math.max(0, css.y - size.height - 6) }}
       onPointerDown={(e) => e.stopPropagation()}
     >
-      <button type="button" className={showOriginal ? '' : 'is-on'} onClick={() => showOriginal && toggle()}>
+      <button type="button" className={showOriginal ? '' : 'is-on'} onClick={() => setOriginal(false)}>
         <Languages size={14} strokeWidth={1.75} />
         {t('capture.translated')}
       </button>
-      <button type="button" className={showOriginal ? 'is-on' : ''} onClick={() => !showOriginal && toggle()}>
+      <button
+        type="button"
+        className={showOriginal ? 'is-on' : ''}
+        title={t('capture.originalTip')}
+        onPointerDown={originalDown}
+        onPointerUp={originalUp}
+        onPointerCancel={originalUp}
+        // 键盘（回车 / 空格）没有按下松开：直接切换
+        onClick={(e) => e.detail === 0 && setOriginal(!get().showOriginal)}
+      >
         <Eye size={14} strokeWidth={1.75} />
         {t('capture.original')}
       </button>
@@ -1640,7 +1671,20 @@ function TranslationBar({ css }: { css: { x: number; y: number; width: number } 
       >
         <Move size={14} strokeWidth={1.75} />
       </button>
-      <button type="button" className={compare ? 'is-on' : ''} title={t('capture.compareTip')} aria-pressed={compare} onClick={() => set({ compare: !compare })}>
+      <button
+        type="button"
+        className={compare ? 'is-on' : ''}
+        title={t('capture.compareTip')}
+        aria-pressed={compare}
+        onClick={() => {
+          set({ compare: !compare });
+          // 记住：下次翻译按这次的开关来
+          void useSettingsStore
+            .getState()
+            .update((d) => void (d.translate.regionCompare = !compare))
+            .catch(() => {});
+        }}
+      >
         <Columns2 size={14} strokeWidth={1.75} />
       </button>
       <span className="cap-trbar__sep" />

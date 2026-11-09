@@ -39,6 +39,8 @@ pub const DEFAULT_HOTKEYS: DefaultHotkeys = DefaultHotkeys {
     clipboard: "Alt+V",
     translate: "Ctrl+Alt+T",
     instant: "Shift+F1",
+    // Ctrl+Alt+Space 常被输入法占着（注册不上）
+    input_translate: "Alt+Q",
 };
 pub const SYSTEM_OCR_NAME: &str = "Windows OCR";
 pub const PADDLE_OCR_SUPPORTED: bool = true;

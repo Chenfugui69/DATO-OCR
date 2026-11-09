@@ -89,7 +89,7 @@ pub fn apply_material(app: &AppHandle) {
         (false, "vertical") => RADIUS,
         _ => BOTTOM_RADIUS,
     };
-    wm::set_glass(&window, cb.panel_blur, radius);
+    wm::set_glass(&window, cb.panel_blur, radius, 0.0);
 }
 
 pub fn toggle(app: &AppHandle) {
@@ -246,6 +246,8 @@ pub fn dismiss(app: &AppHandle) {
 }
 
 pub fn hide(app: &AppHandle) {
+    super::peek::hide(app);
+    super::ghost::end(app);
     *SLID.lock() = None;
     *SHOWN_AT.lock() = None;
     if let Some(window) = app.get_webview_window(LABEL) {
@@ -275,6 +277,41 @@ pub fn paste(app: &AppHandle, id: i64, plain: bool) -> AppResult<()> {
         }
     });
     Ok(())
+}
+
+/// 把卡片拖出面板、在别的地方松手：粘贴到松手的那个位置。先收起面板，在松手的地方点一下
+/// （那个窗口拿到焦点、光标落到那儿），再粘贴。`ids` 可以是多选的几张
+pub fn drop_paste(app: &AppHandle, ids: &[i64]) -> AppResult<()> {
+    let payload = super::payload_of_many(app, ids, false)?;
+    let touch = (ids.len() == 1).then(|| ids[0]);
+    paste_at_cursor(app, &payload, touch)
+}
+
+/// 把 `payload` 粘贴到鼠标现在的位置：收起面板，在那儿点一下，再粘贴（主窗口截图库、识字记录拖出去也走这里）
+pub fn paste_at_cursor(app: &AppHandle, payload: &platform::ClipboardPayload, touch: Option<i64>) -> AppResult<()> {
+    super::write_own(app, payload, touch)?;
+    let ui_app = app.clone();
+    app.run_on_main_thread(move || hide(&ui_app))?;
+    std::thread::spawn(move || {
+        // 等面板藏好，点下去才落在后面的窗口上
+        std::thread::sleep(Duration::from_millis(60));
+        if let Err(err) = platform::click_here() {
+            tracing::warn!("拖放粘贴：点一下失败：{err}");
+        }
+        // 等那个窗口激活、光标落好
+        std::thread::sleep(Duration::from_millis(140));
+        if let Err(err) = platform::send_paste() {
+            tracing::warn!("模拟粘贴失败：{err}");
+        }
+    });
+    Ok(())
+}
+
+/// 多选复制：几条合成一份写进剪贴板（见 `payload_of_many`）
+pub fn copy_many(app: &AppHandle, ids: &[i64]) -> AppResult<()> {
+    let payload = super::payload_of_many(app, ids, false)?;
+    let touch = (ids.len() == 1).then(|| ids[0]);
+    super::write_own(app, &payload, touch)
 }
 
 /// 只复制，不粘贴（Shift+Enter / 右键菜单"复制"）。

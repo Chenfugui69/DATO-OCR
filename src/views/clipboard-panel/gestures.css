@@ -1,0 +1,130 @@
+/* 剪贴板卡片的多选、拖出去粘贴（cardGestures.ts）：面板和主窗口的剪贴板页共用 */
+
+/* 框选的框：挂在 body 上、按屏幕坐标摆（cardGestures 里直接改 transform / 宽高） */
+.clip-marquee {
+  position: fixed;
+  left: 0;
+  top: 0;
+  z-index: 2000;
+  will-change: transform, width, height;
+  pointer-events: none;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--cn-accent) 14%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--cn-accent) 70%, transparent);
+}
+
+/* 勾了几张：顶栏里一行"已选 N 项"加复制、取消两个图标，不要胶囊底色 */
+.clip-pickbar {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: 8px;
+  font: 500 12.5px/1 var(--cn-font-sans);
+  color: var(--cn-label-secondary);
+  animation: cn-fade-in 140ms var(--cn-ease-out);
+}
+.clip-pickbar__count {
+  margin-right: 4px;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.clip-pickbar__icon {
+  width: 26px;
+  height: 26px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: none;
+  border-radius: 7px;
+  color: var(--cn-label-secondary);
+  background: transparent;
+  transition:
+    background 120ms ease,
+    color 120ms ease;
+}
+.clip-pickbar__icon:hover {
+  background: var(--cn-bg-hover);
+  color: var(--cn-label);
+}
+.clip-pickbar__icon:active {
+  transform: scale(0.94);
+}
+.clip-pickbar__icon--primary {
+  color: var(--cn-accent);
+}
+.clip-pickbar__icon--primary:hover {
+  color: var(--cn-accent);
+  background: color-mix(in srgb, var(--cn-accent) 14%, transparent);
+}
+
+/* 拖着卡片：到处都是抓着的手 */
+html[data-card-dragging],
+html[data-card-dragging] * {
+  cursor: grabbing !important;
+}
+
+/* 主窗口截图库、识字记录：列表那层当框选的参照，框画在它里面 */
+.page__body--pickable {
+  position: relative;
+}
+.pick-check {
+  position: absolute;
+  z-index: 4;
+  top: 8px;
+  left: 8px;
+  width: 20px;
+  height: 20px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  color: #fff;
+  background: rgba(0, 0, 0, 0.22);
+  box-shadow: inset 0 0 0 1.5px rgba(255, 255, 255, 0.92), 0 1px 3px rgba(0, 0, 0, 0.25);
+  animation: cn-fade-in 120ms var(--cn-ease-out);
+}
+[data-picked='true'] > .pick-check {
+  background: var(--cn-accent);
+}
+.shot[data-picked='true'],
+.ocr-item[data-picked='true'] {
+  box-shadow: 0 0 0 2px var(--cn-accent);
+}
+.ocr-item {
+  position: relative;
+}
+.ocr-item > .pick-check {
+  top: 50%;
+  left: 6px;
+  transform: translateY(-50%);
+}
+.shot[data-dragging='true'],
+.ocr-item[data-dragging='true'] {
+  opacity: 0.5;
+}
+/* 主窗口剪贴板页的一行：勾选框在最左边 */
+.clip-row__pick {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  color: #fff;
+  background: transparent;
+  box-shadow: inset 0 0 0 1.5px var(--cn-label-tertiary);
+  animation: cn-fade-in 120ms var(--cn-ease-out);
+}
+.clip-row[data-picked='true'] .clip-row__pick {
+  background: var(--cn-accent);
+  box-shadow: none;
+}
+.clip-row[data-picked='true'] {
+  background: color-mix(in srgb, var(--cn-accent) 12%, transparent);
+}
+.clip-row[data-dragging='true'] {
+  opacity: 0.5;
+}

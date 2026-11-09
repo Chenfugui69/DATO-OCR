@@ -4,6 +4,10 @@ import { Channel, invoke } from '@tauri-apps/api/core';
 
 import type { AiContext, AppInfo, CaptureIntent, CaptureTables, ChatEvent, ChatRequest, ClipDetail, ClipGroup, ClipPage, ClipQuery, ClipStats, DavDevice, EditorAction, EditorDoc, EngineStatus, FinishAction, FormulaRegions, HotkeyStatus, MailCodeSettings, MailCodesStatus, McpStatus, MediaAccess, MediaKind, RecordEditInfo, OcrJob, RegionStyle, SmartSuggestion, OcrPage, Permissions, PhysicalRect, PinInfo, PinText, RegionRect, ScannedCode, ProviderInfo, RegionTranslation, SecretsStatus, SessionInfo, Settings, ShotPage, SyncStatus, UpdateStatus, ShotQuery, TranslateRequest, TranslateResult, VisualCapabilities,
   PopItem,
+  ClipItem,
+  CleanResult,
+  StorageTarget,
+  StorageUsage,
 } from './types';
 
 /** Rust 侧 AppError 的结构化形态。 */
@@ -209,6 +213,18 @@ export const clipboard = {
   previewOpen: (id: number) => call<void>('clipboard_preview_open', { id }),
   previewCurrent: () => call<number | null>('clipboard_preview_current'),
   previewClose: () => call<void>('clipboard_preview_close'),
+  /** 按住 Shift 的悬浮预览：card 是卡片在面板页面里的位置（CSS 像素） */
+  peekShow: (id: number, card: { x: number; y: number; width: number; height: number }) => call<void>('clipboard_peek_show', { id, card }),
+  peekHide: () => call<void>('clipboard_peek_hide'),
+  peekCurrent: () => call<number | null>('clipboard_peek_current'),
+  /** 拖卡片时的影子：开始跟着鼠标（grab 是鼠标按在卡片上的位置，CSS 像素）/ 收起 / 先建好窗口 */
+  ghostStart: (items: ClipItem[], grab: { x: number; y: number }) => call<void>('clipboard_ghost_start', { items, grabX: grab.x, grabY: grab.y }),
+  ghostEnd: () => call<void>('clipboard_ghost_end'),
+  ghostPrepare: () => call<void>('clipboard_ghost_prepare'),
+  /** 多选复制：几条合成一份写进剪贴板 */
+  copyMany: (ids: number[]) => call<void>('clipboard_copy_many', { ids }),
+  /** 卡片拖出面板松手：粘贴到松手的位置（面板收起，在那儿点一下再粘贴） */
+  dropPaste: (ids: number[]) => call<void>('clipboard_drop_paste', { ids }),
   query: (query: ClipQuery) => call<ClipPage>('clipboard_query', { query }),
   get: (id: number) => call<ClipDetail>('clipboard_get', { id }),
   stats: () => call<ClipStats>('clipboard_stats'),
@@ -264,6 +280,10 @@ export const library = {
   setFavorite: (id: number, value: boolean) => call<void>('library_set_favorite', { id, value }),
   setNote: (id: number, note: string | null) => call<void>('library_set_note', { id, note }),
   copy: (id: number) => call<void>('library_copy', { id }),
+  /** 多选复制：一张按图片，好几张按文件 */
+  copyMany: (ids: number[]) => call<void>('library_copy_many', { ids }),
+  /** 拖出窗口松手：粘贴到松手的位置 */
+  dropPaste: (ids: number[]) => call<void>('library_drop_paste', { ids }),
   pin: (id: number) => call<void>('library_pin', { id }),
   saveAs: (id: number) => call<void>('library_save_as', { id }),
   reveal: (id: number) => call<void>('library_reveal', { id }),
@@ -289,6 +309,10 @@ export const ocr = {
   history: (query: { keyword?: string; offset: number; limit: number }) => call<OcrPage>('ocr_history', { query }),
   openRecord: (id: number) => call<void>('ocr_open_record', { id }),
   deleteRecord: (id: number) => call<void>('ocr_delete_record', { id }),
+  /** 多选复制：全文按顺序拼起来 */
+  copyMany: (ids: number[]) => call<void>('ocr_copy_many', { ids }),
+  /** 拖出窗口松手：粘贴到松手的位置 */
+  dropPaste: (ids: number[]) => call<void>('ocr_drop_paste', { ids }),
   fromClip: (id: number, translate = false) => call<void>('ocr_from_clip', { id, translate }),
 };
 
@@ -355,6 +379,11 @@ export const system = {
   setSecret: (key: 'deepl' | 'openai', value: string | null) => call<void>('secret_set', { key, value }),
   dataDir: () => call<string>('data_dir'),
   appInfo: () => call<AppInfo>('app_info'),
+  storageUsage: () => call<StorageUsage[]>('storage_usage'),
+  /** 换数据位置（dir 为 null = 搬回默认位置）：返回新位置，随后应用会重启、在启动时搬数据 */
+  changeDataDir: (dir: string | null) => call<string>('data_dir_change', { dir }),
+  /** olderThanDays 不传 = 不论新旧全清（置顶、收藏、有备注、已分组的不删） */
+  storageClean: (targets: StorageTarget[], olderThanDays?: number) => call<CleanResult>('storage_clean', { targets, olderThanDays }),
   openFolder: (which: 'data' | 'logs' | 'save') => call<void>('open_data_folder', { which }),
   openUrl: (url: string) => call<void>('open_url', { url }),
   pickDirectory: () => call<string | null>('pick_directory'),

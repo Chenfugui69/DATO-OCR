@@ -177,6 +177,9 @@ fn handle(msg: u32, pt: POINT) -> bool {
                 send(&st, SelectionEvent::ButtonClicked);
                 return true;
             }
+            // 翻译面板靠它知道"点了面板外面"（面板没拿到键盘焦点时等不到失焦，以前 Windows 上不发这个，
+            // 那种时候点别处面板就一直不收）
+            send(&st, SelectionEvent::PointerDown);
             if st.button.is_some() {
                 send(&st, SelectionEvent::Dismiss);
             }
@@ -200,9 +203,14 @@ fn handle(msg: u32, pt: POINT) -> bool {
                 _ => 1,
             };
             st.last_click = Some((pt, now, clicks));
+            let ibeam = is_ibeam_cursor();
+            // 按在文字上：先叫醒那个程序的无障碍树，松开时才问得到选中的字在哪（只是往 UIA 线程丢个活，不等）
+            if ibeam {
+                super::elements::warm_up(pt.x, pt.y);
+            }
             st.down = Some(Down {
                 at: pt,
-                ibeam: is_ibeam_cursor(),
+                ibeam,
                 alt: key_down(VK_MENU.0),
                 ctrl: key_down(VK_CONTROL.0),
                 clicks,
@@ -242,6 +250,9 @@ fn handle(msg: u32, pt: POINT) -> bool {
         }
         WM_RBUTTONDOWN | WM_MBUTTONDOWN | WM_MOUSEWHEEL | WM_MOUSEHWHEEL => {
             st.down = None;
+            if msg != WM_MOUSEWHEEL && msg != WM_MOUSEHWHEEL {
+                send(&st, SelectionEvent::PointerDown);
+            }
             if st.button.is_some() {
                 send(&st, SelectionEvent::Dismiss);
             }

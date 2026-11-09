@@ -68,6 +68,34 @@ thread_local! {
     /// 合成器要求当前线程有 DispatcherQueue；两个都只建一次（都在 UI 线程上）
     static COMPOSITOR: RefCell<Option<(DispatcherQueueController, Compositor)>> = const { RefCell::new(None) };
     static BACKDROPS: RefCell<HashMap<isize, Backdrop>> = RefCell::new(HashMap::new());
+    /// 背板默认铺满时四周留出的边（物理像素）：页面在这圈透明边里自己画阴影（翻译面板）
+    static PADS: RefCell<HashMap<isize, f32>> = RefCell::new(HashMap::new());
+}
+
+/// 背板"铺满"时的范围：整个窗口减去四周留给阴影的边
+fn full_rect(h: HWND) -> (Vector2, Vector2) {
+    let pad = PADS.with(|p| p.borrow().get(&(h.0 as isize)).copied()).unwrap_or(0.0);
+    let size = client_size(h);
+    (
+        Vector2 { X: pad, Y: pad },
+        Vector2 {
+            X: (size.X - 2.0 * pad).max(1.0),
+            Y: (size.Y - 2.0 * pad).max(1.0),
+        },
+    )
+}
+
+/// 背板铺满时四周留多少（物理像素）。挂背板（`set_backdrop`）之前设。只能在 UI 线程调用
+pub fn set_backdrop_pad(window: &WebviewWindow, pad: u32) {
+    let Ok(h) = window.hwnd() else { return };
+    PADS.with(|p| {
+        let mut p = p.borrow_mut();
+        if pad == 0 {
+            p.remove(&(h.0 as isize));
+        } else {
+            p.insert(h.0 as isize, pad as f32);
+        }
+    });
 }
 
 fn compositor() -> windows::core::Result<Compositor> {
@@ -121,7 +149,7 @@ fn inset_rect(offset: Vector2, size: Vector2) -> (Vector2, Vector2) {
 
 fn attach_backdrop(h: HWND, radius: f32) -> windows::core::Result<()> {
     let key = h.0 as isize;
-    let (offset, size) = inset_rect(Vector2 { X: 0.0, Y: 0.0 }, client_size(h));
+    let (offset, size) = { let (o, z) = full_rect(h); inset_rect(o, z) };
     let r = (radius - BACKDROP_INSET).max(0.0);
     let corner = Vector2 { X: r, Y: r };
     let existing = BACKDROPS.with(|b| {
@@ -257,7 +285,7 @@ pub fn resize_backdrop(window: &WebviewWindow) -> bool {
     });
     match state {
         Some((geometry, false)) => {
-            let (_, size) = inset_rect(Vector2 { X: 0.0, Y: 0.0 }, client_size(h));
+            let (_, size) = { let (o, z) = full_rect(h); inset_rect(o, z) };
             let _ = geometry.SetSize(size);
             true
         }
@@ -287,7 +315,7 @@ pub fn set_backdrop_rect(window: &WebviewWindow, rect: Option<(f32, f32, f32, f3
                 Y: hh.max(1.0),
             },
         ),
-        None => (Vector2 { X: 0.0, Y: 0.0 }, client_size(h)),
+        None => full_rect(h),
     };
     let (offset, size) = inset_rect(offset, size);
     let result = (|| -> windows::core::Result<()> {

@@ -199,20 +199,46 @@ pub struct AppInfo {
     pub save_dir: String,
     pub ocr: ocr::EngineStatus,
     pub data_bytes: u64,
+    /// 默认的数据位置（和 data_dir 不一样 = 用户改过）
+    pub default_data_dir: String,
+    /// 上次启动搬数据位置失败的原因
+    pub relocate_error: Option<String>,
 }
 
-fn dir_size(path: &std::path::Path) -> u64 {
-    let Ok(entries) = std::fs::read_dir(path) else {
-        return 0;
-    };
-    entries
-        .flatten()
-        .map(|e| match e.metadata() {
-            Ok(m) if m.is_dir() => dir_size(&e.path()),
-            Ok(m) => m.len(),
-            Err(_) => 0,
-        })
-        .sum()
+/// 换数据位置：记下来，然后重启，新进程在打开数据库之前把数据搬过去。`dir` 为空 = 搬回默认位置
+#[tauri::command]
+pub async fn data_dir_change(app: AppHandle, dir: Option<String>) -> AppResult<String> {
+    let target = blocking({
+        let app = app.clone();
+        move || crate::paths::request_move(&state(&app).paths, dir.as_deref().map(std::path::Path::new))
+    })
+    .await?;
+    tracing::info!(to = %target.display(), "数据位置改了，重启后搬过去");
+    let ui = app.clone();
+    std::thread::spawn(move || {
+        // 让前端先收到返回值、关掉确认框
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        ui.restart();
+    });
+    Ok(target.display().to_string())
+}
+
+use crate::cleanup::dir_size;
+
+/// 设置 → 存储：每一类占了多少空间、多少条
+#[tauri::command]
+pub async fn storage_usage(app: AppHandle) -> AppResult<Vec<crate::cleanup::Usage>> {
+    blocking(move || Ok(crate::cleanup::usage(&app))).await
+}
+
+/// 清理 `targets`（clipboard / screenshots / ocr / logs）；`olderThanDays` = 0 不论新旧
+#[tauri::command]
+pub async fn storage_clean(
+    app: AppHandle,
+    targets: Vec<String>,
+    older_than_days: Option<u32>,
+) -> AppResult<crate::cleanup::CleanResult> {
+    blocking(move || crate::cleanup::clean(&app, &targets, older_than_days.unwrap_or(0))).await
 }
 
 /// 前端拼 asset 协议地址要用的数据目录绝对路径（廉价，启动时调一次）。
@@ -234,6 +260,8 @@ pub async fn app_info(app: AppHandle) -> AppResult<AppInfo> {
                 .to_string(),
             ocr: ocr::status(&app),
             data_bytes: dir_size(st.paths.root()),
+            default_data_dir: st.paths.default_root.display().to_string(),
+            relocate_error: st.paths.relocated.as_ref().and_then(|r| r.as_ref().err().cloned()),
         })
     })
     .await

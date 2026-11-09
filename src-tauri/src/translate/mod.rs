@@ -9,6 +9,7 @@ pub mod detect;
 pub mod more;
 pub mod providers;
 pub mod selection;
+pub mod spotlight;
 pub mod worth;
 
 use std::collections::{HashMap, VecDeque};

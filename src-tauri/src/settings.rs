@@ -31,8 +31,31 @@ pub struct Settings {
     pub ai: AiSettings,
     pub mcp: McpSettings,
     pub record: RecordSettings,
+    pub storage: StorageSettings,
     #[serde(flatten)]
     pub extra: Map<String, Value>,
+}
+
+/// 存储：定时自动清理（见 `cleanup`）。
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase", default)]
+pub struct StorageSettings {
+    /// 自动清理多少天以前的：0 = 不自动清理 | 7 | 15 | 30 | 90
+    pub auto_clean_days: u32,
+    /// 自动清理哪几类：clipboard | screenshots | ocr | logs
+    pub auto_clean_targets: Vec<String>,
+    #[serde(flatten)]
+    pub extra: Map<String, Value>,
+}
+
+impl Default for StorageSettings {
+    fn default() -> Self {
+        Self {
+            auto_clean_days: 0,
+            auto_clean_targets: vec!["clipboard".into(), "ocr".into(), "logs".into()],
+            extra: Map::new(),
+        }
+    }
 }
 
 /// 录制视频（MP4）和 GIF。GIF 的帧率、录不录鼠标还在 `capture` 里（老设置），设置页一起放在"录制"下面。
@@ -277,6 +300,7 @@ impl Default for Settings {
             ai: Default::default(),
             mcp: Default::default(),
             record: Default::default(),
+            storage: Default::default(),
             extra: Map::new(),
         }
     }
@@ -381,7 +405,7 @@ impl Default for HotkeySettings {
             instant: keys.instant.into(),
             ai: String::new(),
             pin_clipboard: String::new(),
-            input_translate: String::new(),
+            input_translate: keys.input_translate.into(),
             extra: Map::new(),
         }
     }
@@ -1030,6 +1054,8 @@ pub struct TranslateSettings {
     pub show_all_providers: bool,
     /// 截图原位翻译用哪个翻译源：auto = 按上面的顺序；指定的源失败时照样按顺序降级
     pub region_provider: String,
+    /// 截图原位翻译后在选区旁边并排显示原图对照（默认开；用户在翻译条上关掉后记住）
+    pub region_compare: bool,
     pub custom_base_url: String,
     pub custom_model: String,
     /// 用户自己添加的翻译
@@ -1122,6 +1148,7 @@ impl Default for TranslateSettings {
                 .collect(),
             show_all_providers: true,
             region_provider: "auto".into(),
+            region_compare: true,
             custom_base_url: "https://api.openai.com/v1".into(),
             custom_model: "gpt-4o-mini".into(),
             custom: Vec::new(),
@@ -1346,6 +1373,10 @@ pub struct ClipboardSettings {
     pub panel_over_dock: bool,
     /// 面板弹出 / 收起的动画
     pub panel_animation: bool,
+    /// 按住 Shift 的悬浮预览多大：small | medium | large
+    pub peek_size: String,
+    /// 卡片条滚轮的手感：smooth = 带惯性、跟手的新手感 | classic = 原来那种
+    pub scroll_feel: String,
     /// 面板里点一下就粘贴（默认要双击，单击只是选中）
     pub single_click_paste: bool,
     pub max_text_mb: u32,
@@ -1461,6 +1492,8 @@ impl Default for ClipboardSettings {
             panel_docked: false,
             panel_over_dock: false,
             panel_animation: true,
+            peek_size: "medium".into(),
+            scroll_feel: "smooth".into(),
             single_click_paste: false,
             max_text_mb: 5,
             max_image_mb: 30,
@@ -1528,6 +1561,15 @@ impl Settings {
         } else {
             1.0
         };
+        // 输入翻译以前没有默认快捷键：没设过的给上默认的（只给一次，之后用户清掉了就不再补）
+        let hk = &mut self.hotkeys;
+        // （开发版一度给的是 Ctrl+Alt+Space，常被输入法占着注册不上，也换掉）
+        hk.extra.remove("inputTranslateDefault");
+        if hk.extra.insert("inputTranslateDefaultV2".into(), Value::Bool(true)).is_none()
+            && (hk.input_translate.is_empty() || hk.input_translate == "Ctrl+Alt+Space")
+        {
+            hk.input_translate = crate::platform::default_hotkeys().input_translate.into();
+        }
         let c = &mut self.capture;
         // 品牌改名：还是旧默认值的跟着换成新名字，用户自己改过的不动
         if matches!(

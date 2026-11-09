@@ -102,6 +102,32 @@ pub fn send_paste() -> AppResult<()> {
     send_command(ffi::kVK_ANSI_V)
 }
 
+/// 在鼠标现在的位置点一下左键（拖卡片粘贴：松手的地方先点一下，那个窗口拿到焦点、光标落到那儿）
+pub fn click_here() -> AppResult<()> {
+    permissions::ensure_accessibility()?;
+    let at = window_enum::cursor_point().ok_or_else(|| AppError::msg("拿不到鼠标位置"))?;
+    // SAFETY: 事件在本函数内创建并释放。
+    unsafe {
+        let down = ffi::CGEventCreateMouseEvent(std::ptr::null_mut(), ffi::kCGEventLeftMouseDown, at, ffi::kCGMouseButtonLeft);
+        let up = ffi::CGEventCreateMouseEvent(std::ptr::null_mut(), ffi::kCGEventLeftMouseUp, at, ffi::kCGMouseButtonLeft);
+        let ok = !down.is_null() && !up.is_null();
+        if ok {
+            ffi::CGEventPost(ffi::kCGSessionEventTap, down);
+            std::thread::sleep(Duration::from_millis(12));
+            ffi::CGEventPost(ffi::kCGSessionEventTap, up);
+        }
+        for obj in [down, up] {
+            if !obj.is_null() {
+                ffi::CFRelease(obj.cast_const());
+            }
+        }
+        if !ok {
+            return Err(AppError::msg("创建鼠标事件失败"));
+        }
+    }
+    Ok(())
+}
+
 pub fn send_copy() -> AppResult<()> {
     send_command(ffi::kVK_ANSI_C)
 }

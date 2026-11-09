@@ -2,6 +2,9 @@
 
 import { CheckMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu } from '@tauri-apps/api/menu';
 
+import { popmenu } from '@/lib/ipc';
+import type { PopItem } from '@/lib/types';
+
 export interface NativeItem {
   label?: string;
   separator?: boolean;
@@ -9,6 +12,10 @@ export interface NativeItem {
   disabled?: boolean;
   onSelect?: () => void;
   submenu?: NativeItem[];
+  /** 自己画的菜单（popmenu 窗口）里用的图标名，见 PopMenuView 的图标表；系统菜单不画图标 */
+  popIcon?: string;
+  /** 自己画的菜单里画成红色（删除这种） */
+  danger?: boolean;
 }
 
 async function build(items: NativeItem[]): Promise<(MenuItem | PredefinedMenuItem | CheckMenuItem | Submenu)[]> {
@@ -41,4 +48,49 @@ export async function popupMenu(items: NativeItem[]): Promise<void> {
 
 export function isNativeMenuOpen(): boolean {
   return open;
+}
+
+// ───────── 自己画的菜单（popmenu 窗口）：样子和程序别处一样（图标、圆角、深浅色），子菜单在菜单里就地展开 ─────────
+
+let appOpen = false;
+const handlers = new Map<string, () => void>();
+
+function toPop(items: NativeItem[], prefix: string): PopItem[] {
+  return items.map((it, i): PopItem => {
+    if (it.separator) return { kind: 'separator' };
+    const id = `${prefix}${i}`;
+    if (it.onSelect) handlers.set(id, it.onSelect);
+    return {
+      kind: 'item',
+      id,
+      label: it.label ?? '',
+      icon: it.popIcon,
+      checked: it.checked,
+      disabled: it.disabled,
+      danger: it.danger,
+      submenu: it.submenu ? toPop(it.submenu, `${id}.`) : undefined,
+    };
+  });
+}
+
+/** 在鼠标那里弹自己画的菜单；选了哪项由 `owner` 窗口收到 `popmenu-select` 后调 `runAppMenuPick` */
+export async function popupAppMenu(owner: string, items: NativeItem[]): Promise<void> {
+  handlers.clear();
+  appOpen = true;
+  await popmenu.open(owner, toPop(items, 'm'));
+}
+
+/** 菜单窗口报回来选了哪项 */
+export function runAppMenuPick(id: string) {
+  appOpen = false;
+  handlers.get(id)?.();
+}
+
+/** 自己画的菜单开着（菜单窗口拿走了焦点，面板别因为失焦就收起）。面板重新拿到焦点时调 `appMenuClosed` */
+export function isAppMenuOpen(): boolean {
+  return appOpen;
+}
+
+export function appMenuClosed() {
+  appOpen = false;
 }

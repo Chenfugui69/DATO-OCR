@@ -74,6 +74,8 @@ pub fn start_resize_drag(
 }
 
 /// Windows 上面板靠失焦收起，用不到这个；说"在"最保险（不会误收）。
+// Windows 上翻译面板改用"鼠标下面是不是面板窗口"来判断（见 translate::selection::outside_click）
+#[cfg_attr(windows, allow(dead_code))]
 pub fn cursor_in_window(_window: &WebviewWindow) -> bool {
     true
 }

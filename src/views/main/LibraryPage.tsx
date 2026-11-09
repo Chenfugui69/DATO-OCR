@@ -6,11 +6,13 @@ import { useTranslation } from 'react-i18next';
 
 import { dayGroup, formatBytes, formatDateTime } from '@/lib/format';
 import { editor, library } from '@/lib/ipc';
-import { assetUrl } from '@/lib/platform';
+import { assetUrl, modKey } from '@/lib/platform';
 import { useShots } from '@/lib/queries';
 import type { Shot } from '@/lib/types';
 import { Button, EmptyState, SearchField, Spinner } from '@/ui/controls';
 import { ContextMenu, confirmDialog, notify, Tooltip } from '@/ui/overlays';
+import { useCardDrag, useKeyHeld, useMultiPick } from '@/views/clipboard-panel/cardGestures';
+import { ghostItem, PickBar, PickCheck, usePickKeys } from '@/views/clipboard-panel/PickBar';
 
 type Filter = 'all' | 'favorite' | 'longshot' | 'gif';
 
@@ -59,6 +61,32 @@ export function LibraryPage() {
   }, [query]);
 
   const run = (p: Promise<unknown>) => void p.catch(notify.error);
+
+  // 多选（按住 Ctrl 点选 / 框选）、复制、拖出窗口粘贴，和剪贴板一样（见 cardGestures）
+  const bodyRef = useRef<HTMLDivElement>(null);
+  const { picked, toggle: togglePick, clear: clearPicks } = useMultiPick(bodyRef, true);
+  const ctrlHeld = useKeyHeld('Control');
+  const pickMode = ctrlHeld || picked.size > 0;
+  useEffect(() => clearPicks(), [filter, debounced, clearPicks]);
+  const pickedInOrder = () => shots.filter((s) => picked.has(s.id)).map((s) => s.id);
+  const copyPicked = () => {
+    const ids = pickedInOrder();
+    if (ids.length) run(library.copyMany(ids).then(() => notify.success(t('clip.copiedMany', { count: ids.length }))));
+  };
+  usePickKeys(picked.size, copyPicked, clearPicks);
+  const { dragging, onPointerDown } = useCardDrag({
+    idsFor: (id) => (picked.has(id) ? pickedInOrder() : [id]),
+    itemsFor: (ids) =>
+      ids
+        .map((id) => shots.find((s) => s.id === id))
+        .filter((s): s is Shot => !!s)
+        .map((s) =>
+          ghostItem({ id: s.id, type: 'image', filePath: s.filePath, thumbPath: s.thumbPath ?? s.filePath, width: s.width, height: s.height, sourceApp: s.sourceApp, lastUsedAt: s.createdAt }),
+        ),
+    onDropOutside: (ids) => run(library.dropPaste(ids)),
+  });
+  const draggingIds = new Set(dragging ?? []);
+
   const remove = async (shot: Shot) => {
     if (await confirmDialog({ title: t('library.deleteTitle'), body: t('library.deleteBody'), confirmLabel: t('common.delete'), danger: true })) {
       run(library.remove([shot.id]));
@@ -86,6 +114,7 @@ export function LibraryPage() {
           <h1 className="page__title">{t('nav.library')}</h1>
           <div className="page__sub">{t('library.count', { count: total })}</div>
         </div>
+        <PickBar count={picked.size} onCopy={copyPicked} onClear={clearPicks} />
         <span className="page__spacer" />
         <div className="chips">
           {(['all', 'favorite', 'longshot', 'gif'] as Filter[]).map((f) => (
@@ -96,7 +125,7 @@ export function LibraryPage() {
         </div>
         <SearchField value={keyword} onChange={setKeyword} placeholder={t('library.search')} style={{ width: 220 }} />
       </div>
-      <div className="page__body" onClick={() => setSelected(null)}>
+      <div ref={bodyRef} className="page__body page__body--pickable" onClick={() => setSelected(null)}>
         {query.isLoading ? (
           <div className="load-more">
             <Spinner size={20} />
@@ -116,17 +145,22 @@ export function LibraryPage() {
                   <ContextMenu key={s.id} items={menu(s)}>
                     <div
                       className="shot"
+                      data-clip-id={s.id}
                       data-selected={selected === s.id}
+                      data-picked={picked.has(s.id)}
+                      data-dragging={draggingIds.has(s.id)}
                       style={{ animationDelay: `${Math.min(i, 8) * 30}ms` }}
                       onClick={(e) => {
                         e.stopPropagation();
-                        setSelected(s.id);
+                        if (!modKey(e)) setSelected(s.id);
                       }}
-                      onDoubleClick={() => run(s.kind === 'gif' ? library.reveal(s.id) : editor.openShot(s.id))}
+                      onDoubleClick={(e) => !modKey(e) && run(s.kind === 'gif' ? library.reveal(s.id) : editor.openShot(s.id))}
+                      onPointerDown={(e) => onPointerDown(e, s.id)}
                       onMouseEnter={s.kind === 'gif' ? () => setPlaying(s.id) : undefined}
                       onMouseLeave={s.kind === 'gif' ? () => setPlaying((p) => (p === s.id ? null : p)) : undefined}
                       title={formatDateTime(s.createdAt)}
                     >
+                      {pickMode && <PickCheck checked={picked.has(s.id)} onToggle={() => togglePick(s.id)} />}
                       <div className="shot__thumb">
                         {/* GIF 平时是第一帧的缩略图，鼠标移上去才播（一页动图一起播太吵，也费电） */}
                         <img src={assetUrl(playing === s.id ? s.filePath : (s.thumbPath ?? s.filePath))} alt="" loading="lazy" decoding="async" draggable={false} />

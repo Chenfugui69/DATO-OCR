@@ -60,6 +60,63 @@ pub async fn library_copy(app: AppHandle, id: i64) -> AppResult<()> {
     .await
 }
 
+/// 截图库里选中的几张：一张和"复制"一样（GIF 按文件，别的按图片），好几张合成文件列表
+fn shots_payload(app: &AppHandle, ids: &[i64]) -> AppResult<ClipboardPayload> {
+    let st = state(app);
+    let shots = st
+        .db
+        .with(|c| ids.iter().map(|id| repo::get(c, *id)).collect::<AppResult<Vec<_>>>())?;
+    match shots.as_slice() {
+        [] => Err(AppError::msg("没有选中的记录")),
+        [one] if one.kind != library::KIND_GIF => Ok(ClipboardPayload::Image {
+            image: library::load_image(app, one.id)?,
+            png: None,
+        }),
+        _ => Ok(ClipboardPayload::Files(
+            shots.iter().map(|s| st.paths.abs(&s.file_path)).collect(),
+        )),
+    }
+}
+
+/// 识字记录里选中的几条：全文按顺序拼起来，中间空一行
+fn ocr_payload(app: &AppHandle, ids: &[i64]) -> AppResult<ClipboardPayload> {
+    if ids.is_empty() {
+        return Err(AppError::msg("没有选中的记录"));
+    }
+    let texts = state(app)
+        .db
+        .with(|c| ids.iter().map(|id| ocr_repo::get(c, *id).map(|r| r.plain_text)).collect::<AppResult<Vec<_>>>())?;
+    Ok(ClipboardPayload::Text {
+        text: texts.join("\n\n"),
+        html: None,
+        rtf: None,
+    })
+}
+
+/// 截图库多选复制
+#[tauri::command]
+pub async fn library_copy_many(app: AppHandle, ids: Vec<i64>) -> AppResult<()> {
+    blocking(move || platform::clipboard_write(&shots_payload(&app, &ids)?)).await
+}
+
+/// 截图库里的拖出窗口松手：粘贴到松手的位置
+#[tauri::command]
+pub async fn library_drop_paste(app: AppHandle, ids: Vec<i64>) -> AppResult<()> {
+    blocking(move || crate::clipboard::panel::paste_at_cursor(&app, &shots_payload(&app, &ids)?, None)).await
+}
+
+/// 识字记录多选复制
+#[tauri::command]
+pub async fn ocr_copy_many(app: AppHandle, ids: Vec<i64>) -> AppResult<()> {
+    blocking(move || platform::clipboard_write(&ocr_payload(&app, &ids)?)).await
+}
+
+/// 识字记录拖出窗口松手：粘贴到松手的位置
+#[tauri::command]
+pub async fn ocr_drop_paste(app: AppHandle, ids: Vec<i64>) -> AppResult<()> {
+    blocking(move || crate::clipboard::panel::paste_at_cursor(&app, &ocr_payload(&app, &ids)?, None)).await
+}
+
 #[tauri::command]
 pub async fn library_pin(app: AppHandle, id: i64) -> AppResult<()> {
     blocking(move || {

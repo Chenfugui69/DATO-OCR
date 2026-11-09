@@ -179,7 +179,9 @@ export default function TranslatePopup() {
   const settings = useSettings();
   const popup = settings?.translate.popup;
   const blur = !!popup?.blur;
-  const pad = blur ? 0 : SHADOW_PAD;
+  // 四周给阴影留的透明边。Windows 开毛玻璃也留：背板往里缩（Rust 的 set_glass 的 pad），阴影页面自己画，
+  // 以前毛玻璃不留边、没有阴影，后面是浅色界面时面板和它融在一起。macOS 的毛玻璃是系统材质铺满窗口，不留
+  const pad = blur && isMac ? 0 : SHADOW_PAD;
   const [text, setText] = useState('');
   const [seq, setSeq] = useState(0);
   const [mode, setMode] = useState<'translate' | 'ai'>('translate');
@@ -232,6 +234,21 @@ export default function TranslatePopup() {
   const shift = useRef({ x: 0, y: 0 });
   const [sheet, setSheet] = useState<Sheet | null>(null);
   const shellRef = useRef<HTMLDivElement>(null);
+  // 译文往上滚了：滚到语言那一栏底下的部分渐渐淡出（和底部滑到输入框跟前时一样的做法），不画阴影。
+  // 遮罩挂在 .pop__body 上，从译文列表的顶边开始淡（--top-a 是列表顶边离 .pop__body 多远）
+  const bodyRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const body = bodyRef.current;
+    if (!body) return;
+    const onScroll = (e: Event) => {
+      const list = e.target;
+      if (!(list instanceof HTMLElement) || !list.classList.contains('tr-box__cards')) return;
+      body.style.setProperty('--top-a', `${list.getBoundingClientRect().top - body.getBoundingClientRect().top}px`);
+      body.toggleAttribute('data-scrolled', list.scrollTop > 2);
+    };
+    body.addEventListener('scroll', onScroll, { capture: true, passive: true });
+    return () => body.removeEventListener('scroll', onScroll, { capture: true });
+  });
   /** 窗口顶上不属于面板的那一截（逻辑像素）：弹出时为抽屉往上长预留的，裁掉了不显示（Rust 的 reserve_above） */
   const [topSpace, setTopSpace] = useState(0);
   const topRef = useRef(0);
@@ -337,8 +354,15 @@ export default function TranslatePopup() {
   }, []);
   // 鼠标在面板外面按下了（Rust 的全局鼠标监听报的）。平时靠失焦收起，但面板有时拿不到键盘焦点、
   // 就等不到失焦；这条不依赖焦点。和失焦一样：翻译模式才收，对话模式、钉住、正在拖动 / 改大小时不收
-  useEvent('translate-outside', () => {
+  useEvent('translate-outside', (at) => {
     if (previewRef.current || modeRef.current !== 'translate' || pinnedRef.current || userResizing.current || userMoving.current) return;
+    // 按在面板窗口上：在面板（外框）里面就不是外面；离外框远一些的透明边、顶上留的空白里照样算外面。
+    // 外框外面贴着的一圈（12px）是拖边改大小的地方，不算外面
+    if (at) {
+      const r = shellRef.current?.getBoundingClientRect();
+      const m = 12;
+      if (r && at[0] >= r.left - m && at[0] <= r.right + m && at[1] >= r.top - m && at[1] <= r.bottom + m) return;
+    }
     hide();
   });
 
@@ -429,7 +453,8 @@ export default function TranslatePopup() {
         if (top > 0 && userResizing.current && !animating.current) {
           const rect = { x: 0, y: top, width: window.innerWidth, height: window.innerHeight - top };
           void system.setRegion(rect);
-          if (padRef.current === 0) void system.backdrop(rect);
+          const p = padRef.current;
+          if (blurRef.current) void system.backdrop({ x: p, y: top + p, width: rect.width - p * 2, height: rect.height - p * 2 });
         }
         if (!userResizing.current || animating.current) return;
         resized.current = true;
@@ -517,7 +542,7 @@ export default function TranslatePopup() {
         flushSync(() => setSheet({ w: full.fw, h: full.fh, ...full, x: 0, y: 0, open: true, animate: true, bottom: true }));
         if (blur) {
           await lagBackdrop(shellRef.current);
-          void system.backdrop({ x: 0, y: top, width: full.fw, height: full.fh }, ANIM_MS);
+          void system.backdrop({ x: pad, y: top + pad, width: full.fw, height: full.fh }, ANIM_MS);
         }
         await wait(ANIM_MS + 40);
         setSheet(null);
@@ -546,14 +571,14 @@ export default function TranslatePopup() {
       // 窗口区域先放开到展开后面板的范围（比现在的窗口大没关系），挪完窗口不会有一帧被裁掉
       if (top > 0) await system.setRegion({ x: 0, y: top, width: w, height: h });
       // 毛玻璃：背板先只铺在外框现在的位置，之后跟着外框一起长
-      await moveWindow(x, y - top, w, h + top, blur ? { x: shift.current.x, y: top + shift.current.y, width: start.w, height: start.h } : undefined);
+      await moveWindow(x, y - top, w, h + top, blur ? { x: pad + shift.current.x, y: top + pad + shift.current.y, width: start.w, height: start.h } : undefined);
       await frame();
       await frame();
       // 2. 外框长到新尺寸、回到原点，对话区滑进来
       flushSync(() => setSheet({ w: full.fw, h: full.fh, ...full, x: 0, y: 0, open: true, animate: true }));
       if (blur) {
         await lagBackdrop(shellRef.current);
-        void system.backdrop({ x: 0, y: top, width: w, height: h }, ANIM_MS);
+        void system.backdrop({ x: pad, y: top + pad, width: full.fw, height: full.fh }, ANIM_MS);
       }
       await wait(ANIM_MS + 40);
       setSheet(null);
@@ -579,7 +604,7 @@ export default function TranslatePopup() {
         flushSync(() => setSheet({ w: full.fw, h: full.fh, ...full, x: 0, y: 0, open: true, animate: false, bottom: true }));
         await frame();
         setSheet({ w: target.w - pad * 2, h: target.h - pad * 2, ...full, x: 0, y: 0, open: false, animate: true, bottom: true });
-        if (blur) void system.backdrop({ x: 0, y: top, width: target.w, height: target.h }, ANIM_MS);
+        if (blur) void system.backdrop({ x: pad, y: top + pad, width: target.w - pad * 2, height: target.h - pad * 2 }, ANIM_MS);
         await wait(ANIM_MS + 20);
         userResizing.current = false;
         grownInPlace.current = 0;
@@ -599,14 +624,14 @@ export default function TranslatePopup() {
       flushSync(() => setSheet({ w: full.fw, h: full.fh, ...full, x: 0, y: 0, open: true, animate: false }));
       await frame();
       setSheet({ w: target.w - pad * 2, h: target.h - pad * 2, ...full, x: sx, y: sy, open: false, animate: true });
-      if (blur) void system.backdrop({ x: sx, y: top + sy, width: target.w, height: target.h }, ANIM_MS);
+      if (blur) void system.backdrop({ x: pad + sx, y: top + pad + sy, width: target.w - pad * 2, height: target.h - pad * 2 }, ANIM_MS);
       await wait(ANIM_MS + 20);
       // 2. 窗口一步还原，外框同时回到原点
       userResizing.current = false;
       flushSync(() => {
         setSheet({ w: target.w - pad * 2, h: target.h - pad * 2, ...full, x: 0, y: 0, open: false, animate: false });
       });
-      await moveWindow(pos.x + sx, pos.y + sy, target.w, target.h + top, blur ? { x: 0, y: top, width: target.w, height: target.h } : undefined);
+      await moveWindow(pos.x + sx, pos.y + sy, target.w, target.h + top, blur ? { x: pad, y: top + pad, width: target.w - pad * 2, height: target.h - pad * 2 } : undefined);
       if (top > 0) void system.setRegion({ x: 0, y: top, width: target.w, height: target.h });
       else if (blur) void system.backdrop(null);
       await frame();
@@ -772,7 +797,7 @@ export default function TranslatePopup() {
               {text.trim() && <SpeakButton className="pop__speak" text={text} label={t('translate.speakSource')} />}
             </div>
           )}
-          <div className="pop__body">
+          <div ref={bodyRef} className="pop__body">
             {inputMode && !text.trim() && <div className="pop__input-hint">{t('translate.inputHint')}</div>}
             {text && (
               <TranslateBox
@@ -905,12 +930,22 @@ html[data-view='translate'], html[data-view='translate'] body { background: tran
 /* 毛玻璃：系统模糊背板挂在窗口最底下、按同样的圆角裁好（Rust 的 set_glass），
    这里不画阴影，只在边上描一圈细线，让面板边缘清楚一点 */
 .pop-shell.is-blur { box-shadow: inset 0 0 0 0.5px rgba(255,255,255,0.16); animation: none; }
-[data-theme='light'] .pop-shell.is-blur { box-shadow: inset 0 0 0 0.5px rgba(0,0,0,0.14); }
+/* Windows 毛玻璃也留了透明边：和不开毛玻璃时一样画外阴影（macOS 的阴影是系统的） */
+html:not([data-platform='mac']) .pop-shell.is-blur { box-shadow: inset 0 0 0 0.5px rgba(255,255,255,0.16), 0 4px 12px rgba(0,0,0,0.22), 0 0 0 0.5px rgba(0,0,0,0.28); }
+/* 浅色毛玻璃：窗口里没给阴影留地方，后面也是浅色界面时面板几乎和它融在一起 —— 描边加深到 1px，
+   里面再贴一圈很淡的白边，看着像一块有厚度的玻璃 */
+[data-theme='light'] .pop-shell.is-blur { box-shadow: inset 0 0 0 1px rgba(0,0,0,0.16), inset 0 0 0 2px rgba(255,255,255,0.5); }
+html:not([data-platform='mac'])[data-theme='light'] .pop-shell.is-blur {
+  box-shadow: inset 0 0 0 2px rgba(255,255,255,0.5), 0 0 0 0.5px rgba(0,0,0,0.22), 0 4px 14px rgba(0,0,0,0.2); }
 /* 浅色 + 毛玻璃（Windows）：背板只是把桌面模糊了，本身没有颜色。面板背后是深色内容时，淡淡一层白盖不住，
    整块发灰发暗，上面浅色主题的深色字就看不清了。所以浅色下色调至少五成半实，不透明度滑块在这之上再调。
    macOS 的系统材质自己就是浅色的，不用垫 */
 html:not([data-platform='mac'])[data-theme='light'] .pop-shell.is-blur {
   --pop-hi: rgba(252,252,254,calc(0.55 + var(--pop-alpha) * 0.45)); --pop-lo: rgba(236,236,241,calc(0.55 + var(--pop-alpha) * 0.45)); }
+/* 深色 + 毛玻璃（Windows）反过来：面板背后是白底网页时，淡淡一层深色压不住，整块发成中灰，
+   白字和灰色的源名字都看不清。深色下色调也至少七成实 */
+html:not([data-platform='mac'])[data-theme='dark'] .pop-shell.is-blur {
+  --pop-hi: rgba(46,46,48,calc(0.7 + var(--pop-alpha) * 0.3)); --pop-lo: rgba(30,30,32,calc(0.7 + var(--pop-alpha) * 0.3)); }
 /* 本程序截图的那一刻（Windows）：系统背板藏起来、色调换成不透明，抓到的面板全是页面画的（圆角带抗锯齿），见 useGlassSnapshot */
 html[data-snapshot] .pop-shell.is-blur { --pop-alpha: 1 !important; }
 html[data-snapshot] .pop-shell.is-blur, html[data-snapshot] .pop-shell.is-blur * { transition: none !important; }
@@ -937,20 +972,28 @@ html[data-snapshot] .pop-shell.is-blur, html[data-snapshot] .pop-shell.is-blur *
    试过又放弃的：整条渐变底色（上半截是透的，字照样叠）；整条实底色（面板是毛玻璃，底下突然一条
    不透的色带，像另外贴上去的） */
 .pop-ask-wrap { position: absolute; left: 0; right: 0; bottom: 0; z-index: 3; padding: 0 12px 10px; pointer-events: none; }
-.has-ask .pop__body { -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 86px), transparent calc(100% - 46px));
-                      mask-image: linear-gradient(to bottom, #000 calc(100% - 86px), transparent calc(100% - 46px)); }
+/* 顶上：译文往上滚了，滚到语言那一栏底下的部分在列表顶边那 22px 里渐渐淡出（--top-c 平时是不透明，
+   滚动后变透明；--top-a 是列表顶边的位置，页面滚动时量好设上）。几种模式的遮罩里都带着这一段 */
+.pop__body { --top-a: 0px; --top-c: #000; }
+.pop__body[data-scrolled] { --top-c: transparent; }
+.pop-pane--translate .pop__body {
+  -webkit-mask-image: linear-gradient(to bottom, #000 var(--top-a), var(--top-c) var(--top-a), #000 calc(var(--top-a) + 22px));
+          mask-image: linear-gradient(to bottom, #000 var(--top-a), var(--top-c) var(--top-a), #000 calc(var(--top-a) + 22px)); }
+.has-ask .pop__body {
+  -webkit-mask-image: linear-gradient(to bottom, #000 var(--top-a), var(--top-c) var(--top-a), #000 calc(var(--top-a) + 22px), #000 calc(100% - 86px), transparent calc(100% - 46px));
+          mask-image: linear-gradient(to bottom, #000 var(--top-a), var(--top-c) var(--top-a), #000 calc(var(--top-a) + 22px), #000 calc(100% - 86px), transparent calc(100% - 46px)); }
 /* 对话抽屉开着：译文一路排到抽屉的上沿，在最后一小段渐渐淡出，像是滑到抽屉底下去了。
    以前这里是卡片被一刀切断、下面再留一条空的底色，看着像抽屉上方压着一条遮罩 */
 .pop-shell.is-drawer .pop-pane--translate:not(.has-ask) .pop__body {
-  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 46px), transparent 100%);
-          mask-image: linear-gradient(to bottom, #000 calc(100% - 46px), transparent 100%); }
+  -webkit-mask-image: linear-gradient(to bottom, #000 var(--top-a), var(--top-c) var(--top-a), #000 calc(var(--top-a) + 22px), #000 calc(100% - 46px), transparent 100%);
+          mask-image: linear-gradient(to bottom, #000 var(--top-a), var(--top-c) var(--top-a), #000 calc(var(--top-a) + 22px), #000 calc(100% - 46px), transparent 100%); }
 /* 抽屉升起 / 收回的过程中：同样的淡出，只是量的是还露在抽屉上面的那截（被盖住的 --pop-cut 不算），
    --pop-cut 和抽屉用同一条曲线过渡，淡出一直贴着抽屉的上沿。以前过渡时用的是输入框那套遮罩，
    抽屉升完才换成这个，淡出要晚零点几秒才出来 */
 @property --pop-cut { syntax: '<length>'; inherits: true; initial-value: 0px; }
 .pop-shell.is-drawer .pop-pane--translate.is-sheet .pop__body {
-  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 46px), transparent 100%);
-          mask-image: linear-gradient(to bottom, #000 calc(100% - 46px), transparent 100%);
+  -webkit-mask-image: linear-gradient(to bottom, #000 var(--top-a), var(--top-c) var(--top-a), #000 calc(var(--top-a) + 22px), #000 calc(100% - 46px), transparent 100%);
+          mask-image: linear-gradient(to bottom, #000 var(--top-a), var(--top-c) var(--top-a), #000 calc(var(--top-a) + 22px), #000 calc(100% - 46px), transparent 100%);
   -webkit-mask-size: 100% calc(100% - var(--pop-cut)); mask-size: 100% calc(100% - var(--pop-cut));
   -webkit-mask-repeat: no-repeat; mask-repeat: no-repeat; }
 .pop-shell.is-drawer .pop-pane--translate:not(.has-ask) .tr-box { padding-bottom: 0; }
@@ -964,14 +1007,16 @@ html[data-snapshot] .pop-shell.is-blur, html[data-snapshot] .pop-shell.is-blur *
 .pop-pane--translate .tr-box__cards { margin-right: -10px; overflow-x: hidden; overflow-y: scroll; scrollbar-gutter: stable; }
 /* 翻译源卡片要从面板上"浮"起来：通用的那层淡灰底色在毛玻璃面板上几乎看不出来，卡片和面板糊成一片。
    浅色用更白的底，深色用更亮的底，再描一圈细边、压一点点阴影 */
-.pop-pane--translate .tr-card { background: rgba(255,255,255,0.66); box-shadow: 0 0 0 0.5px rgba(0,0,0,0.07), 0 1px 2px rgba(0,0,0,0.06); }
-[data-theme='dark'] .pop-pane--translate .tr-card { background: rgba(255,255,255,0.085); box-shadow: inset 0 0 0 0.5px rgba(255,255,255,0.09), 0 1px 2px rgba(0,0,0,0.22); }
+/* 描边画在卡片里面（inset）：外面那圈会被译文列表的 overflow-x: hidden 裁掉 —— 卡片左边正好贴着列表的左边，
+   右边贴着滚动条那一栏，以前只剩上下两条边和四个角看得出来 */
+.pop-pane--translate .tr-card { background: rgba(255,255,255,0.66); box-shadow: inset 0 0 0 1px rgba(0,0,0,0.075), 0 1px 3px rgba(0,0,0,0.07); }
+[data-theme='dark'] .pop-pane--translate .tr-card { background: rgba(255,255,255,0.085); box-shadow: inset 0 0 0 1px rgba(255,255,255,0.07), 0 1px 2px rgba(0,0,0,0.22); }
 /* 没开毛玻璃时面板背后的画面是清清楚楚透上来的（不透明度调低的话）：卡片要是也半透明，背后的字会和译文叠在一起。
    所以这时卡片用实底，只有面板本身的底色跟着不透明度走 */
 .pop-shell:not(.is-blur) .pop-pane--translate .tr-card { background: #fff; }
 [data-theme='dark'] .pop-shell:not(.is-blur) .pop-pane--translate .tr-card { background: #3a3a3d; }
 /* 卡片：鼠标移上去浮起来一点 */
-.pop-pane--translate .tr-card:hover { box-shadow: 0 0 0 0.5px rgba(0,0,0,0.09), 0 3px 10px rgba(0,0,0,0.1); }
+.pop-pane--translate .tr-card:hover { box-shadow: inset 0 0 0 1px rgba(0,0,0,0.1), 0 3px 10px rgba(0,0,0,0.1); }
 [data-theme='dark'] .pop-pane--translate .tr-card:hover { box-shadow: inset 0 0 0 0.5px rgba(255,255,255,0.14), 0 3px 10px rgba(0,0,0,0.3); }
 /* 底部"问 AI"：跟着面板一起浮上来；聚焦时抬起一点 */
 /* ── 面板里的排版 ── */

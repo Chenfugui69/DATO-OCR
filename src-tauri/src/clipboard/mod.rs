@@ -6,7 +6,9 @@
 //! 默认**全量记录**（铁律 6）：隐私标记、黑名单两道开关都默认关闭。
 
 mod app_colors;
+pub mod ghost;
 pub mod panel;
+pub mod peek;
 pub mod preview;
 pub mod smart;
 mod smart_words;
@@ -867,6 +869,40 @@ pub fn payload_of(app: &AppHandle, id: i64, plain: bool) -> AppResult<ClipboardP
             html: if plain { None } else { detail.content_html },
             rtf: if plain { None } else { detail.content_rtf },
         },
+    })
+}
+
+/// 多选的几条合成一份剪贴板内容（多选复制、拖几张卡片粘贴）：
+/// - 只有一条：和单条一样；
+/// - 都是文字类（文字、链接、颜色、验证码）：按顺序一条一行拼起来；
+/// - 有图片或文件：合成一个文件列表（图片用数据目录里存的那份），文字类的这时放不进去，略过
+pub fn payload_of_many(app: &AppHandle, ids: &[i64], plain: bool) -> AppResult<ClipboardPayload> {
+    match ids {
+        [] => return Err(crate::error::AppError::msg("没有选中的记录")),
+        [id] => return payload_of(app, *id, plain),
+        _ => {}
+    }
+    let st = state(app);
+    let details = st
+        .db
+        .with(|c| ids.iter().map(|id| repo::get_detail(c, *id)).collect::<AppResult<Vec<_>>>())?;
+    let mut files: Vec<std::path::PathBuf> = Vec::new();
+    let mut texts: Vec<String> = Vec::new();
+    for d in details {
+        match d.item.kind.as_str() {
+            "image" => files.extend(d.item.file_path.as_deref().map(|rel| st.paths.abs(rel))),
+            "files" => files.extend(d.item.files.iter().map(Into::into)),
+            _ => texts.extend(d.content_text.filter(|t| !t.is_empty())),
+        }
+    }
+    Ok(if files.is_empty() {
+        ClipboardPayload::Text {
+            text: texts.join("\n"),
+            html: None,
+            rtf: None,
+        }
+    } else {
+        ClipboardPayload::Files(files)
     })
 }
 

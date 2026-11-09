@@ -26,6 +26,12 @@ pub const CLIPBOARD_CHANGED: &str = "clipboard-changed";
 pub const CLIPBOARD_PANEL_SHOW: &str = "clipboard-panel-show";
 /// 大预览窗口要显示哪一条（剪贴板记录 ID）
 pub const CLIP_PREVIEW: &str = "clip-preview";
+/// 按住 Shift 的悬浮预览：看哪一条（null = 收起）
+pub const CLIP_PEEK: &str = "clip-peek";
+/// 拖卡片时的影子：拖着的那几条（空数组 = 收起）
+pub const CLIP_GHOST: &str = "clip-ghost";
+/// 拖卡片时鼠标下面是不是输入框（影子缩小表示松手就贴在这儿）
+pub const CLIP_GHOST_TARGET: &str = "clip-ghost-target";
 /// 多端同步的状态变了（设备上下线、有人申请加入、网盘同步结果…）
 pub const SYNC_CHANGED: &str = "sync-changed";
 /// 检查更新 / 下载安装的状态变了

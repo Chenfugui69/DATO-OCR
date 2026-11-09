@@ -14,18 +14,25 @@ use std::time::{Duration, Instant};
 
 use parking_lot::Mutex;
 use windows::core::Interface;
-use windows::Win32::Foundation::{HWND, RECT};
+use windows::Win32::Foundation::{HWND, POINT, RECT};
 use windows::Win32::System::Com::{
     CoCreateInstance, CoInitializeEx, CLSCTX_INPROC_SERVER, COINIT_MULTITHREADED,
 };
+use windows::Win32::System::Ole::{
+    SafeArrayAccessData, SafeArrayDestroy, SafeArrayGetLBound, SafeArrayGetUBound,
+    SafeArrayUnaccessData,
+};
 use windows::Win32::UI::Accessibility::{
     CUIAutomation8, IUIAutomation, IUIAutomation2, IUIAutomationCacheRequest,
-    IUIAutomationCondition, IUIAutomationElement, TreeScope_Children,
-    UIA_BoundingRectanglePropertyId, UIA_ControlTypePropertyId,
+    IUIAutomationCondition, IUIAutomationElement, IUIAutomationTextPattern,
+    IUIAutomationTextRange, IUIAutomationValuePattern, TextPatternRangeEndpoint_End,
+    TextPatternRangeEndpoint_Start, TextUnit_Character, TreeScope_Children,
+    UIA_BoundingRectanglePropertyId, UIA_ControlTypePropertyId, UIA_TextPatternId,
+    UIA_ValuePatternId,
 };
 
 use crate::error::AppResult;
-use crate::platform::{PhysicalRect, UiElement, WindowHandle};
+use crate::platform::{PhysicalRect, TextBounds, UiElement, WindowHandle};
 
 /// 比这小的不要（线、点）
 const MIN_SIDE: u32 = 4;
@@ -274,6 +281,232 @@ pub fn elements_near(window: WindowHandle, x: i32, y: i32) -> AppResult<Vec<UiEl
         );
         out
     }))
+}
+
+/// 文字范围在屏幕上的框（物理像素）：`GetBoundingRectangles` 给的是一串 x, y, w, h（每行一个框）
+fn range_rects(range: &IUIAutomationTextRange) -> Vec<PhysicalRect> {
+    // SAFETY: 跨进程取一个 SAFEARRAY(double)，读完就销毁。
+    unsafe {
+        let Ok(psa) = range.GetBoundingRectangles() else {
+            return Vec::new();
+        };
+        if psa.is_null() {
+            return Vec::new();
+        }
+        let mut out = Vec::new();
+        if let (Ok(lo), Ok(hi)) = (SafeArrayGetLBound(psa, 1), SafeArrayGetUBound(psa, 1)) {
+            let mut data: *mut std::ffi::c_void = std::ptr::null_mut();
+            if hi >= lo && SafeArrayAccessData(psa, &mut data).is_ok() {
+                let vals = std::slice::from_raw_parts(data as *const f64, (hi - lo + 1) as usize);
+                for q in vals.chunks_exact(4) {
+                    let (w, h) = (q[2].round() as i32, q[3].round() as i32);
+                    if w > 0 && h > 0 {
+                        out.push(PhysicalRect::new(q[0].round() as i32, q[1].round() as i32, w as u32, h as u32));
+                    }
+                }
+                let _ = SafeArrayUnaccessData(psa);
+            }
+        }
+        let _ = SafeArrayDestroy(psa);
+        out
+    }
+}
+
+fn union(rects: &[PhysicalRect]) -> Option<PhysicalRect> {
+    let x0 = rects.iter().map(|r| r.x).min()?;
+    let y0 = rects.iter().map(|r| r.y).min()?;
+    let x1 = rects.iter().map(|r| r.right()).max()?;
+    let y1 = rects.iter().map(|r| r.bottom()).max()?;
+    Some(PhysicalRect::new(x0, y0, (x1 - x0) as u32, (y1 - y0) as u32))
+}
+
+/// 选区里从头（`forward`）或从尾数起第一个看得见的字的框；最多看 32 个字
+fn visible_char(range: &IUIAutomationTextRange, forward: bool) -> Option<PhysicalRect> {
+    // SAFETY: UIA 文字范围的查询。
+    unsafe {
+        let c = range.Clone().ok()?;
+        // 收成选区的开头 / 结尾那一点
+        if forward {
+            c.MoveEndpointByRange(TextPatternRangeEndpoint_End, range, TextPatternRangeEndpoint_Start).ok()?;
+        } else {
+            c.MoveEndpointByRange(TextPatternRangeEndpoint_Start, range, TextPatternRangeEndpoint_End).ok()?;
+        }
+        for _ in 0..32 {
+            // 往里扩一个字：c 就是那一个字
+            let moved = if forward {
+                c.MoveEndpointByUnit(TextPatternRangeEndpoint_End, TextUnit_Character, 1).ok()?
+            } else {
+                c.MoveEndpointByUnit(TextPatternRangeEndpoint_Start, TextUnit_Character, -1).ok()?
+            };
+            if moved == 0 {
+                return None;
+            }
+            // 走出选区了
+            let outside = if forward {
+                c.CompareEndpoints(TextPatternRangeEndpoint_End, range, TextPatternRangeEndpoint_End).ok()? > 0
+            } else {
+                c.CompareEndpoints(TextPatternRangeEndpoint_Start, range, TextPatternRangeEndpoint_Start).ok()? < 0
+            };
+            if outside {
+                return None;
+            }
+            let text = c.GetText(4).map(|b| b.to_string()).unwrap_or_default();
+            let real = text.chars().any(|ch| !ch.is_whitespace() && ch != '\u{FFFC}' && !ch.is_control());
+            if real {
+                if let Some(r) = range_rects(&c).last().copied().filter(|r| r.width >= 2 && r.height >= 4) {
+                    return Some(r);
+                }
+            }
+            // 不算数：收回到这个字的另一头，接着看下一个
+            if forward {
+                c.MoveEndpointByRange(TextPatternRangeEndpoint_Start, &c, TextPatternRangeEndpoint_End).ok()?;
+            } else {
+                c.MoveEndpointByRange(TextPatternRangeEndpoint_End, &c, TextPatternRangeEndpoint_Start).ok()?;
+            }
+        }
+        None
+    }
+}
+
+impl Uia {
+    /// 从 `el` 往上找支持文字模式（TextPattern）的元素，最多几层
+    fn text_pattern(&self, el: IUIAutomationElement) -> Option<IUIAutomationTextPattern> {
+        // SAFETY: UIA 查询。
+        unsafe {
+            let walker = self.auto.ControlViewWalker().ok()?;
+            let mut cur = el;
+            for _ in 0..8 {
+                if let Ok(p) = cur.GetCurrentPattern(UIA_TextPatternId) {
+                    if let Ok(tp) = p.cast::<IUIAutomationTextPattern>() {
+                        // 有选区才算（网页里点到的可能是没选中东西的外层文档）
+                        if tp.GetSelection().and_then(|s| s.Length()).is_ok_and(|n| n > 0) {
+                            return Some(tp);
+                        }
+                    }
+                }
+                cur = walker.GetParentElement(&cur).ok()?;
+            }
+            None
+        }
+    }
+
+    fn selection_bounds(&self, x: i32, y: i32) -> Option<TextBounds> {
+        // SAFETY: UIA 查询。
+        unsafe {
+            // 先问有焦点的元素（编辑框、文档），不行再问鼠标下面的
+            let tp = self
+                .auto
+                .GetFocusedElement()
+                .ok()
+                .and_then(|el| self.text_pattern(el))
+                .or_else(|| {
+                    let el = self.auto.ElementFromPoint(POINT { x, y }).ok()?;
+                    self.text_pattern(el)
+                })?;
+            let range = tp.GetSelection().ok()?.GetElement(0).ok()?;
+            let lines = range_rects(&range);
+            let whole = union(&lines)?;
+            // 第一个、最后一个"看得见的字"：从选区开头往后、从结尾往前一个字一个字地看，跳过空白、换行和
+            // 嵌在网页里的对象（文本框、图片在文字里是一个占位字符，框常常只有 1×1 或者是整个文本框）。
+            // 拖过了头、在空白处松手时，选区结尾往往就是这种东西
+            let first = visible_char(&range, true);
+            let last = visible_char(&range, false);
+            Some(TextBounds { whole, first, last })
+        }
+    }
+}
+
+/// 叫醒鼠标下面那个程序的无障碍树：Chrome、Edge、Electron 程序平时不建，第一次被 UIA 问到时才开始建，
+/// 那一次什么也问不到（新版 Chromium 一阵子没人问还会自己关掉）。划词时在文字上按下鼠标就先问一下，
+/// 等松开鼠标再问选区时树已经建好了。不等结果；一秒内只叫一次
+pub fn warm_up(x: i32, y: i32) {
+    static LAST: Mutex<Option<Instant>> = Mutex::new(None);
+    {
+        let mut last = LAST.lock();
+        if last.is_some_and(|t| t.elapsed() < Duration::from_millis(1000)) {
+            return;
+        }
+        *last = Some(Instant::now());
+    }
+    let job: Job = Box::new(move |uia| {
+        let Some(uia) = uia else { return };
+        // SAFETY: UIA 查询，结果不要。
+        unsafe {
+            if let Ok(el) = uia.auto.ElementFromPoint(POINT { x, y }) {
+                let _ = el.GetCurrentPattern(UIA_TextPatternId);
+            }
+            if let Ok(el) = uia.auto.GetFocusedElement() {
+                let _ = el.GetCurrentPattern(UIA_TextPatternId);
+            }
+        }
+    });
+    let _ = worker().lock().send(job);
+}
+
+/// 现在选中的字在屏幕上的位置（划词按钮"跟着文段"用）。`(x, y)` 是松开鼠标的点，有焦点的元素问不到时
+/// 从它下面的元素往上找。程序不支持 UIA 的文字模式（不少原生程序、老程序）就是 None
+pub fn selection_bounds(x: i32, y: i32) -> Option<TextBounds> {
+    let (tx, rx) = mpsc::channel();
+    let job: Job = Box::new(move |uia| {
+        let _ = tx.send(uia.and_then(|u| u.selection_bounds(x, y)));
+    });
+    worker().lock().send(job).ok()?;
+    // 等不了太久：按钮要跟着手出来
+    rx.recv_timeout(Duration::from_millis(250)).ok().flatten()
+}
+
+/// 屏幕上这个点下面是不是能打字的地方（输入框、编辑器、网页里的可编辑区域）：拖剪贴板卡片经过时
+/// 影子缩小一下，表示松手就贴在这里。DATO OCR 自己的窗口不算。问不到（程序不支持 UIA、卡住）是 None
+pub fn editable_at(x: i32, y: i32) -> Option<bool> {
+    let (tx, rx) = mpsc::channel();
+    let job: Job = Box::new(move |uia| {
+        let _ = tx.send(uia.and_then(|u| u.editable_at(x, y)));
+    });
+    worker().lock().send(job).ok()?;
+    rx.recv_timeout(Duration::from_millis(200)).ok().flatten()
+}
+
+impl Uia {
+    fn editable_at(&self, x: i32, y: i32) -> Option<bool> {
+        const EDIT: i32 = 50004;
+        const DOCUMENT: i32 = 50030;
+        const PANE: i32 = 50033;
+        const WINDOW: i32 = 50032;
+        // SAFETY: UIA 查询。
+        unsafe {
+            let el = self.auto.ElementFromPoint(POINT { x, y }).ok()?;
+            if el.CurrentProcessId().ok()? as u32 == std::process::id() {
+                return Some(false);
+            }
+            let walker = self.auto.ControlViewWalker().ok()?;
+            let mut cur = el;
+            // 文字在可编辑区域里面一两层（网页的 contenteditable、富文本编辑器）：往上看几层
+            for _ in 0..4 {
+                let kind = cur.CurrentControlType().map_or(0, |t| t.0);
+                if kind == PANE || kind == WINDOW {
+                    return Some(false);
+                }
+                let read_only = cur
+                    .GetCurrentPattern(UIA_ValuePatternId)
+                    .ok()
+                    .and_then(|p| p.cast::<IUIAutomationValuePattern>().ok())
+                    .and_then(|v| v.CurrentIsReadOnly().ok())
+                    .map(|b| b.as_bool());
+                match (kind, read_only) {
+                    (_, Some(true)) => return Some(false),
+                    (EDIT, _) => return Some(true),
+                    // 可编辑的文档（记事本、Word、网页编辑器）：有值模式且不是只读
+                    (_, Some(false)) if kind == DOCUMENT || cur.CurrentIsKeyboardFocusable().is_ok_and(|b| b.as_bool()) => {
+                        return Some(true)
+                    }
+                    (DOCUMENT, None) => return Some(false),
+                    _ => {}
+                }
+                cur = walker.GetParentElement(&cur).ok()?;
+            }
+            Some(false)
+        }
+    }
 }
 
 /// UIA 的控件类型 → 名字（页面按名字挑：文字片段、滚动条这类不当预选框）

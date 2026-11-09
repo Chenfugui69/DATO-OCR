@@ -244,6 +244,8 @@ pub struct DefaultHotkeys {
     pub clipboard: &'static str,
     pub translate: &'static str,
     pub instant: &'static str,
+    /// 输入翻译（屏幕中间弹一条输入框）
+    pub input_translate: &'static str,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]

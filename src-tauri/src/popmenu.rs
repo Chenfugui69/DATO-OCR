@@ -14,6 +14,8 @@ use crate::platform::{self, FloatingKind};
 use crate::wm;
 
 pub const WINDOW: &str = "popmenu";
+/// 托盘图标要的菜单（Windows）：选了哪项不发事件给窗口，直接交给 `tray::run`
+pub const TRAY_OWNER: &str = "tray";
 
 /// 菜单项、谁要的菜单、在哪弹（屏幕物理坐标）
 #[derive(Clone, Serialize)]
@@ -106,10 +108,36 @@ pub fn pick(app: &AppHandle, id: String) {
     let _ = app.run_on_main_thread(move || {
         hide(&ui);
         let Some(owner) = owner else { return };
+        if owner == TRAY_OWNER {
+            crate::tray::run(&ui, &id);
+            return;
+        }
         if let Some(w) = ui.get_webview_window(&owner) {
             let _ = platform::take_focus(&w);
         }
         let _ = ui.emit_to(owner.as_str(), "popmenu-select", id);
+    });
+}
+
+/// 不选了（点别处、Esc）：收起，并告诉要菜单的窗口菜单关了（剪贴板面板在菜单开着时不因失焦收起，
+/// 菜单关了它要重新看一眼焦点在不在自己这儿）
+pub fn close(app: &AppHandle) {
+    let owner = PENDING.lock().take().map(|p| p.owner);
+    // 菜单自己还拿着焦点（按 Esc 关的）：焦点还给要菜单的窗口；已经失焦了（点了别处）就不抢
+    let still_focused = app
+        .get_webview_window(WINDOW)
+        .and_then(|w| w.is_focused().ok())
+        .unwrap_or(false);
+    let ui = app.clone();
+    let _ = app.run_on_main_thread(move || {
+        hide(&ui);
+        let Some(owner) = owner.filter(|o| o != TRAY_OWNER) else { return };
+        if still_focused {
+            if let Some(w) = ui.get_webview_window(&owner) {
+                let _ = platform::take_focus(&w);
+            }
+        }
+        let _ = ui.emit_to(owner.as_str(), "popmenu-closed", ());
     });
 }
 

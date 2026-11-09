@@ -74,6 +74,8 @@ export interface Settings {
     showAllProviders: boolean;
     /** 截图原位翻译用的翻译源：auto = 按顺序 */
     regionProvider: string;
+    /** 截图原位翻译后在选区旁边并排显示原图对照（默认开，翻译条上关掉后记住） */
+    regionCompare: boolean;
     customBaseUrl: string;
     customModel: string;
     popup: PopupStyle;
@@ -115,6 +117,10 @@ export interface Settings {
     panelOverDock: boolean;
     /** 面板弹出 / 收起的动画 */
     panelAnimation: boolean;
+    /** 按住 Shift 的悬浮预览多大 */
+    peekSize: 'small' | 'medium' | 'large';
+    /** 卡片条滚轮的手感：smooth = 带惯性的新手感，classic = 原来那种 */
+    scrollFeel: 'smooth' | 'classic';
     /** 面板里点一下就粘贴（默认双击粘贴） */
     singleClickPaste: boolean;
     maxTextMb: number;
@@ -151,6 +157,24 @@ export interface Settings {
     /** 点了"不显示更新提示"的版本 */
     skippedVersion: string;
   };
+  storage: {
+    /** 自动清理多少天以前的：0 = 不自动清理 */
+    autoCleanDays: number;
+    autoCleanTargets: StorageTarget[];
+  };
+}
+
+/** 设置 → 存储里能清理的几类 */
+export type StorageTarget = 'clipboard' | 'screenshots' | 'ocr' | 'logs';
+export interface StorageUsage {
+  key: StorageTarget;
+  bytes: number;
+  /** 记录条数（日志是文件数） */
+  count: number;
+}
+export interface CleanResult {
+  removed: number;
+  freedBytes: number;
 }
 
 export interface UpdateChanges {
@@ -387,6 +411,10 @@ export interface AppInfo {
   saveDir: string;
   ocr: EngineStatus;
   dataBytes: number;
+  /** 默认的数据位置（和 dataDir 不一样 = 用户改过） */
+  defaultDataDir: string;
+  /** 上次启动搬数据位置失败的原因 */
+  relocateError: string | null;
 }
 
 // ───────────────────────── 截图 ─────────────────────────
@@ -1043,7 +1071,7 @@ export interface RecordEditInfo {
 
 /** 自己画的右键菜单的一项（见 popmenu.rs）：图标是 lucide 图标的名字 */
 export type PopItem =
-  | { kind: 'item'; id: string; label: string; icon?: string; shortcut?: string; checked?: boolean; disabled?: boolean; danger?: boolean }
+  | { kind: 'item'; id: string; label: string; icon?: string; shortcut?: string; checked?: boolean; disabled?: boolean; danger?: boolean; submenu?: PopItem[] }
   | { kind: 'separator' }
   /** 一排小按钮（旋转、翻转这种一组小操作）：有 `text` 的显示文字（比如 50%），否则显示图标；`on` 是当前选中的那个 */
   | { kind: 'row'; label: string; items: { id: string; icon?: string; label: string; text?: string; on?: boolean }[] };

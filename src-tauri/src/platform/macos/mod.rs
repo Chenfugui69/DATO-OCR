@@ -49,6 +49,7 @@ pub const DEFAULT_HOTKEYS: DefaultHotkeys = DefaultHotkeys {
     clipboard: "Alt+V",
     translate: "Ctrl+Alt+T",
     instant: "Alt+Shift+1",
+    input_translate: "Alt+4",
 };
 pub const SYSTEM_OCR_NAME: &str = "Apple Vision";
 /// 可下载的 PaddleOCR 引擎（PaddleOCR-json）只有 Windows 版

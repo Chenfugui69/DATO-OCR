@@ -3,7 +3,6 @@
 
 import clsx from 'clsx';
 import { History, Plus } from 'lucide-react';
-import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import { clipboard } from '@/lib/ipc';
@@ -30,15 +29,24 @@ export function boardColor(group: Pick<ClipGroup, 'id' | 'color'>): string {
   return HEX[BOARD_COLORS[group.id % BOARD_COLORS.length]!];
 }
 
-/** 拖卡片时放在 dataTransfer 里的类型 */
-export const CLIP_DRAG_TYPE = 'application/x-dato-clip';
+/** 卡片拖到分组标签上松手（见 cardGestures 的 useCardDrag）：归进那个分组，`target` 为 null = 移出分组 */
+export function moveToBoard(ids: number[], target: number | null, groups: ClipGroup[], t: (k: string, o?: Record<string, unknown>) => string) {
+  const name = groups.find((g) => g.id === target)?.name;
+  void clipboard
+    .setGroup(ids, target)
+    .then(() => notify.success(name ? t('clip.board.added', { name }) : t('clip.board.removed')))
+    .catch(notify.error);
+}
 
 export function BoardTabs({
   groups,
   board,
   onSelect,
   onMenuClosed,
+  children,
 }: {
+  /** 跟在"+"后面的东西（多选时的"已选 N 项 · 复制"） */
+  children?: React.ReactNode;
   groups: ClipGroup[];
   /** 当前分组；null = 剪贴板（全部历史） */
   board: number | null;
@@ -47,29 +55,8 @@ export function BoardTabs({
   onMenuClosed: () => void;
 }) {
   const { t } = useTranslation();
-  // 拖着卡片悬停在哪个标签上（高亮）；'clipboard' = 剪贴板
-  const [over, setOver] = useState<number | 'clipboard' | null>(null);
-
-  const dropProps = (target: number | null) => ({
-    onDragOver: (e: React.DragEvent) => {
-      if (!e.dataTransfer.types.includes(CLIP_DRAG_TYPE)) return;
-      e.preventDefault();
-      e.dataTransfer.dropEffect = 'move';
-      setOver(target ?? 'clipboard');
-    },
-    onDragLeave: () => setOver(null),
-    onDrop: (e: React.DragEvent) => {
-      setOver(null);
-      const id = Number(e.dataTransfer.getData(CLIP_DRAG_TYPE));
-      if (!id) return;
-      e.preventDefault();
-      const name = groups.find((g) => g.id === target)?.name;
-      void clipboard
-        .setGroup([id], target)
-        .then(() => notify.success(name ? t('clip.board.added', { name }) : t('clip.board.removed')))
-        .catch(notify.error);
-    },
-  });
+  // 拖着卡片悬停时标签上会被加上 data-drag-over（高亮），松手由 useCardDrag 读 data-board-drop
+  const dropProps = (target: number | null) => ({ 'data-board-drop': target ?? 'clipboard' });
 
   const create = async () => {
     const name = await promptDialog({ title: t('clip.board.new'), placeholder: t('clip.board.namePlaceholder') });
@@ -124,7 +111,7 @@ export function BoardTabs({
     <nav className="boards">
       <button
         type="button"
-        className={clsx('boards__tab', board === null && 'boards__tab--active', over === 'clipboard' && 'boards__tab--over')}
+        className={clsx('boards__tab', board === null && 'boards__tab--active')}
         onClick={() => onSelect(null)}
         {...dropProps(null)}
       >
@@ -135,7 +122,7 @@ export function BoardTabs({
         <button
           key={g.id}
           type="button"
-          className={clsx('boards__tab', board === g.id && 'boards__tab--active', over === g.id && 'boards__tab--over')}
+          className={clsx('boards__tab', board === g.id && 'boards__tab--active')}
           title={t('clip.board.count', { count: g.count })}
           onClick={() => onSelect(g.id)}
           onContextMenu={(e) => {
@@ -151,6 +138,7 @@ export function BoardTabs({
       <button type="button" className="boards__add" title={t('clip.board.new')} onClick={() => void create()}>
         <Plus size={14} strokeWidth={2} />
       </button>
+      {children}
     </nav>
   );
 }

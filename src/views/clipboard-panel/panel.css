@@ -570,7 +570,7 @@ html[data-snapshot][data-theme='dark'] .panel-root--blur .panel {
   color: var(--cn-label);
 }
 /* 拖着卡片悬停：亮一圈强调色，松手就放进去 */
-.boards__tab--over {
+.boards__tab[data-drag-over] {
   background: color-mix(in srgb, var(--cn-accent) 14%, transparent);
   box-shadow: inset 0 0 0 1.5px var(--cn-accent);
   color: var(--cn-label);
@@ -704,11 +704,57 @@ html[data-snapshot][data-theme='dark'] .panel-root--blur .panel {
   overflow-y: hidden;
   contain: paint;
 }
-/* 底部卡片条不用系统滚动条（见 HScrollbar），两头渐隐，提示还能往两边滚 */
+/* 底部卡片条不用系统滚动条（见 HScrollbar）。哪头还有没露出来的卡片，哪头渐隐（data-more-left / right，
+   PanelView 按滚动位置设），提示还能往那边滚；滚到头了那头不淡。
+   不用 mask 渐变到透明：面板（尤其毛玻璃样式）本身是半透明的，渐隐的地方会透出窗口后面的桌面，
+   后面是亮色窗口时就是一道发白的模糊。改成盖一层和面板底色一样的渐变（.panel__fade），透不到后面 */
 .panel-root--bottom .panel__list {
   scrollbar-width: none;
-  -webkit-mask-image: linear-gradient(90deg, transparent, #000 14px, #000 calc(100% - 14px), transparent);
-  mask-image: linear-gradient(90deg, transparent, #000 14px, #000 calc(100% - 14px), transparent);
+}
+.panel__fade {
+  position: absolute;
+  z-index: 3;
+  width: 30px;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 200ms ease;
+  --fade-tint: 34, 34, 36;
+  --fade-max: 0.9;
+}
+[data-theme='light'] .panel__fade {
+  /* 浅色面板上整块白盖上去很晃眼：窄一点、淡一点 */
+  width: 22px;
+  --fade-tint: 246, 246, 248;
+  --fade-max: 0.7;
+}
+html:not([data-platform='mac'])[data-theme='dark'] .panel-root--blur .panel__fade {
+  --fade-tint: 30, 30, 32;
+}
+/* 渐变按缓出曲线走（几个停靠点），不是一条直线：靠里那头几乎看不出从哪开始 */
+.panel__fade--left {
+  left: 0;
+  background: linear-gradient(
+    90deg,
+    rgba(var(--fade-tint), var(--fade-max)),
+    rgba(var(--fade-tint), calc(var(--fade-max) * 0.62)) 30%,
+    rgba(var(--fade-tint), calc(var(--fade-max) * 0.28)) 60%,
+    rgba(var(--fade-tint), calc(var(--fade-max) * 0.08)) 85%,
+    rgba(var(--fade-tint), 0)
+  );
+}
+.panel__fade--right {
+  right: 0;
+  background: linear-gradient(
+    270deg,
+    rgba(var(--fade-tint), var(--fade-max)),
+    rgba(var(--fade-tint), calc(var(--fade-max) * 0.62)) 30%,
+    rgba(var(--fade-tint), calc(var(--fade-max) * 0.28)) 60%,
+    rgba(var(--fade-tint), calc(var(--fade-max) * 0.08)) 85%,
+    rgba(var(--fade-tint), 0)
+  );
+}
+.panel__fade[data-on] {
+  opacity: 1;
 }
 .panel-root--bottom .panel__list::-webkit-scrollbar {
   display: none;
@@ -881,8 +927,6 @@ html[data-snapshot][data-theme='dark'] .panel-root--blur .panel {
   color: var(--cn-label);
   white-space: pre;
   tab-size: 2;
-  -webkit-mask-image: linear-gradient(180deg, #000 72%, transparent);
-  mask-image: linear-gradient(180deg, #000 72%, transparent);
 }
 .clip-card--row .clip-card__code {
   height: auto;
@@ -1100,31 +1144,47 @@ html[data-snapshot][data-theme='dark'] .panel-root--blur .panel {
   word-break: break-word;
   overflow: hidden;
   height: 100%;
-  /* 超出部分渐隐 */
-  -webkit-mask-image: linear-gradient(180deg, #000 72%, transparent);
-  mask-image: linear-gradient(180deg, #000 72%, transparent);
+}
+/* 超出部分渐隐：盖一层渐变到卡片底色，不用 mask-image。卡片条的列表本身已经有一层两头渐隐的 mask，
+   卡片里再套 mask，WebView2 偶尔整块画不出来（卡片只剩标题栏和字数，文字全空） */
+.clip-card__text,
+.clip-card__table,
+.clip-card__code {
+  position: relative;
+}
+.clip-card__text::after,
+.clip-card__table::after,
+.clip-card__code::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 28%;
+  pointer-events: none;
+  background: linear-gradient(180deg, transparent, var(--cn-bg-elevated));
+}
+/* 卡片条：一直排到卡片底，最后两三行渐隐，字数浮在上面 */
+.clip-card--card .clip-card__text::after,
+.clip-card--card .clip-card__table::after,
+.clip-card--card .clip-card__code::after {
+  height: 70px;
+  background: linear-gradient(180deg, transparent, var(--cn-bg-elevated) calc(100% - 12px));
 }
 /* 卡片条：字大一号，第一行加粗当标题 */
 .clip-card--card .clip-card__text {
   padding: 12px 16px 0;
   font: 400 13px/19px var(--cn-font-sans);
   color: color-mix(in srgb, var(--cn-label) 86%, transparent);
-  /* 一直排到卡片底，最后两三行渐隐，字数浮在上面 */
-  -webkit-mask-image: linear-gradient(180deg, #000 calc(100% - 70px), transparent calc(100% - 12px));
-  mask-image: linear-gradient(180deg, #000 calc(100% - 70px), transparent calc(100% - 12px));
 }
 /* 复制的表格：小表格，超出卡片的部分和文字一样渐隐 */
 .clip-card__table {
   padding: 0 12px;
   height: 100%;
   overflow: hidden;
-  -webkit-mask-image: linear-gradient(180deg, #000 72%, transparent);
-  mask-image: linear-gradient(180deg, #000 72%, transparent);
 }
 .clip-card--card .clip-card__table {
   padding: 12px 14px 0;
-  -webkit-mask-image: linear-gradient(180deg, #000 calc(100% - 70px), transparent calc(100% - 12px));
-  mask-image: linear-gradient(180deg, #000 calc(100% - 70px), transparent calc(100% - 12px));
 }
 .clip-card__table table {
   width: 100%;
@@ -1177,8 +1237,9 @@ html[data-snapshot][data-theme='dark'] .panel-root--blur .panel {
   -webkit-box-orient: vertical;
   height: auto;
   padding: 8px 12px 0;
-  -webkit-mask-image: none;
-  mask-image: none;
+}
+.clip-card--row .clip-card__text::after {
+  content: none;
 }
 /* 图片：竖版里是嵌着的一张小相片，卡片条里铺满标题栏和底栏之间 */
 .clip-card__image {
@@ -1381,6 +1442,70 @@ html[data-snapshot][data-theme='dark'] .panel-root--blur .panel {
 }
 .panel-root--keys .clip-card--card .clip-card__detail {
   opacity: 0;
+}
+
+/* ── 多选（Ctrl 点选 / 框选）──
+   勾选框在卡片左上角；多选模式下标题让开一点 */
+.clip-card__pick {
+  position: absolute;
+  z-index: 4;
+  top: 10px;
+  left: 10px;
+  width: 20px;
+  height: 20px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  color: #fff;
+  background: rgba(0, 0, 0, 0.18);
+  box-shadow: inset 0 0 0 1.5px rgba(255, 255, 255, 0.92), 0 1px 3px rgba(0, 0, 0, 0.25);
+  cursor: default;
+  animation: cn-fade-in 120ms var(--cn-ease-out);
+}
+.clip-card--row .clip-card__pick {
+  top: 6px;
+  left: 6px;
+  width: 18px;
+  height: 18px;
+}
+.clip-card--picked .clip-card__pick {
+  background: var(--cn-accent);
+  box-shadow: inset 0 0 0 1.5px #fff, 0 1px 3px rgba(0, 0, 0, 0.25);
+}
+.clip-card--pickmode.clip-card--card .clip-card__head {
+  padding-left: 40px;
+}
+.clip-card--pickmode.clip-card--row .clip-card__body {
+  padding-left: 18px;
+}
+.clip-card--picked,
+.clip-card--picked:hover {
+  box-shadow:
+    0 0 0 2px var(--cn-accent),
+    0 6px 16px color-mix(in srgb, var(--cn-accent) 22%, transparent);
+}
+/* 框选的框、多选条、拖动时的光标在 gestures.css（主窗口的剪贴板页也用） */
+
+/* ── 拖卡片出去粘贴：拖着的时候面板淡一点，看得见后面要放的地方 ── */
+.panel-root--dragging .panel {
+  opacity: 0.7;
+  transition: opacity 160ms var(--cn-ease-out);
+}
+/* 卡片拖出了面板：面板整个滑下去、淡掉，让出后面的地方（窗口同时不挡鼠标，见 PanelView 的 onAway） */
+.panel-root--away .panel {
+  opacity: 0;
+  transform: translateY(calc(100% + 24px));
+  transition:
+    transform 220ms var(--cn-ease-in),
+    opacity 180ms var(--cn-ease-in);
+}
+.panel-root--vertical.panel-root--away .panel {
+  transform: scale(0.94);
+}
+.clip-card--dragging {
+  opacity: 0.5;
 }
 
 /* ── 空格快速预览 ── */

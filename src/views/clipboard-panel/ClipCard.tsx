@@ -4,19 +4,18 @@
 // - 竖版小面板（row）：内容 + 底部一行来源和时间
 
 import clsx from 'clsx';
-import { Eye, File, Globe, Image, KeyRound, Languages, Link2, MonitorSmartphone, Palette, Pin, ScanText, Sparkles, Star, Type } from 'lucide-react';
+import { Check, Eye, File, Globe, Image, KeyRound, Languages, Link2, MonitorSmartphone, Palette, Pin, ScanText, Sparkles, Star, Type } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
 import { memo, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import { readableOn, relativeTime } from '@/lib/format';
 import { clipboard } from '@/lib/ipc';
-import { assetUrl } from '@/lib/platform';
+import { assetUrl, modKey } from '@/lib/platform';
 import { Tooltip } from '@/ui/overlays';
 import type { ClipItem } from '@/lib/types';
 
 import { highlightCode, looksLikeCode } from './codeText';
-import { CLIP_DRAG_TYPE } from './BoardTabs';
 import { DeviceIcon, isDeviceKind } from './DeviceIcon';
 import { OtpBody } from './OtpBody';
 import { tableOf } from './tablePreview';
@@ -203,7 +202,23 @@ export const ClipCard = memo(function ClipCard({
   onActivate,
   onDoubleClick,
   onContextMenu,
+  pickMode,
+  picked,
+  onPick,
+  dragging,
+  onDragPointerDown,
+  onHover,
 }: {
+  /** 多选模式（按着 Ctrl，或者已经勾了几张）：卡片角上出勾选框 */
+  pickMode?: boolean;
+  picked?: boolean;
+  onPick?: () => void;
+  /** 正被拖着（拖出去粘贴）：卡片淡一点 */
+  dragging?: boolean;
+  /** 按下卡片：可能要开始拖（见 cardGestures 的 useCardDrag） */
+  onDragPointerDown?: (e: React.PointerEvent<HTMLDivElement>) => void;
+  /** 鼠标进 / 出卡片（按住 Shift 的悬浮预览用） */
+  onHover?: (inside: boolean) => void;
   item: ClipItem;
   /** 来源应用图标的主色：标题栏用它，没有就按类型配色 */
   tint?: string;
@@ -353,24 +368,47 @@ export const ClipCard = memo(function ClipCard({
         suggested && 'clip-card--suggested',
         fullBleed && 'clip-card--bleed',
         code && 'clip-card--code',
+        pickMode && 'clip-card--pickmode',
+        picked && 'clip-card--picked',
+        dragging && 'clip-card--dragging',
         // 文字、代码一直排到卡片底，字数浮在渐隐的最后几行上（Paste 的做法），不单独占一条底栏
         layout === 'card' && item.type === 'text' && 'clip-card--flow',
       )}
       style={headTint && item.type !== 'color' ? ({ ...colorStyle, '--clip-tint': headTint } as React.CSSProperties) : colorStyle}
-      onMouseEnter={gif ? () => setHover(true) : undefined}
-      onMouseLeave={gif ? () => setHover(false) : undefined}
-      onMouseDown={(e) => e.button === 0 && onClick()}
-      onClick={onActivate}
-      onDoubleClick={onDoubleClick}
-      onContextMenu={onContextMenu}
-      // 拖到面板顶上的分组标签上归进分组；文字、链接还能直接拖进别的程序
-      draggable
-      onDragStart={(e) => {
-        e.dataTransfer.setData(CLIP_DRAG_TYPE, String(item.id));
-        if (item.type === 'text' || item.type === 'link') e.dataTransfer.setData('text/plain', text);
-        e.dataTransfer.effectAllowed = 'copyMove';
+      data-clip-id={item.id}
+      onMouseEnter={() => {
+        if (gif) setHover(true);
+        onHover?.(true);
       }}
+      onMouseLeave={() => {
+        if (gif) setHover(false);
+        onHover?.(false);
+      }}
+      // 按着 Ctrl / ⌘ 的点击是多选（列表那层处理），不当选中、粘贴
+      onMouseDown={(e) => e.button === 0 && !modKey(e) && onClick()}
+      onClick={(e) => !modKey(e) && onActivate?.()}
+      onDoubleClick={(e) => !modKey(e) && onDoubleClick?.()}
+      onContextMenu={onContextMenu}
+      // 拖出面板松手 = 粘贴到那儿；拖到分组标签上 = 归进分组（见 cardGestures）
+      onPointerDown={onDragPointerDown}
     >
+      {pickMode && (
+        <button
+          type="button"
+          className="clip-card__pick"
+          role="checkbox"
+          aria-checked={!!picked}
+          aria-label={t('clip.pick')}
+          onMouseDown={(e) => e.stopPropagation()}
+          onDoubleClick={(e) => e.stopPropagation()}
+          onClick={(e) => {
+            e.stopPropagation();
+            onPick?.();
+          }}
+        >
+          {picked && <Check size={12} strokeWidth={3} />}
+        </button>
+      )}
       {layout === 'card' ? (
         <>
           <div className={clsx('clip-card__head', board && 'clip-card__head--board')}>

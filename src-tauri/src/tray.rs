@@ -97,40 +97,28 @@ pub fn build(app: &AppHandle) -> AppResult<()> {
         ],
     )?;
 
-    let mut builder = TrayIconBuilder::with_id("main-tray")
-        .tooltip("DATO OCR")
-        .menu(&menu)
+    let builder = TrayIconBuilder::with_id("main-tray").tooltip("DATO OCR");
+    // Windows 右键弹的是自己画的菜单（open_menu），不挂系统菜单
+    #[cfg(not(windows))]
+    let builder = builder.menu(&menu);
+    #[cfg(windows)]
+    let _ = &menu;
+    let mut builder = builder
         .show_menu_on_left_click(platform::tray_menu_on_left_click())
-        .on_menu_event(|app, event| match event.id.as_ref() {
-            "capture" => hotkeys::dispatch(app, HotkeyAction::Capture),
-            // 延时截图：先去把菜单、悬停提示之类点出来，3 秒后再冻结画面
-            "capture-delayed" => {
-                let app = app.clone();
-                std::thread::spawn(move || {
-                    std::thread::sleep(std::time::Duration::from_secs(3));
-                    hotkeys::dispatch(&app, HotkeyAction::Capture);
-                });
-            }
-            "instant" => hotkeys::dispatch(app, HotkeyAction::Instant),
-            "longshot" => hotkeys::dispatch(app, HotkeyAction::Longshot),
-            "ocr" => hotkeys::dispatch(app, HotkeyAction::Ocr),
-            "clipboard" => hotkeys::dispatch(app, HotkeyAction::Clipboard),
-            "ai" => hotkeys::dispatch(app, HotkeyAction::Ai),
-            "pin-clipboard" => hotkeys::pin_clipboard(app),
-            "input-translate" => hotkeys::dispatch(app, HotkeyAction::InputTranslate),
-            "restore-pin" => {
-                if !matches!(crate::pin::restore_last(app), Ok(true)) {
-                    wm::toast(app, "info", "没有刚关闭的贴图");
-                }
-            }
-            "release-pins" => crate::pin::release_click_through(app),
-            "show" => wm::show_main(app, None),
-            "settings" => wm::show_main(app, Some("settings")),
-            "quit" => crate::quit(app),
-            _ => {}
-        })
+        .on_menu_event(|app, event| run(app, event.id.as_ref()))
         .on_tray_icon_event(|tray, event| {
             if platform::tray_menu_on_left_click() {
+                return;
+            }
+            // Windows：右键弹自己画的菜单（系统菜单是老式样子，图标、圆角、深浅色都跟程序别处不一样）
+            #[cfg(windows)]
+            if let TrayIconEvent::Click {
+                button: MouseButton::Right,
+                button_state: MouseButtonState::Up,
+                ..
+            } = event
+            {
+                open_menu(tray.app_handle());
                 return;
             }
             if let TrayIconEvent::Click {
@@ -152,6 +140,72 @@ pub fn build(app: &AppHandle) -> AppResult<()> {
     }
     builder.build(app)?;
     Ok(())
+}
+
+/// 菜单项选了哪个（系统菜单、自己画的菜单都走这里）
+pub fn run(app: &AppHandle, id: &str) {
+    match id {
+        "capture" => hotkeys::dispatch(app, HotkeyAction::Capture),
+        // 延时截图：先去把菜单、悬停提示之类点出来，3 秒后再冻结画面
+        "capture-delayed" => {
+            let app = app.clone();
+            std::thread::spawn(move || {
+                std::thread::sleep(std::time::Duration::from_secs(3));
+                hotkeys::dispatch(&app, HotkeyAction::Capture);
+            });
+        }
+        "instant" => hotkeys::dispatch(app, HotkeyAction::Instant),
+        "longshot" => hotkeys::dispatch(app, HotkeyAction::Longshot),
+        "ocr" => hotkeys::dispatch(app, HotkeyAction::Ocr),
+        "clipboard" => hotkeys::dispatch(app, HotkeyAction::Clipboard),
+        "ai" => hotkeys::dispatch(app, HotkeyAction::Ai),
+        "pin-clipboard" => hotkeys::pin_clipboard(app),
+        "input-translate" => hotkeys::dispatch(app, HotkeyAction::InputTranslate),
+        "restore-pin" => {
+            if !matches!(crate::pin::restore_last(app), Ok(true)) {
+                wm::toast(app, "info", "没有刚关闭的贴图");
+            }
+        }
+        "release-pins" => crate::pin::release_click_through(app),
+        "show" => wm::show_main(app, None),
+        "settings" => wm::show_main(app, Some("settings")),
+        "quit" => crate::quit(app),
+        _ => {}
+    }
+}
+
+/// Windows 托盘右键：在鼠标那里弹自己画的菜单（popmenu 窗口，和贴图的右键菜单同一个），选了哪项回到 `run`
+#[cfg(windows)]
+fn open_menu(app: &AppHandle) {
+    use serde_json::json;
+    let hk = state(app).settings.read().hotkeys.clone();
+    let tr = crate::i18n::localize;
+    let item = |id: &str, icon: &str, text: &str, key: &str| {
+        json!({ "kind": "item", "id": id, "icon": icon, "label": tr(text), "shortcut": if key.is_empty() { None } else { Some(key) } })
+    };
+    let sep = || json!({ "kind": "separator" });
+    let items = json!([
+        item("capture", "capture", "截图", &hk.capture),
+        item("capture-delayed", "timer", "延时 3 秒截图", ""),
+        item("instant", "instant", "瞬间截屏", &hk.instant),
+        item("longshot", "longshot", "长截图", &hk.longshot),
+        item("ocr", "ocr", "识字", &hk.ocr),
+        item("clipboard", "clipboard", "剪贴板", &hk.clipboard),
+        item("input-translate", "translate", "输入翻译", &hk.input_translate),
+        item("ai", "ai", "AI 对话", &hk.ai),
+        sep(),
+        item("pin-clipboard", "pinImage", "贴出剪贴板图片", &hk.pin_clipboard),
+        item("restore-pin", "restore", "恢复刚关闭的贴图", ""),
+        item("release-pins", "clickThrough", "取消贴图的鼠标穿透", ""),
+        sep(),
+        item("show", "window", "打开主窗口", ""),
+        item("settings", "settings", "设置…", ""),
+        sep(),
+        json!({ "kind": "item", "id": "quit", "icon": "quit", "label": tr("退出 DATO OCR"), "danger": true }),
+    ]);
+    if let Err(err) = crate::popmenu::open(app, crate::popmenu::TRAY_OWNER.into(), items) {
+        tracing::warn!("托盘菜单弹不出来：{err}");
+    }
 }
 
 /// 热键改了之后重建菜单，让菜单上显示的快捷键跟着变。

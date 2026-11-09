@@ -50,6 +50,7 @@ import '@/views/clipboard-panel/orb.css';
 import { FrameStyleRows } from './FrameStyleRows';
 import { ToolbarOrder } from './ToolbarOrder';
 import { Group, Row, SettingsSectionContext } from './settingsParts';
+import { StorageCleanRows } from './StorageClean';
 import { TranslateSettingsGroups } from './TranslateSettings';
 import { UpdateBanner, UpdateDialog, useUpdate } from './UpdateDialog';
 
@@ -154,6 +155,19 @@ export function SettingsPage({ section }: { section: string | null }) {
   if (!settings) return null;
   const set = (mutate: (d: Settings) => void) => {
     update(mutate).catch(notify.error);
+  };
+  /** 换数据位置：选文件夹 → 确认 → 应用重启，启动时把数据搬过去 */
+  const changeDataDir = async (toDefault: boolean) => {
+    const dir = toDefault ? null : await system.pickDirectory().catch(() => null);
+    if (!toDefault && !dir) return;
+    const shown = toDefault ? (info.data?.defaultDataDir ?? '') : `${dir!.replace(/[\\/]+$/, '')}${isMac ? '/' : '\\'}DATO OCR`;
+    const ok = await confirmDialog({
+      title: t('settings.storage.moveTitle', { path: /[\\/]DATO OCR$/.test(dir ?? '') ? dir : shown }),
+      body: t('settings.storage.moveBody'),
+      confirmLabel: t('settings.storage.moveConfirm'),
+    });
+    if (!ok) return;
+    system.changeDataDir(dir).catch(notify.error);
   };
   const setHotkey = (action: HotkeyAction, accel: string) => {
     update((d) => {
@@ -644,6 +658,22 @@ export function SettingsPage({ section }: { section: string | null }) {
             <Row title={t('settings.clipboard.animation')} desc={t('settings.clipboard.animationDesc')}>
               <Switch checked={cb.panelAnimation} onChange={(v) => set((d) => void (d.clipboard.panelAnimation = v))} />
             </Row>
+            <Row title={t('settings.clipboard.peekSize')} desc={t('settings.clipboard.peekSizeDesc')}>
+              <Segmented
+                value={cb.peekSize ?? 'medium'}
+                options={(['small', 'medium', 'large'] as const).map((v) => ({ value: v, label: t(`settings.clipboard.size.${v}`) }))}
+                onChange={(v) => set((d) => void (d.clipboard.peekSize = v))}
+              />
+            </Row>
+            {cb.panelStyle === 'bottom' && (
+              <Row title={t('settings.clipboard.scrollFeel')} desc={t('settings.clipboard.scrollFeelDesc')}>
+                <Segmented
+                  value={cb.scrollFeel ?? 'smooth'}
+                  options={(['smooth', 'classic'] as const).map((v) => ({ value: v, label: t(`settings.clipboard.scroll.${v}`) }))}
+                  onChange={(v) => set((d) => void (d.clipboard.scrollFeel = v))}
+                />
+              </Row>
+            )}
             <Row title={t('settings.clipboard.blur')} desc={t('settings.clipboard.blurDesc')}>
               <Switch checked={cb.panelBlur} onChange={(v) => set((d) => void (d.clipboard.panelBlur = v))} />
             </Row>
@@ -849,14 +879,31 @@ export function SettingsPage({ section }: { section: string | null }) {
           </Group>
 
           <Group id="storage" title={t('settings.section.storage')}>
-            <Row title={t('settings.storage.dataDir')} desc={<span className="cn-selectable">{info.data?.dataDir}</span>}>
+            <Row
+              title={t('settings.storage.dataDir')}
+              desc={
+                <>
+                  <span className="cn-selectable">{info.data?.dataDir}</span>
+                  {info.data?.relocateError && <span className="set-row__error"> · {t('settings.storage.moveFailed', { reason: info.data.relocateError })}</span>}
+                </>
+              }
+            >
               <Button size="sm" icon={FolderOpen} onClick={() => void system.openFolder('data')}>
                 {t('common.open')}
               </Button>
+              <Button size="sm" onClick={() => void changeDataDir(false)}>
+                {t('settings.storage.move')}
+              </Button>
+              {info.data && info.data.dataDir !== info.data.defaultDataDir && (
+                <Button size="sm" variant="ghost" onClick={() => void changeDataDir(true)}>
+                  {t('settings.storage.moveBack')}
+                </Button>
+              )}
             </Row>
             <Row title={t('settings.storage.used')}>
               <span className="set-row__value">{info.data ? formatBytes(info.data.dataBytes) : '…'}</span>
             </Row>
+            <StorageCleanRows settings={settings} set={set} />
             <Row title={t('settings.storage.logs')} desc={t('settings.storage.logsDesc')}>
               <Button size="sm" icon={FolderOpen} onClick={() => void system.openFolder('logs')}>
                 {t('common.open')}

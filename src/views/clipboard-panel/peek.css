@@ -1,0 +1,84 @@
+/* 按住 Shift 的悬浮预览（PeekView）：透明窗口里一张圆角卡片，窗口多大卡片就多大 */
+html[data-view='clip-peek'],
+html[data-view='clip-peek'] body {
+  background: transparent !important;
+  overflow: hidden;
+}
+.peek {
+  position: fixed;
+  inset: 0;
+  border-radius: 14px;
+  overflow: hidden;
+  background: var(--cn-bg-elevated);
+  box-shadow: inset 0 0 0 0.5px var(--cn-separator);
+  animation: peek-in 140ms var(--cn-ease-out);
+}
+.peek:empty {
+  display: none;
+}
+@keyframes peek-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px) scale(0.98);
+  }
+}
+.peek--image {
+  background: repeating-conic-gradient(var(--cn-fill-quaternary) 0% 25%, transparent 0% 50%) 50% / 14px 14px, var(--cn-bg-elevated);
+}
+.peek__image {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
+}
+.peek__text {
+  height: 100%;
+  padding: 14px 16px;
+  overflow: hidden;
+  font: 400 13px/19px var(--cn-font-sans);
+  color: var(--cn-label);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+/* 超出的部分渐隐（这里没有外层 mask，单独一层没问题） */
+.peek__text::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 48px;
+  background: linear-gradient(180deg, transparent, var(--cn-bg-elevated));
+}
+.peek__link {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  color: var(--cn-accent);
+  word-break: break-all;
+}
+.peek__color {
+  height: 100%;
+  display: grid;
+  place-items: center;
+  font-size: 22px;
+  color: #fff;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.45);
+}
+.peek__files {
+  margin: 0;
+  padding: 12px 14px;
+  list-style: none;
+  font: 400 12.5px/1.4 var(--cn-font-sans);
+  color: var(--cn-label);
+}
+.peek__files li {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  padding: 3px 0;
+}
+.peek__files svg {
+  flex: none;
+  color: var(--cn-label-secondary);
+}

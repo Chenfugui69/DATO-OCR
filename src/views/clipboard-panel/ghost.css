@@ -1,0 +1,102 @@
+/* 拖卡片的影子（GhostView）。--pad 和 Rust clipboard::ghost 的 PAD 一致：卡片离窗口左上角多远。
+   投影要整个落在窗口里（窗口四周留了 40px 以上），不然会被窗口边切出直边 */
+html[data-view='clip-ghost'],
+html[data-view='clip-ghost'] body {
+  background: transparent !important;
+  overflow: hidden;
+}
+.ghost {
+  --pad: 40px;
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  /* 缩放以鼠标为中心：经过输入框时整叠缩到鼠标那儿 */
+  transform-origin: calc(var(--pad) + var(--grab-x, 0px)) calc(var(--pad) + var(--grab-y, 0px));
+  transition: transform 200ms cubic-bezier(0.2, 0.9, 0.3, 1.15), opacity 200ms ease;
+}
+.ghost[data-over] {
+  transform: scale(0.42);
+}
+/* 缩小时投影收紧一些，像贴近了下面的输入框 */
+.ghost[data-over] .ghost__card .clip-card {
+  box-shadow:
+    0 0 0 2px var(--cn-accent),
+    0 4px 10px rgba(0, 0, 0, 0.28);
+}
+.ghost__card {
+  position: absolute;
+  left: var(--pad);
+  top: var(--pad);
+  width: 236px;
+  height: 240px;
+  border-radius: 14px;
+}
+.ghost__card .clip-card {
+  /* 分几层的柔和投影：贴近的一层清楚、远的一层又大又淡，看着是浮起来的，不是一圈黑边 */
+  box-shadow:
+    0 0 0 0.5px rgba(0, 0, 0, 0.12),
+    0 2px 4px rgba(0, 0, 0, 0.1),
+    0 10px 18px -4px rgba(0, 0, 0, 0.22),
+    0 22px 32px -12px rgba(0, 0, 0, 0.3);
+  transition: box-shadow 200ms ease;
+}
+.ghost__card--behind .clip-card {
+  box-shadow:
+    0 0 0 0.5px rgba(0, 0, 0, 0.12),
+    0 4px 10px -2px rgba(0, 0, 0, 0.2);
+}
+/* 最上面那张：从卡片条里"拿起来"—— 稍微放大、歪一点、投影变深 */
+.ghost__card--top {
+  z-index: 3;
+  transform: rotate(-2deg) scale(1.02);
+  animation: ghost-lift 180ms cubic-bezier(0.2, 0.9, 0.3, 1.2) both;
+}
+@keyframes ghost-lift {
+  from {
+    transform: none;
+    opacity: 0.6;
+  }
+}
+/* 后面几张：从正后方散开，叠成一叠 */
+.ghost__card--behind {
+  opacity: 0.92;
+  animation: ghost-fan 260ms cubic-bezier(0.2, 0.9, 0.3, 1.15) both;
+}
+.ghost__card--b1 {
+  z-index: 2;
+  transform: translate(9px, 7px) rotate(4deg);
+}
+.ghost__card--b2 {
+  z-index: 1;
+  transform: translate(16px, 13px) rotate(9deg);
+  animation-delay: 40ms;
+}
+@keyframes ghost-fan {
+  from {
+    transform: none;
+    opacity: 0;
+  }
+}
+.ghost__count {
+  position: absolute;
+  z-index: 4;
+  left: calc(var(--pad) + 236px - 16px);
+  top: calc(var(--pad) - 10px);
+  min-width: 26px;
+  height: 26px;
+  padding: 0 8px;
+  display: grid;
+  place-items: center;
+  border-radius: 13px;
+  font: 700 13px/1 var(--cn-font-sans);
+  color: #fff;
+  background: #ff3b30;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+  animation: ghost-pop 220ms cubic-bezier(0.2, 0.9, 0.3, 1.4) 120ms both;
+}
+@keyframes ghost-pop {
+  from {
+    transform: scale(0.3);
+    opacity: 0;
+  }
+}

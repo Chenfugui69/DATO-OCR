@@ -12,12 +12,17 @@
 use std::time::Duration;
 
 use tauri::WebviewWindow;
+use webview2_com::GetProcessExtendedInfosCompletedHandler;
 use webview2_com::Microsoft::Web::WebView2::Win32::{
-    ICoreWebView2Controller, ICoreWebView2_19, COREWEBVIEW2_MEMORY_USAGE_TARGET_LEVEL_LOW,
-    COREWEBVIEW2_MEMORY_USAGE_TARGET_LEVEL_NORMAL,
+    ICoreWebView2Controller, ICoreWebView2Environment13, ICoreWebView2FrameInfo2,
+    ICoreWebView2ProcessExtendedInfoCollection, ICoreWebView2_19, ICoreWebView2_2,
+    ICoreWebView2_20, COREWEBVIEW2_FRAME_KIND, COREWEBVIEW2_FRAME_KIND_MAIN_FRAME,
+    COREWEBVIEW2_MEMORY_USAGE_TARGET_LEVEL_LOW, COREWEBVIEW2_MEMORY_USAGE_TARGET_LEVEL_NORMAL,
+    COREWEBVIEW2_PROCESS_KIND, COREWEBVIEW2_PROCESS_KIND_RENDERER,
 };
-use windows::core::Interface;
-use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
+use windows::core::{Interface, BOOL};
+use windows::Win32::Foundation::{CloseHandle, HWND, LPARAM, LRESULT, WPARAM};
+use windows::Win32::System::Threading::{OpenProcess, TerminateProcess, PROCESS_TERMINATE};
 use windows::Win32::UI::Shell::{
     DefSubclassProc, GetWindowSubclass, RemoveWindowSubclass, SetWindowSubclass,
 };
@@ -166,4 +171,99 @@ unsafe extern "system" fn proc(
     }
     // SAFETY: 原样交给下一层窗口过程。
     unsafe { DefSubclassProc(hwnd, msg, wparam, lparam) }
+}
+
+/// 结束这个窗口的网页（渲染）进程。页面卡在死循环里时光重新加载没用：WebView2 要先等旧页面卸载，
+/// 卡住的页面永远轮不到，实测重新加载后 30 秒还卡着。每个窗口各有一个渲染进程（同源的几个窗口也是
+/// 分开的，实测），按窗口主框架的编号找到它再结束。结束后页面停在"崩溃"状态，由调用方重新加载。
+///
+/// **别在 UI 线程调**：要到 UI 线程上问 WebView2、等它回话，最多等 2 秒。
+pub fn kill_renderer(window: &WebviewWindow) -> bool {
+    let (tx, rx) = std::sync::mpsc::channel::<bool>();
+    let sent = window.with_webview(move |webview| {
+        let reply = tx.clone();
+        // SAFETY: 在事件循环线程上，controller 是这个窗口存活的 WebView2 控制器。
+        let started = unsafe {
+            (|| -> windows::core::Result<()> {
+                let core = webview.controller().CoreWebView2()?;
+                let mut frame = 0u32;
+                core.cast::<ICoreWebView2_20>()?.FrameId(&mut frame)?;
+                let env = core
+                    .cast::<ICoreWebView2_2>()?
+                    .Environment()?
+                    .cast::<ICoreWebView2Environment13>()?;
+                let handler = GetProcessExtendedInfosCompletedHandler::create(Box::new(
+                    move |result, list| {
+                        let pid = result.ok().and(list).and_then(|l| renderer_of(&l, frame));
+                        tracing::debug!(frame, ?pid, "找卡死页面的网页进程");
+                        let _ = reply.send(pid.is_some_and(terminate));
+                        Ok(())
+                    },
+                ));
+                env.GetProcessExtendedInfos(&handler)
+            })()
+        };
+        if started.is_err() {
+            let _ = tx.send(false);
+        }
+    });
+    if sent.is_err() {
+        return false;
+    }
+    rx.recv_timeout(Duration::from_secs(2)).unwrap_or(false)
+}
+
+/// 哪个渲染进程装着这个主框架。找到不止一个（理论上编号不该重）就不认，免得结束错了别的窗口。
+fn renderer_of(list: &ICoreWebView2ProcessExtendedInfoCollection, frame: u32) -> Option<u32> {
+    let mut found = None;
+    // SAFETY: 在 WebView2 回调里（UI 线程），集合和里面的对象都有效。
+    unsafe {
+        let mut n = 0u32;
+        list.Count(&mut n).ok()?;
+        for i in 0..n {
+            let Ok(info) = list.GetValueAtIndex(i) else { continue };
+            let Ok(process) = info.ProcessInfo() else { continue };
+            let mut kind = COREWEBVIEW2_PROCESS_KIND::default();
+            if process.Kind(&mut kind).is_err() || kind != COREWEBVIEW2_PROCESS_KIND_RENDERER {
+                continue;
+            }
+            // 集合要一直拿着：WebView2 的迭代器不替集合续命，集合一放掉迭代器就指向释放了的内存（实测直接崩）
+            let Ok(frames) = info.AssociatedFrameInfos() else { continue };
+            let Ok(it) = frames.GetIterator() else { continue };
+            let mut has = BOOL(0);
+            while it.HasCurrent(&mut has).is_ok() && has.as_bool() {
+                if let Ok(f) = it.GetCurrent().and_then(|f| f.cast::<ICoreWebView2FrameInfo2>()) {
+                    let mut id = 0u32;
+                    let mut fk = COREWEBVIEW2_FRAME_KIND::default();
+                    if f.FrameId(&mut id).is_ok()
+                        && id == frame
+                        && f.FrameKind(&mut fk).is_ok()
+                        && fk == COREWEBVIEW2_FRAME_KIND_MAIN_FRAME
+                    {
+                        let mut pid = 0i32;
+                        process.ProcessId(&mut pid).ok()?;
+                        if found.is_some() {
+                            return None;
+                        }
+                        found = u32::try_from(pid).ok();
+                        break;
+                    }
+                }
+                if it.MoveNext(&mut has).is_err() {
+                    break;
+                }
+            }
+        }
+    }
+    found
+}
+
+fn terminate(pid: u32) -> bool {
+    // SAFETY: 打开、结束、关掉句柄，句柄只在这里用。
+    unsafe {
+        let Ok(handle) = OpenProcess(PROCESS_TERMINATE, false, pid) else { return false };
+        let ok = TerminateProcess(handle, 1).is_ok();
+        let _ = CloseHandle(handle);
+        ok
+    }
 }

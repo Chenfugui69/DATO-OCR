@@ -2,18 +2,20 @@
 
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useVirtualizer } from '@tanstack/react-virtual';
-import { Clipboard, Copy, File, FolderPlus, Globe, Image as ImageIcon, KeyRound, Languages, MoreHorizontal, Palette, Pin, ScanText, Star, Trash2, Type } from 'lucide-react';
+import { Check, Clipboard, Copy, File, FolderPlus, Globe, Image as ImageIcon, KeyRound, Languages, MoreHorizontal, Palette, Pin, ScanText, Star, Trash2, Type } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import { formatBytes, formatDateTime, relativeTime } from '@/lib/format';
 import { clipboard, ocr, system } from '@/lib/ipc';
-import { assetUrl } from '@/lib/platform';
+import { assetUrl, modKey } from '@/lib/platform';
 import { useClipItems } from '@/lib/queries';
 import type { ClipItem, ClipType } from '@/lib/types';
 import { Button, EmptyState, IconButton, SearchField, Select, Spinner } from '@/ui/controls';
 import { ContextMenu, DropdownMenu, confirmDialog, notify, promptDialog, type MenuItemSpec } from '@/ui/overlays';
 import { clipMenu } from '@/views/clipboard-panel/actions';
+import { useCardDrag, useKeyHeld, useMultiPick } from '@/views/clipboard-panel/cardGestures';
+import { PickBar, usePickKeys } from '@/views/clipboard-panel/PickBar';
 import { DeviceIcon, isDeviceKind } from '@/views/clipboard-panel/DeviceIcon';
 import { OtpBody } from '@/views/clipboard-panel/OtpBody';
 import { TranslateBox } from '@/views/translate/TranslateBox';
@@ -56,6 +58,25 @@ export function ClipboardPage() {
   const items = useMemo(() => query.data?.pages.flatMap((p) => p.items) ?? [], [query.data]);
   const selectedIndex = items.findIndex((i) => i.id === selectedId);
   const selected = selectedIndex >= 0 ? items[selectedIndex] : undefined;
+
+  // 多选（按住 Ctrl 点选 / 框选）和拖出去粘贴，和剪贴板面板一样（见 cardGestures）
+  const { picked, toggle: togglePick, clear: clearPicks } = useMultiPick(listRef, true);
+  const ctrlHeld = useKeyHeld('Control');
+  const pickMode = ctrlHeld || picked.size > 0;
+  useEffect(() => clearPicks(), [filter, group, debounced, clearPicks]);
+  const pickedInOrder = () => items.filter((i) => picked.has(i.id)).map((i) => i.id);
+  const copyPicked = () => {
+    const ids = pickedInOrder();
+    if (ids.length) run(clipboard.copyMany(ids).then(() => notify.success(t('clip.copiedMany', { count: ids.length }))));
+  };
+  const { dragging, onPointerDown: onRowPointerDown } = useCardDrag({
+    idsFor: (id) => (picked.has(id) ? pickedInOrder() : [id]),
+    itemsFor: (ids) => ids.map((id) => items.find((i) => i.id === id)).filter((i): i is ClipItem => !!i),
+    onDropOutside: (ids) => void clipboard.dropPaste(ids).catch(notify.error),
+  });
+  const draggingIds = new Set(dragging ?? []);
+  // 勾了几张时：Ctrl+C 复制勾上的，Esc 取消
+  usePickKeys(picked.size, copyPicked, clearPicks);
 
   const virt = useVirtualizer({
     count: items.length,
@@ -129,9 +150,9 @@ export function ClipboardPage() {
   ];
 
   const toMenuSpec = (item: ClipItem): MenuItemSpec[] =>
-    clipMenu(item, t, { groups: groups.data ?? [], inPanel: false }).map((m) => ({
+    clipMenu(item, t, { groups: groups.data ?? [], inPanel: false }).map(({ popIcon: _icon, ...m }) => ({
       ...m,
-      submenu: m.submenu?.map((s) => ({ ...s })),
+      submenu: m.submenu?.map(({ popIcon: _i, ...s }) => ({ ...s })),
     }));
 
   return (
@@ -143,6 +164,7 @@ export function ClipboardPage() {
             {stats.data ? t('clip.stats', { total: stats.data.total.toLocaleString(), pinned: stats.data.pinned, favorite: stats.data.favorite }) : ' '}
           </div>
         </div>
+        <PickBar count={picked.size} onCopy={copyPicked} onClear={clearPicks} />
         <span className="page__spacer" />
         <SearchField value={keyword} onChange={setKeyword} placeholder={t('clip.search')} style={{ width: 240 }} />
         <DropdownMenu items={moreMenu}>
@@ -193,7 +215,7 @@ export function ClipboardPage() {
           ) : items.length === 0 ? (
             <EmptyState icon={Clipboard} title={debounced ? t('clip.noMatch') : t('clip.empty')} description={debounced ? undefined : t('clip.emptyDesc')} />
           ) : (
-            <div style={{ height: virt.getTotalSize(), position: 'relative' }}>
+            <div data-marquee-origin style={{ height: virt.getTotalSize(), position: 'relative' }}>
               {vItems.map((v) => {
                 const it = items[v.index]!;
                 const Icon = typeIcon[it.type];
@@ -201,11 +223,31 @@ export function ClipboardPage() {
                   <ContextMenu key={it.id} items={toMenuSpec(it)}>
                     <div
                       className="clip-row"
+                      data-clip-id={it.id}
                       data-selected={it.id === selectedId}
+                      data-picked={picked.has(it.id)}
+                      data-dragging={draggingIds.has(it.id)}
                       style={{ transform: `translateY(${v.start}px)` }}
-                      onMouseDown={() => setSelectedId(it.id)}
-                      onDoubleClick={() => run(clipboard.copy(it.id).then(() => notify.success(t('clip.copied'))))}
+                      onMouseDown={(e) => e.button === 0 && !modKey(e) && setSelectedId(it.id)}
+                      onDoubleClick={(e) => !modKey(e) && run(clipboard.copy(it.id).then(() => notify.success(t('clip.copied'))))}
+                      onPointerDown={(e) => onRowPointerDown(e, it.id)}
                     >
+                      {pickMode && (
+                        <button
+                          type="button"
+                          className="clip-row__pick"
+                          role="checkbox"
+                          aria-checked={picked.has(it.id)}
+                          aria-label={t('clip.pick')}
+                          onMouseDown={(e) => e.stopPropagation()}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            togglePick(it.id);
+                          }}
+                        >
+                          {picked.has(it.id) && <Check size={11} strokeWidth={3} />}
+                        </button>
+                      )}
                       <span className="clip-row__icon" style={it.type === 'color' ? { background: it.preview ?? undefined } : undefined}>
                         {it.type === 'image' ? <img src={assetUrl(it.thumbPath)} alt="" loading="lazy" decoding="async" /> : it.type !== 'color' && <Icon size={16} strokeWidth={1.5} />}
                       </span>

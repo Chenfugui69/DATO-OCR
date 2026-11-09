@@ -5,6 +5,19 @@
 
 pub const TABLE: &[(&str, &str)] = &[
     ("输入翻译", "Type to Translate"),
+    ("数据已经在这个位置了", "Data is already in this location"),
+    ("不能放到现在的数据目录里面", "Can't move data inside the current data folder"),
+    ("不能放到现在数据目录的上一级", "Can't move data to a parent of the current data folder"),
+    ("{} 里已经有东西了，换一个空文件夹", "{} isn't empty. Choose an empty folder"),
+    ("{} 里已经有东西了", "{} isn't empty"),
+    ("建不了文件夹 {}：{}", "Could not create folder {}: {}"),
+    ("{} 写不进去：{}", "Can't write to {}: {}"),
+    ("未知的清理项 {}", "Unknown cleanup item {}"),
+    ("没有选中的记录", "Nothing is selected"),
+    ("剪贴板面板不在", "The clipboard panel isn't open"),
+    ("拿不到鼠标位置", "Could not get the mouse position"),
+    ("创建鼠标事件失败", "Could not create the mouse event"),
+    ("模拟点击被系统拦截（目标可能是管理员权限窗口）", "The simulated click was blocked by the system (the target may be running as administrator)"),
     ("这次没录到声音：{}", "No audio this time: {}"),
     ("这次没录摄像头：{}", "No camera this time: {}"),
     ("这个系统上暂时还不能剪辑视频", "Video trimming is not available on this system yet"),
@@ -433,4 +446,8 @@ pub const TABLE: &[(&str, &str)] = &[
     ("没有可安装的更新，先检查一下更新", "No update to install. Check for updates first"),
     ("打不开安装包：{}", "Could not open the installer: {}"),
     ("这个系统上还不能自动安装，安装包已下载到 {}", "Automatic installation is not supported on this system yet. The installer was downloaded to {}"),
+    ("写数据位置文件失败：{}", "Could not save the data location: {}"),
+    ("数据目录 {} 用不了，这次先用默认位置", "The data folder {} can't be used. Using the default location this time"),
+    ("系统抓屏没有响应，请稍后再试；一直这样的话重启一下 DATO OCR", "Screen capture is not responding. Try again later, or restart DATO OCR if this keeps happening"),
+    ("截图界面没准备好，已重新加载，请再截一次", "The screenshot overlay wasn't ready and has been reloaded. Please try again"),
 ];

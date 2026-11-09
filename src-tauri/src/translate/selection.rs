@@ -263,13 +263,23 @@ pub fn prewarm(app: &AppHandle) {
     }
 }
 
+/// 翻译面板窗口四周给阴影留的透明边（逻辑像素，和页面 TranslatePopup 的 SHADOW_PAD 一致）。
+/// macOS 毛玻璃是系统材质铺满窗口、阴影是系统的，不留；Windows 毛玻璃背板往里缩，阴影页面自己画
+fn popup_pad(blur: bool) -> f64 {
+    if blur && cfg!(target_os = "macos") {
+        0.0
+    } else {
+        16.0
+    }
+}
+
 /// 面板材质（毛玻璃、圆角），见 `wm::set_glass`。只能在 UI 线程调用。
 pub fn apply_popup_material(app: &AppHandle) {
     let Some(window) = app.get_webview_window(WINDOW) else {
         return;
     };
     let popup = state(app).settings.read().translate.popup.clone();
-    wm::set_glass(&window, popup.blur, f64::from(popup.radius));
+    wm::set_glass(&window, popup.blur, f64::from(popup.radius), popup_pad(popup.blur));
 }
 
 fn prewarm_button(app: &AppHandle) {
@@ -304,9 +314,9 @@ pub fn show_popup(app: &AppHandle, text: String, at: Option<(i32, i32)>) {
 }
 
 /// 输入翻译（热键 / 托盘菜单）：在鼠标旁边弹出空的翻译面板，光标在输入框里
+/// 输入翻译：屏幕中间那条输入框（见 `spotlight`）。以前借用划词翻译的气泡，在鼠标那里弹、样子也不对
 pub fn show_input(app: &AppHandle) {
-    INPUT.store(true, Ordering::SeqCst);
-    open_popup(app, String::new(), None, false);
+    super::spotlight::show(app);
 }
 
 fn open_popup(app: &AppHandle, text: String, at: Option<(i32, i32)>, preview: bool) {
@@ -415,7 +425,7 @@ fn reserve_above(
         return 0.0;
     }
     let s = monitor.scale_factor.max(0.5);
-    let pad = if popup.blur { 0.0 } else { 16.0 };
+    let pad = popup_pad(popup.blur);
     // 和页面里展开抽屉的算法一致：翻译区露出一半，加上抽屉的高度
     let trans = ((h - pad * 2.0) / 2.0).round().max(110.0);
     let want = (pad * 2.0 + trans + f64::from(popup.drawer_height) - h).max(0.0);
@@ -439,9 +449,11 @@ fn reserve_above(
     }
     platform::set_rect_region(window, Some((0, rp, size.width as i32, size.height as i32)));
     if popup.blur {
+        // 背板停在面板上（窗口顶上预留的那截不铺，四周留给阴影的边也不铺）
+        let p = (pad * s) as f32;
         platform::set_backdrop_rect(
             window,
-            Some((0.0, rp as f32, size.width as f32, size.height as f32)),
+            Some((p, rp as f32 + p, size.width as f32 - 2.0 * p, size.height as f32 - 2.0 * p)),
             0,
         );
     }
@@ -499,6 +511,8 @@ fn on_event(app: &AppHandle, event: SelectionEvent) {
         SelectionEvent::Selected { anchor, end, text_rect, .. } => {
             tracing::debug!(?anchor, ?end, ?text_rect, "划词事件：选了字");
         }
+        // 每次按鼠标都有一条，不记
+        SelectionEvent::PointerDown => {}
         other => tracing::debug!(event = ?other, "划词事件"),
     }
     match event {
@@ -599,8 +613,28 @@ fn outside_click(app: &AppHandle) {
         let Some(window) = ui.get_webview_window(WINDOW) else {
             return;
         };
-        if window.is_visible().unwrap_or(false) && !platform::cursor_in_window(&window) {
-            let _ = ui.emit_to(WINDOW, events::TRANSLATE_OUTSIDE, ());
+        if !window.is_visible().unwrap_or(false) {
+            return;
+        }
+        // Windows：鼠标下面就是面板窗口时，把按下的点（相对窗口、CSS 像素）交给页面，由它看是不是按在
+        // 面板上 —— 窗口四周有给阴影留的透明边、顶上还可能有给展开留的空白，按在那些地方也算外面。
+        // 下面是别的窗口就是 null（肯定在外面）
+        #[cfg(windows)]
+        {
+            let on_popup = platform::cursor_position().and_then(|c| {
+                let own = platform::native_handle(&window).ok()?;
+                (platform::window_at(c.0, c.1)?.0 == own).then_some(c)
+            });
+            let point = on_popup.and_then(|c| {
+                let pos = window.inner_position().ok()?;
+                let s = window.scale_factor().ok()?.max(0.5);
+                Some([f64::from(c.0 - pos.x) / s, f64::from(c.1 - pos.y) / s])
+            });
+            let _ = ui.emit_to(WINDOW, events::TRANSLATE_OUTSIDE, point);
+        }
+        #[cfg(not(windows))]
+        if !platform::cursor_in_window(&window) {
+            let _ = ui.emit_to(WINDOW, events::TRANSLATE_OUTSIDE, None::<[f64; 2]>);
         }
     });
 }
@@ -667,6 +701,25 @@ fn on_selected(
             },
         );
         *BUTTON_TEXT.lock() = text.map(str::to_string);
+        // Windows 的划词监听只知道鼠标按下、松开的点：选了"跟着文段"时再问一下系统选中的字在哪
+        // （松开鼠标后程序要一小会儿才更新选区）。问不到照旧跟着鼠标
+        let text_rect = text_rect.or_else(|| {
+            if sel.button_follow != "text" {
+                return None;
+            }
+            // 浏览器类程序的无障碍树刚被叫醒时头一两次还问不到：隔一小会儿再问，最多多等两百来毫秒
+            let started = std::time::Instant::now();
+            let mut b = None;
+            for wait in [40, 90, 130] {
+                std::thread::sleep(std::time::Duration::from_millis(wait));
+                b = platform::selection_text_bounds(end.0, end.1);
+                if b.is_some() {
+                    break;
+                }
+            }
+            tracing::debug!(?b, elapsed_ms = started.elapsed().as_millis() as u64, "划词：问到的选中文字位置");
+            b
+        });
         show_button(app, start, end, text_rect, &sel);
     }
 }
@@ -717,10 +770,11 @@ fn show_button(
         _ => (true, true),
     };
     // "跟着文段"：贴在选中那段字的角上（设置里的哪个角就是哪个角，从哪头开始选都一样）。
-    // 问不到文字范围、或者问到的范围离鼠标太远（有的程序报的不准）时照旧跟着鼠标
+    // 问不到文字范围、或者问到的范围离按下、松开鼠标的两个点都很远（有的程序报的不准）时照旧跟着鼠标。
+    // 只看松开点不行：拖过了头、在字外面的空白处松手很常见，那时选区离松开点可能很远，但按下点一定在字上
     let text_rect = text_rect
         .filter(|_| sel.button_follow == "text")
-        .filter(|b| near(b.whole, end, px(160.0)));
+        .filter(|b| near(b.whole, end, px(160.0)) || near(b.whole, start, px(160.0)));
     let (x, y) = if let Some(b) = text_rect {
         // 靠右的位置贴在选区最后一个字后面，靠左的贴在第一个字前面；上下按设置，贴着那个字所在的行。
         // 倒着选（从下往上、从右往左）时松开鼠标的地方在选区开头：位置整个反过来（右下变左上），
@@ -754,8 +808,9 @@ fn show_button(
             } else {
                 p.0.max(b.whole.x) - px(4.0) - dot
             };
-            // 鼠标一般在文字行的中间，往下 / 往上让开半行多一点
-            let y = if below { p.1 + px(14.0) } else { p.1 - px(14.0) - dot };
+            // 鼠标一般在文字行的中间，往下 / 往上让开半行多一点（拖到字外面的空白处才松手时先拉回选区里）
+            let py = p.1.clamp(b.whole.y, b.whole.bottom().max(b.whole.y));
+            let y = if below { py + px(14.0) } else { py - px(14.0) - dot };
             (x, y)
         }
     } else {

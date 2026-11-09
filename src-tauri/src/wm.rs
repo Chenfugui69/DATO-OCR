@@ -195,7 +195,7 @@ pub fn apply_window_effects(app: &AppHandle, window: &WebviewWindow) {
 }
 
 /// 毛玻璃面板的圆角半径（逻辑像素），按窗口标签存；窗口大小一变就按它重新裁。
-static GLASS: parking_lot::Mutex<Option<std::collections::HashMap<String, f64>>> =
+static GLASS: parking_lot::Mutex<Option<std::collections::HashMap<String, (f64, f64)>>> =
     parking_lot::Mutex::new(None);
 
 /// 浮动面板的材质：
@@ -206,7 +206,8 @@ static GLASS: parking_lot::Mutex<Option<std::collections::HashMap<String, f64>>>
 /// 不能用 Tauri 的 `set_effects`：Acrylic 在 Win11 上铺满整个矩形窗口、裁不掉，圆角外面露出方块；
 /// Blur（老的 ACCENT_ENABLE_BLURBEHIND）配 WebView2 背后是黑的。也不能开系统阴影（会把窗框延伸
 /// 进来、窗口变大）。只能在 UI 线程调用。
-pub fn set_glass(window: &WebviewWindow, blur: bool, radius: f64) {
+/// `pad`（逻辑像素）：背板四周留出的透明边，页面在里面画阴影（0 = 铺满窗口）。
+pub fn set_glass(window: &WebviewWindow, blur: bool, radius: f64, pad: f64) {
     // 以前的版本用过系统亚克力和窗口裁剪，先都清掉
     let _ = window.set_effects(None::<tauri::utils::config::WindowEffectsConfig>);
     platform::set_rounded(window, false);
@@ -216,12 +217,13 @@ pub fn set_glass(window: &WebviewWindow, blur: bool, radius: f64) {
         let mut glass = GLASS.lock();
         let map = glass.get_or_insert_with(Default::default);
         match r {
-            Some(r) => map.insert(window.label().to_string(), r),
+            Some(r) => map.insert(window.label().to_string(), (r, pad)),
             None => map.remove(window.label()),
         };
     }
     let s = window.scale_factor().unwrap_or(1.0);
     let px = r.map(|r| (r * s).round() as u32);
+    platform::set_backdrop_pad(window, (pad * s).round() as u32);
     if !platform::set_backdrop(window, px) {
         // Win10 挂不上背板：退回系统亚克力，再把窗口裁成圆角（Win10 的亚克力走窗口合成属性，跟着窗口区域走）
         let effects = EffectsBuilder::new().effect(Effect::Acrylic).build();
@@ -243,7 +245,7 @@ pub fn refit_glass(window: &WebviewWindow) {
         .lock()
         .as_ref()
         .and_then(|m| m.get(window.label()).copied());
-    if let Some(r) = r {
+    if let Some((r, _)) = r {
         let s = window.scale_factor().unwrap_or(1.0);
         platform::set_round_region(window, (r * s).round() as u32);
     }
@@ -260,8 +262,9 @@ pub fn track_glass(window: &WebviewWindow) {
                 .lock()
                 .as_ref()
                 .and_then(|m| m.get(w.label()).copied());
-            if let Some(r) = r {
+            if let Some((r, pad)) = r {
                 let px = (r * scale_factor).round() as u32;
+                platform::set_backdrop_pad(&w, (pad * scale_factor).round() as u32);
                 if !platform::set_backdrop(&w, Some(px)) {
                     platform::set_round_region(&w, px);
                 }

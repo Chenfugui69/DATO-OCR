@@ -330,6 +330,20 @@
   color: var(--cn-label-secondary);
   flex: none;
 }
+.cn-menu__text {
+  flex: 1;
+  white-space: nowrap;
+}
+.cn-menu__item--selected {
+  color: var(--cn-accent);
+  font-weight: 500;
+}
+.cn-menu__item--selected svg {
+  color: var(--cn-accent);
+}
+.cn-menu__tick {
+  margin-left: var(--cn-space-3);
+}
 .cn-menu__check {
   width: 14px;
   display: grid;

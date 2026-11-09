@@ -45,6 +45,9 @@ pub const kCGInterpolationNone: i32 = 1;
 pub const kCGInterpolationHigh: i32 = 3;
 
 // CGEventType
+pub const kCGEventLeftMouseDown: u32 = 1;
+pub const kCGEventLeftMouseUp: u32 = 2;
+pub const kCGMouseButtonLeft: u32 = 0;
 pub const kCGEventKeyDown: u32 = 10;
 pub const kCGEventKeyUp: u32 = 11;
 pub const kCGEventTapDisabledByTimeout: u32 = 0xFFFF_FFFE;
@@ -168,6 +171,12 @@ extern "C" {
         source: CGEventSourceRef,
         key: u16,
         key_down: bool,
+    ) -> CGEventRef;
+    pub fn CGEventCreateMouseEvent(
+        source: CGEventSourceRef,
+        kind: u32,
+        at: CGPoint,
+        button: u32,
     ) -> CGEventRef;
     pub fn CGEventSetFlags(event: CGEventRef, flags: u64);
     pub fn CGEventPost(tap: u32, event: CGEventRef);

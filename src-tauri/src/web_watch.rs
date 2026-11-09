@@ -6,7 +6,7 @@
 //!
 //! 这里每隔几秒给**显示着、已经报到过**的窗口发一下"在吗"（往页面里执行一句脚本，页面回一个
 //! `web_pong`）。页面卡在死循环里时这句脚本根本排不上，自然回不来；连着 `HUNG_AFTER` 没回，就当它
-//! 卡死：记一笔日志，结束这个网页进程（macOS）或重新加载页面（其他平台）。网页进程没了会走
+//! 卡死：记一笔日志，结束这个网页进程再重新加载（光重新加载不行：要先等旧页面卸载，卡住的页面轮不到）。macOS 上网页进程没了会走
 //! `lib.rs` 的 `on_web_content_terminated` 重新加载，页面加载完再报到，之后接着照看。
 //! 截图遮罩卡死时，正在进行的截图 / 长截图先收掉：页面重新加载后不认识旧会话，留着只会挡在屏幕上。
 
@@ -116,7 +116,7 @@ fn recover(app: &AppHandle, window: &WebviewWindow, waited: Duration) {
     restart(window);
 }
 
-/// 结束窗口的网页进程重新加载（macOS），结束不了就直接重新加载。页面加载完会再报到。
+/// 结束窗口的网页进程再重新加载，结束不了就直接重新加载。页面加载完会再报到。
 /// 卡死的网页、一直没加载起来的网页（预建的遮罩页面没报到）都走这里。**别在 UI 线程调**：
 /// 结束网页进程要到 UI 线程上走一趟、等它回话。
 pub fn restart(window: &WebviewWindow) {
@@ -127,8 +127,12 @@ pub fn restart(window: &WebviewWindow) {
         map.remove(&label);
     }
     if platform::kill_web_content(window) {
-        // 网页进程没了会走 `on_web_content_terminated` 重新加载
+        // macOS：网页进程没了会走 `on_web_content_terminated` 重新加载
+        #[cfg(target_os = "macos")]
         return;
+        // Windows：页面停在崩溃状态，等 WebView2 认到进程没了再重新加载
+        #[cfg(not(target_os = "macos"))]
+        std::thread::sleep(std::time::Duration::from_millis(300));
     }
     if let Err(err) = window.reload() {
         tracing::error!(%label, "重新加载页面失败：{err}");

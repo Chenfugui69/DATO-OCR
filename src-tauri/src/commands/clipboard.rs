@@ -100,6 +100,56 @@ pub async fn clipboard_preview_current() -> AppResult<Option<i64>> {
     Ok(clipboard::preview::current())
 }
 
+/// 按住 Shift 的悬浮预览：在面板里那张卡片正上方显示（`card` 是卡片在面板页面里的位置，CSS 像素）
+#[tauri::command]
+pub async fn clipboard_peek_show(app: AppHandle, id: i64, card: clipboard::peek::CardRect) -> AppResult<()> {
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    let ui = app.clone();
+    app.run_on_main_thread(move || {
+        let _ = tx.send(clipboard::peek::show(&ui, id, card));
+    })?;
+    rx.await.map_err(|e| AppError::msg(e.to_string()))?
+}
+
+/// 拖卡片：影子开始跟着鼠标走。`items` 是拖着的那几条（原样转给影子页面），`grab_x/y` 是鼠标按在卡片上的位置
+#[tauri::command]
+pub async fn clipboard_ghost_start(app: AppHandle, items: serde_json::Value, grab_x: f64, grab_y: f64) -> AppResult<()> {
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    let ui = app.clone();
+    app.run_on_main_thread(move || {
+        let _ = tx.send(clipboard::ghost::start(&ui, items, (grab_x, grab_y)));
+    })?;
+    rx.await.map_err(|e| AppError::msg(e.to_string()))?
+}
+
+#[tauri::command]
+pub async fn clipboard_ghost_end(app: AppHandle) -> AppResult<()> {
+    let ui = app.clone();
+    app.run_on_main_thread(move || clipboard::ghost::end(&ui))?;
+    Ok(())
+}
+
+/// 面板打开时先把影子窗口建好
+#[tauri::command]
+pub async fn clipboard_ghost_prepare(app: AppHandle) -> AppResult<()> {
+    let ui = app.clone();
+    app.run_on_main_thread(move || clipboard::ghost::prepare(&ui))?;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn clipboard_peek_hide(app: AppHandle) -> AppResult<()> {
+    let ui = app.clone();
+    app.run_on_main_thread(move || clipboard::peek::hide(&ui))?;
+    Ok(())
+}
+
+/// 悬浮预览的页面加载完来取当前看哪一条
+#[tauri::command]
+pub async fn clipboard_peek_current() -> AppResult<Option<i64>> {
+    Ok(clipboard::peek::current())
+}
+
 #[tauri::command]
 pub async fn clipboard_preview_close(app: AppHandle) -> AppResult<()> {
     let ui = app.clone();
@@ -126,6 +176,18 @@ pub async fn clipboard_paste(app: AppHandle, id: i64, plain: bool) -> AppResult<
 #[tauri::command]
 pub async fn clipboard_copy(app: AppHandle, id: i64, plain: bool) -> AppResult<()> {
     blocking(move || panel::copy(&app, id, plain)).await
+}
+
+/// 多选复制
+#[tauri::command]
+pub async fn clipboard_copy_many(app: AppHandle, ids: Vec<i64>) -> AppResult<()> {
+    blocking(move || panel::copy_many(&app, &ids)).await
+}
+
+/// 卡片拖出面板松手：粘贴到松手的位置
+#[tauri::command]
+pub async fn clipboard_drop_paste(app: AppHandle, ids: Vec<i64>) -> AppResult<()> {
+    blocking(move || panel::drop_paste(&app, &ids)).await
 }
 
 #[tauri::command]

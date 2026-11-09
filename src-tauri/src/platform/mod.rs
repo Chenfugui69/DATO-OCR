@@ -150,6 +150,32 @@ pub fn elements_near(window: WindowHandle, x: i32, y: i32) -> AppResult<Vec<UiEl
     sys::elements_near(window, x, y)
 }
 
+/// 这个点（物理像素）下面是不是能打字的地方。只有 Windows 问得到，别的平台 None
+pub fn editable_at(x: i32, y: i32) -> Option<bool> {
+    #[cfg(windows)]
+    {
+        sys::elements::editable_at(x, y)
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = (x, y);
+        None
+    }
+}
+
+/// 现在选中的字在屏幕上的位置（划词按钮"跟着文段"用）。macOS 的划词监听自己就带着它，这里只有 Windows 要问
+pub fn selection_text_bounds(x: i32, y: i32) -> Option<TextBounds> {
+    #[cfg(windows)]
+    {
+        sys::elements::selection_bounds(x, y)
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = (x, y);
+        None
+    }
+}
+
 /// 摄像头画面（录视频时叠在角落）：`start(边长)` 之后 `latest` 随时取最新一帧（正方形、已镜像）
 pub use sys::Camera;
 
@@ -298,6 +324,8 @@ pub fn start_resize_drag(
 }
 
 /// 鼠标现在是不是在这个窗口上（含四周拖边改大小的那一圈）。
+// Windows 上翻译面板改用"鼠标下面是不是面板窗口"来判断（见 translate::selection::outside_click）
+#[cfg_attr(windows, allow(dead_code))]
 pub fn cursor_in_window(window: &WebviewWindow) -> bool {
     sys::effects::cursor_in_window(window)
 }
@@ -334,12 +362,14 @@ pub fn unlock_frame_rate(window: &WebviewWindow) {
     sys::effects::unlock_frame_rate(window);
 }
 
-/// 结束这个窗口的网页进程（页面卡死时用，见 web_watch.rs）。结束了返回 true，之后系统会通知
-/// 网页进程没了、页面重新加载；做不到（平台不支持）返回 false，由上层改成重新加载页面。
+/// 结束这个窗口的网页进程（页面卡死时用，见 web_watch.rs）。结束了返回 true；macOS 之后系统会通知
+/// 网页进程没了、页面自动重新加载，Windows 要上层自己重新加载。做不到返回 false，由上层直接重新加载页面。
 pub fn kill_web_content(window: &WebviewWindow) -> bool {
     #[cfg(target_os = "macos")]
     return sys::effects::kill_web_content(window);
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(windows)]
+    return sys::webview_idle::kill_renderer(window);
+    #[cfg(not(any(target_os = "macos", windows)))]
     {
         let _ = window;
         false
@@ -429,6 +459,14 @@ pub fn set_bounds_logical(
 /// 把窗口裁成圆角矩形（物理像素半径，0 = 不裁）。
 pub fn set_round_region(window: &WebviewWindow, radius: u32) {
     sys::effects::set_round_region(window, radius);
+}
+
+/// 毛玻璃背板铺满时四周留出的边（物理像素），页面在这圈里画阴影。只有 Windows 有；只能在 UI 线程调用
+pub fn set_backdrop_pad(window: &WebviewWindow, pad: u32) {
+    #[cfg(windows)]
+    sys::effects::set_backdrop_pad(window, pad);
+    #[cfg(not(windows))]
+    let _ = (window, pad);
 }
 
 /// 毛玻璃背板：`Some(物理像素半径)` 挂上 / 更新，`None` 去掉（见 windows/effects.rs）。只能在 UI 线程调用。
@@ -549,6 +587,11 @@ pub struct ClipboardBackup(sys::clipboard::Backup);
 // ───────────────────────── 输入模拟 / 钩子 ─────────────────────────
 
 /// 先释放所有修饰键（用户可能还按着 Alt+V 的 Alt），再发 Ctrl+V。
+/// 在鼠标现在的位置点一下左键
+pub fn click_here() -> AppResult<()> {
+    sys::input::click_here()
+}
+
 pub fn send_paste() -> AppResult<()> {
     sys::input::send_paste()
 }

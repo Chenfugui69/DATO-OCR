@@ -5,8 +5,9 @@ use std::time::Duration;
 use windows::Win32::Foundation::POINT;
 use windows::Win32::System::Threading::{AttachThreadInput, GetCurrentThreadId};
 use windows::Win32::UI::Input::KeyboardAndMouse::{
-    GetAsyncKeyState, SendInput, SetFocus, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT,
-    KEYBD_EVENT_FLAGS, KEYEVENTF_KEYUP, VIRTUAL_KEY, VK_C, VK_CONTROL, VK_LCONTROL, VK_LMENU,
+    GetAsyncKeyState, SendInput, SetFocus, INPUT, INPUT_0, INPUT_KEYBOARD, INPUT_MOUSE,
+    KEYBDINPUT, KEYBD_EVENT_FLAGS, KEYEVENTF_KEYUP, MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP,
+    MOUSEINPUT, VIRTUAL_KEY, VK_C, VK_CONTROL, VK_LCONTROL, VK_LMENU,
     VK_LSHIFT, VK_LWIN, VK_MENU, VK_RCONTROL, VK_RMENU, VK_RSHIFT, VK_RWIN, VK_SHIFT, VK_V,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
@@ -152,6 +153,30 @@ fn send_ctrl(letter: VIRTUAL_KEY) -> AppResult<()> {
 
 pub fn send_paste() -> AppResult<()> {
     send_ctrl(VK_V)
+}
+
+/// 在鼠标现在的位置点一下左键（拖卡片粘贴：松手的地方先点一下，那个窗口拿到焦点、光标落到那儿）
+pub fn click_here() -> AppResult<()> {
+    let mouse = |flags| INPUT {
+        r#type: INPUT_MOUSE,
+        Anonymous: INPUT_0 {
+            mi: MOUSEINPUT {
+                dx: 0,
+                dy: 0,
+                mouseData: 0,
+                dwFlags: flags,
+                time: 0,
+                dwExtraInfo: 0,
+            },
+        },
+    };
+    let inputs = [mouse(MOUSEEVENTF_LEFTDOWN), mouse(MOUSEEVENTF_LEFTUP)];
+    // SAFETY: 输入数组和结构体大小都如实传入。
+    let sent = unsafe { SendInput(&inputs, std::mem::size_of::<INPUT>() as i32) };
+    if sent as usize != inputs.len() {
+        return Err(AppError::msg("模拟点击被系统拦截（目标可能是管理员权限窗口）"));
+    }
+    Ok(())
 }
 
 pub fn send_copy() -> AppResult<()> {

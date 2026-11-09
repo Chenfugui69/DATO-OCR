@@ -13,6 +13,7 @@
 mod ai;
 mod apng;
 mod capture;
+mod cleanup;
 mod clipboard;
 mod commands;
 mod editor;
@@ -280,6 +281,14 @@ pub fn run() {
             commands::clipboard::clipboard_preview_close,
             commands::clipboard::clipboard_paste,
             commands::clipboard::clipboard_copy,
+            commands::clipboard::clipboard_copy_many,
+            commands::clipboard::clipboard_peek_show,
+            commands::clipboard::clipboard_peek_hide,
+            commands::clipboard::clipboard_ghost_start,
+            commands::clipboard::clipboard_ghost_end,
+            commands::clipboard::clipboard_ghost_prepare,
+            commands::clipboard::clipboard_peek_current,
+            commands::clipboard::clipboard_drop_paste,
             commands::clipboard::clipboard_delete,
             commands::clipboard::clipboard_set_pinned,
             commands::clipboard::clipboard_set_favorite,
@@ -314,6 +323,10 @@ pub fn run() {
             commands::library::library_set_favorite,
             commands::library::library_set_note,
             commands::library::library_copy,
+            commands::library::library_copy_many,
+            commands::library::library_drop_paste,
+            commands::library::ocr_copy_many,
+            commands::library::ocr_drop_paste,
             commands::library::library_pin,
             commands::library::library_save_as,
             commands::library::library_reveal,
@@ -352,6 +365,9 @@ pub fn run() {
             commands::system::settings_get,
             commands::system::settings_set,
             commands::system::settings_reset,
+            commands::system::storage_usage,
+            commands::system::storage_clean,
+            commands::system::data_dir_change,
             commands::system::visuals_get,
             commands::system::hotkeys_status,
             commands::system::hotkeys_suspend,
@@ -452,6 +468,11 @@ fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     if let Some(old) = &paths.migrated_from {
         tracing::info!(from = %old.display(), "已把旧数据目录搬到新位置");
     }
+    match &paths.relocated {
+        Some(Ok(from)) => tracing::info!(from = %from.display(), to = %paths.root().display(), "按设置搬了数据位置"),
+        Some(Err(err)) => tracing::error!("搬数据位置失败，继续用原来的：{err}"),
+        None => {}
+    }
     if let Err(err) = paths.reset_temp() {
         tracing::warn!("清空 temp 目录失败：{err}");
     }
@@ -507,6 +528,7 @@ fn on_ready(app: &AppHandle) {
     watchdog::run_demo(app);
     std::thread::spawn(platform::warm_up_capture);
     maintenance::spawn(app);
+    cleanup::spawn_schedule(app);
     let ui = app.clone();
     std::thread::spawn(move || after_rename(&ui));
 

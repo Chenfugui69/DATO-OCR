@@ -5,7 +5,7 @@ import * as RadixDialog from '@radix-ui/react-dialog';
 import * as RadixDropdown from '@radix-ui/react-dropdown-menu';
 import * as RadixTooltip from '@radix-ui/react-tooltip';
 import clsx from 'clsx';
-import { CheckCircle2, Info, XCircle, type LucideIcon } from 'lucide-react';
+import { Check, CheckCircle2, Info, XCircle, type LucideIcon } from 'lucide-react';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import { create } from 'zustand';
@@ -58,6 +58,8 @@ export interface MenuItemSpec {
   danger?: boolean;
   disabled?: boolean;
   checked?: boolean;
+  /** 单选列表（筛选这种）：照样显示图标，选中的那项文字变强调色、末尾一个勾 */
+  selected?: boolean;
   onSelect?: () => void;
   separator?: boolean;
   submenu?: MenuItemSpec[];
@@ -87,16 +89,22 @@ function renderItems(P: Primitive, items: MenuItemSpec[]): ReactNode {
     return (
       <P.Item
         key={i}
-        className={clsx('cn-menu__item', item.danger && 'cn-menu__item--danger')}
+        className={clsx('cn-menu__item', item.danger && 'cn-menu__item--danger', item.selected && 'cn-menu__item--selected')}
         disabled={item.disabled}
         onSelect={item.onSelect}
       >
-        {item.checked !== undefined ? (
+        {item.selected !== undefined ? (
+          <>
+            {item.icon && <Icon icon={item.icon} size={14} />}
+            <span className="cn-menu__text">{item.label}</span>
+            {item.selected && <Icon icon={Check} size={14} className="cn-menu__tick" />}
+          </>
+        ) : item.checked !== undefined ? (
           <span className="cn-menu__check">{item.checked ? '✓' : ''}</span>
         ) : (
           item.icon && <Icon icon={item.icon} size={14} />
         )}
-        {item.label}
+        {item.selected === undefined && item.label}
         {item.shortcut && <span className="cn-menu__shortcut">{shortcutLabel(item.shortcut)}</span>}
       </P.Item>
     );
@@ -142,16 +150,21 @@ export function DropdownMenu({
   items,
   children,
   align = 'end',
+  className,
+  onCloseAutoFocus,
 }: {
   items: MenuItemSpec[];
   children: ReactNode;
   align?: 'start' | 'center' | 'end';
+  className?: string;
+  /** 收起后焦点放哪（默认还给触发的按钮）；调 preventDefault() 自己放 */
+  onCloseAutoFocus?: (e: Event) => void;
 }) {
   return (
     <RadixDropdown.Root>
       <RadixDropdown.Trigger asChild>{children}</RadixDropdown.Trigger>
       <RadixDropdown.Portal>
-        <RadixDropdown.Content className="cn-menu" align={align} sideOffset={4} collisionPadding={8}>
+        <RadixDropdown.Content className={clsx('cn-menu', className)} align={align} sideOffset={4} collisionPadding={8} onCloseAutoFocus={onCloseAutoFocus}>
           {renderItems(RadixDropdown, items)}
         </RadixDropdown.Content>
       </RadixDropdown.Portal>
