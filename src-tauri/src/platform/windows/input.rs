@@ -12,7 +12,7 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     BringWindowToTop, GetCursorPos, GetForegroundWindow, GetWindowThreadProcessId, IsIconic,
-    IsWindow, SetForegroundWindow, ShowWindow, SW_RESTORE,
+    IsWindow, SetCursorPos, SetForegroundWindow, ShowWindow, SW_RESTORE,
 };
 
 use super::util::hwnd;
@@ -177,6 +177,13 @@ pub fn click_here() -> AppResult<()> {
         return Err(AppError::msg("模拟点击被系统拦截（目标可能是管理员权限窗口）"));
     }
     Ok(())
+}
+
+/// 在屏幕物理坐标 `(x, y)` 点一下左键（指针先挪过去）
+pub fn click_at(x: i32, y: i32) -> AppResult<()> {
+    // SAFETY: 只是挪鼠标指针
+    unsafe { SetCursorPos(x, y) }.map_err(|e| AppError::msg(format!("挪鼠标失败：{e}")))?;
+    click_here()
 }
 
 pub fn send_copy() -> AppResult<()> {

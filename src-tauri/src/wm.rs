@@ -158,6 +158,8 @@ pub struct VisualCapabilities {
     /// 主窗口是否启用了系统材质（Windows 的 Mica、macOS 的毛玻璃）。false 时前端必须画不透明底色。
     pub glass: bool,
     pub backdrop: &'static str,
+    /// macOS 浮动面板的背板是液态玻璃（系统有就用；老系统是经典毛玻璃）。页面按它调盖在上面的色调
+    pub liquid_glass: bool,
     pub dark_mode: bool,
     pub reduced_motion: bool,
     pub transparency_enabled: bool,
@@ -176,6 +178,7 @@ pub fn visual_capabilities(app: &AppHandle) -> VisualCapabilities {
     VisualCapabilities {
         glass,
         backdrop: if glass { "mica" } else { "none" },
+        liquid_glass: platform::liquid_glass_available(),
         dark_mode: v.dark_mode,
         reduced_motion: v.reduced_motion,
         transparency_enabled: v.transparency_enabled,

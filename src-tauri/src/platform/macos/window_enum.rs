@@ -149,6 +149,22 @@ pub fn foreground_window() -> Option<WindowHandle> {
     Some(WindowHandle(encode_handle(pid, window)))
 }
 
+/// DATO OCR 自己是不是当前激活的应用（键盘事件发给它）
+pub fn own_app_active() -> bool {
+    NSRunningApplication::currentApplication().isActive()
+}
+
+/// 把这个窗口所属的应用激活，就算系统说它已经在最前面也再激活一次：我们的面板刚收起时，
+/// "最前面的应用"已经报成了它，键盘却可能还在我们手上
+pub fn activate_app(window: WindowHandle) -> bool {
+    use objc2_app_kit::NSApplicationActivationOptions;
+    let Some(app) = running_app(handle_pid(window.0)) else {
+        return false;
+    };
+    #[allow(deprecated)]
+    app.activateWithOptions(NSApplicationActivationOptions::ActivateIgnoringOtherApps)
+}
+
 pub fn running_app(pid: i32) -> Option<Retained<NSRunningApplication>> {
     NSRunningApplication::runningApplicationWithProcessIdentifier(pid)
 }

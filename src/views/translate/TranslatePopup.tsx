@@ -946,6 +946,8 @@ html:not([data-platform='mac'])[data-theme='light'] .pop-shell.is-blur {
    白字和灰色的源名字都看不清。深色下色调也至少七成实 */
 html:not([data-platform='mac'])[data-theme='dark'] .pop-shell.is-blur {
   --pop-hi: rgba(46,46,48,calc(0.7 + var(--pop-alpha) * 0.3)); --pop-lo: rgba(30,30,32,calc(0.7 + var(--pop-alpha) * 0.3)); }
+/* macOS 液态玻璃：边缘高光、折射是系统那层玻璃画的，页面不再描边 */
+html[data-mac-glass='liquid'] .pop-shell.is-blur { box-shadow: none; }
 /* 本程序截图的那一刻（Windows）：系统背板藏起来、色调换成不透明，抓到的面板全是页面画的（圆角带抗锯齿），见 useGlassSnapshot */
 html[data-snapshot] .pop-shell.is-blur { --pop-alpha: 1 !important; }
 html[data-snapshot] .pop-shell.is-blur, html[data-snapshot] .pop-shell.is-blur * { transition: none !important; }

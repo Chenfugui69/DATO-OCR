@@ -47,7 +47,10 @@ pub const kCGInterpolationHigh: i32 = 3;
 // CGEventType
 pub const kCGEventLeftMouseDown: u32 = 1;
 pub const kCGEventLeftMouseUp: u32 = 2;
-pub const kCGMouseButtonLeft: u32 = 0;
+pub const kCGEventMouseMoved: u32 = 5;
+/// 鼠标事件的"第几下点击"字段（kCGMouseEventClickState）
+pub const kCGMouseEventClickState: u32 = 1;
+pub const kCGEventLeftMouseDragged: u32 = 6;
 pub const kCGEventKeyDown: u32 = 10;
 pub const kCGEventKeyUp: u32 = 11;
 pub const kCGEventTapDisabledByTimeout: u32 = 0xFFFF_FFFE;
@@ -70,6 +73,8 @@ pub const kCGEventSuppressionStateSuppressionInterval: u32 = 0;
 // 虚拟键码（按 ANSI 键位）
 pub const kVK_ANSI_C: u16 = 0x08;
 pub const kVK_ANSI_V: u16 = 0x09;
+/// 左 ⌘
+pub const kVK_Command: u16 = 0x37;
 pub const kVK_Return: i64 = 0x24;
 pub const kVK_Delete: i64 = 0x33;
 pub const kVK_Escape: i64 = 0x35;
@@ -179,6 +184,16 @@ extern "C" {
         button: u32,
     ) -> CGEventRef;
     pub fn CGEventSetFlags(event: CGEventRef, flags: u64);
+    /// 滚轮事件（units：0 = 像素，1 = 行）
+    pub fn CGEventCreateScrollWheelEvent2(
+        source: CGEventSourceRef,
+        units: u32,
+        wheel_count: u32,
+        wheel1: i32,
+        wheel2: i32,
+        wheel3: i32,
+    ) -> CGEventRef;
+    pub fn CGEventSetIntegerValueField(event: CGEventRef, field: u32, value: i64);
     pub fn CGEventPost(tap: u32, event: CGEventRef);
     pub fn CGEventGetIntegerValueField(event: CGEventRef, field: u32) -> i64;
     pub fn CGEventTapCreate(

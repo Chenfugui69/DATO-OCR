@@ -14,6 +14,8 @@ function apply(): void {
   const dark = pref === 'dark' || (pref === 'system' && (visuals?.darkMode ?? media.matches));
   root.dataset.theme = dark ? 'dark' : 'light';
   root.dataset.glass = visuals?.glass ? 'on' : 'off';
+  // 浮动面板背后挂的是液态玻璃还是经典毛玻璃（macOS）：盖在上面的色调、描边跟着变
+  root.dataset.macGlass = visuals?.liquidGlass ? 'liquid' : 'classic';
   root.dataset.reducedMotion = visuals?.reducedMotion ? 'true' : 'false';
 }
 

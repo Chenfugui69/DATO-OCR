@@ -256,6 +256,52 @@ fn hit_chain(window: WindowHandle, x: i32, y: i32) -> Option<Chain> {
     }
 }
 
+/// 诊断用：这个窗口所属的应用现在键盘焦点在哪个元素上（角色和屏幕上的框）
+pub fn focused_element(window: WindowHandle) -> Option<String> {
+    let pid = handle_pid(window.0);
+    // SAFETY: 只读查询，拿到的对象由 Ax 释放
+    unsafe {
+        let app = AXUIElementCreateApplication(pid);
+        if app.is_null() {
+            return None;
+        }
+        let app = Ax(app);
+        ffi::AXUIElementSetMessagingTimeout(app.0, 0.15);
+        let focused = copy_attr(app.0, "AXFocusedUIElement")?;
+        let screens = geometry::screens();
+        let (role, rect) = read(focused.0, &screens)?;
+        Some(format!("{role} {},{} {}x{}", rect.x, rect.y, rect.width, rect.height))
+    }
+}
+
+/// 屏幕物理坐标 `(x, y)` 下面是不是能打字的地方（输入框、文本区、网页里的可编辑区域）：拖剪贴板卡片
+/// 经过时影子缩小一下，表示松手就贴在这里。DATO OCR 自己的窗口不算。没权限、问不到是 None
+pub fn editable_at(x: i32, y: i32) -> Option<bool> {
+    const EDITABLE: &[&str] = &["AXTextField", "AXTextArea", "AXComboBox"];
+    // 到了这些就不用再往上找了：再外面是整个网页、滚动区、窗口
+    const STOP: &[&str] = &["AXWebArea", "AXScrollArea", "AXWindow", "AXSplitGroup"];
+    let window = super::window_enum::window_at(x, y)?;
+    let chain = hit_chain(window, x, y)?;
+    // SAFETY: 只读查询，元素由 chain 持有
+    unsafe {
+        if let Some((first, _, _)) = chain.nodes.first() {
+            // 网页里可编辑区域（contenteditable）里面的字：WebKit / Chromium 都给它挂着"可编辑的祖先"
+            if copy_attr(first.0, "AXEditableAncestor").is_some() {
+                return Some(true);
+            }
+        }
+    }
+    for (_, role, _) in chain.nodes.iter().take(4) {
+        if EDITABLE.contains(&role.as_str()) {
+            return Some(true);
+        }
+        if STOP.contains(&role.as_str()) {
+            break;
+        }
+    }
+    Some(false)
+}
+
 /// `window` 里、屏幕物理坐标 `(x, y)` 下面的界面元素，由里到外（最后一个是窗口本身）。
 /// 没权限、对方不支持、点在自己的窗口上时返回空。
 pub fn elements_at(window: WindowHandle, x: i32, y: i32) -> AppResult<Vec<UiElement>> {

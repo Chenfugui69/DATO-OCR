@@ -111,6 +111,57 @@ pub fn run() {
                         }
                         return;
                     }
+                    // `--demo=drag:x0,y0,x1,y1,...`（全局点坐标）：真的鼠标事件在第一个点按下、拖过各点、在倒数第二个点松开，
+                    // 马上挪到最后一个点（测拖放粘贴）
+                    #[cfg(all(debug_assertions, target_os = "macos"))]
+                    if let Some(p) = args.iter().find_map(|a| a.strip_prefix("--demo=drag:")) {
+                        let v: Vec<f64> = p.split(',').filter_map(|s| s.trim().parse().ok()).collect();
+                        let points: Vec<(f64, f64)> = v.chunks_exact(2).map(|c| (c[0], c[1])).collect();
+                        std::thread::spawn(move || {
+                            if let Err(err) = platform::debug_drag(&points) {
+                                tracing::warn!("--demo=drag 失败：{err}");
+                            }
+                        });
+                        return;
+                    }
+                    // `--demo=wheel:x,y,次数,每次的量,单位,间隔毫秒`：真的滚轮事件（量滚动流不流畅用）
+                    #[cfg(all(debug_assertions, target_os = "macos"))]
+                    if let Some(p) = args.iter().find_map(|a| a.strip_prefix("--demo=wheel:")) {
+                        let v: Vec<f64> = p.split(',').filter_map(|s| s.trim().parse().ok()).collect();
+                        if v.len() >= 6 {
+                            std::thread::spawn(move || {
+                                if let Err(err) = platform::debug_wheel((v[0], v[1]), v[2] as u32, v[3] as i32, v[4] as u32, v[5] as u64) {
+                                    tracing::warn!("--demo=wheel 失败：{err}");
+                                }
+                            });
+                        }
+                        return;
+                    }
+                    // `--demo=click:x,y,修饰`（全局点坐标）：带着修饰键点一下（⌘ 点选多张卡片对照用）
+                    #[cfg(all(debug_assertions, target_os = "macos"))]
+                    if let Some(p) = args.iter().find_map(|a| a.strip_prefix("--demo=click:")) {
+                        let v: Vec<f64> = p.split(',').filter_map(|s| s.trim().parse().ok()).collect();
+                        if v.len() >= 3 {
+                            std::thread::spawn(move || {
+                                if let Err(err) = platform::debug_click((v[0], v[1]), v[2] as u64) {
+                                    tracing::warn!("--demo=click 失败：{err}");
+                                }
+                            });
+                        }
+                        return;
+                    }
+                    // `--demo=key:键码,修饰`：真的按一下这个键（唤出别的程序对照界面用）
+                    #[cfg(all(debug_assertions, target_os = "macos"))]
+                    if let Some(p) = args.iter().find_map(|a| a.strip_prefix("--demo=key:")) {
+                        let mut it = p.split(',').map(|s| s.trim().parse::<u64>().unwrap_or(0));
+                        let (key, flags) = (it.next().unwrap_or(0) as u16, it.next().unwrap_or(0));
+                        std::thread::spawn(move || {
+                            if let Err(err) = platform::debug_key(key, flags) {
+                                tracing::warn!("--demo=key 失败：{err}");
+                            }
+                        });
+                        return;
+                    }
                     // `--demo=popup:x,y`（屏幕物理像素）：在指定位置弹出划词面板
                     #[cfg(debug_assertions)]
                     if let Some(p) = args.iter().find_map(|a| a.strip_prefix("--demo=popup:")) {
@@ -286,6 +337,7 @@ pub fn run() {
             commands::clipboard::clipboard_peek_hide,
             commands::clipboard::clipboard_ghost_start,
             commands::clipboard::clipboard_ghost_end,
+            commands::clipboard::clipboard_native_drag,
             commands::clipboard::clipboard_ghost_prepare,
             commands::clipboard::clipboard_peek_current,
             commands::clipboard::clipboard_drop_paste,

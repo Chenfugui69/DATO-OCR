@@ -53,8 +53,19 @@ import { ZoomImage } from './ZoomImage';
 type Filter = 'all' | ClipType | 'pinned' | 'favorite';
 /** 底部卡片条：卡片宽度和间距（高度见 panel.css 的 .panel__cell） */
 /** 卡片条里每张卡片的宽度：和高度（240）差不多，接近 Paste 的方卡片 */
+/** 一张卡片的回调（按 id 缓存，见 PanelView 里的 handlersFor） */
+type CardHandlers = {
+  onHover: (inside: boolean) => void;
+  onClick: () => void;
+  onPaste: () => void;
+  onContextMenu: (e: React.MouseEvent) => void;
+  onPick: () => void;
+  onDragPointerDown: (e: React.PointerEvent<HTMLDivElement>) => void;
+};
+
 const CARD_W = 236;
-const CARD_GAP = 14;
+// 卡片间距：Paste 约 20 点，14 点时卡片挤在一起
+const CARD_GAP = 20;
 const FILTERS: Filter[] = ['all', 'text', 'image', 'link', 'files', 'pinned', 'favorite'];
 const FILTER_ICONS: Partial<Record<Filter, LucideIcon>> = {
   all: LayoutGrid,
@@ -276,18 +287,36 @@ export default function PanelView() {
         .map((id) => items.find((i) => i.id === id))
         .filter((i): i is ClipItem => !!i)
         .map((i) => ({ ...i, ghostTint: i.sourceIcon ? iconColors.data?.[i.sourceIcon] : undefined })),
+    // 松手时面板还是"让开"的（滑走、玻璃淡掉、鼠标穿透），就这样收起；窗口藏好之后（粘贴完）再复原，
+    // 不然先滑回来再收起会闪一下
     onDropOutside: (ids) => {
-      if (hiding.current) return;
+      if (hiding.current) {
+        resetAway();
+        return;
+      }
       hiding.current = true;
       setVisible(false);
       clipboard
         .dropPaste(ids)
         .catch(notify.error)
-        .finally(() => (hiding.current = false));
+        .finally(() => {
+          hiding.current = false;
+          resetAway();
+        });
     },
     onDropOnBoard: (ids, target) => moveToBoard(ids, target, groups.data ?? [], t),
-    // 卡片拖出面板：面板滑下去让开、不挡鼠标，面板后面（比如屏幕底部的输入框）才看得见、拖得进去
-    awayFrom: () => document.querySelector<HTMLElement>('.panel'),
+    // macOS：系统原生拖拽（跟手、目标程序自己收）。被别的程序收下时 Rust 已经藏好了面板，这里只复原状态
+    native: isMac
+      ? {
+          onDropped: () => {
+            setVisible(false);
+            resetAway();
+          },
+        }
+      : undefined,
+    // 卡片拖出卡片区（往上拖到顶栏、或者出了面板）：面板滑下去让开、不挡鼠标，面板后面（比如屏幕底部的
+    // 输入框）才看得见、拖得进去。顶栏上的分组标签除外，那是拖进分组用的
+    awayFrom: () => scrollRef.current,
     onAway: (on) => {
       setAway(on);
       const win = getCurrentWindow();
@@ -297,7 +326,23 @@ export default function PanelView() {
     },
   });
   const [away, setAway] = useState(false);
+  // 撤销"让开"，不带动画（面板已经藏起来了，或者马上要重新出场）
+  const resetAway = () => {
+    setAway(false);
+    void getCurrentWindow().setIgnoreCursorEvents(false).catch(() => undefined);
+    void system.backdropFade(true, 0).catch(() => undefined);
+  };
   const draggingIds = useMemo(() => new Set(dragging ?? []), [dragging]);
+  // macOS 系统拖拽接管鼠标以后，面板窗口有时会失焦：那次不算"点了外面"，不收起；拖完面板还开着（取消、
+  // 拖到分组标签上）就把焦点拿回来，不然之后点外面也不会再失焦、面板就收不起来了
+  const draggingRef = useRef(false);
+  draggingRef.current = !!dragging;
+  const blurredWhileDragging = useRef(false);
+  useEffect(() => {
+    if (dragging || !blurredWhileDragging.current) return;
+    blurredWhileDragging.current = false;
+    if (visibleRef.current && !hiding.current) void getCurrentWindow().setFocus().catch(() => undefined);
+  }, [dragging]);
 
   const shiftHeld = useKeyHeld('Shift', visible);
   const [hoverId, setHoverId] = useState<number | null>(null);
@@ -414,6 +459,7 @@ export default function PanelView() {
 
   useEvent('clipboard-panel-show', (p) => {
     hiding.current = false;
+    resetAway();
     setStyle(p.style);
     setKeyword('');
     setDebounced('');
@@ -422,8 +468,8 @@ export default function PanelView() {
     setPreview(null);
     setBoard(null);
     clearPicks();
-    // 拖卡片的影子窗口先建好，第一次拖不用等
-    void clipboard.ghostPrepare().catch(() => undefined);
+    // 拖卡片的影子窗口先建好，第一次拖不用等（macOS 用系统原生拖拽，没有影子窗口）
+    if (!isMac) void clipboard.ghostPrepare().catch(() => undefined);
     // 先回到起始位置再滑入（Alt+V 再按一次是 Rust 直接藏窗口的，那次没走退出动画）
     setVisible(false);
     window.clearInterval(focusWatch.current);
@@ -441,6 +487,10 @@ export default function PanelView() {
       .onFocusChanged(({ payload: focused }) => {
         // 点面板外部 = 关闭。原生右键菜单弹出时也会失焦，那种不算
         if (focused) appMenuClosed();
+        if (!focused && draggingRef.current) {
+          blurredWhileDragging.current = true;
+          return;
+        }
         if (!focused && !isNativeMenuOpen() && !isAppMenuOpen()) hide();
       })
       .then((fn) => (unlisten = fn))
@@ -751,6 +801,39 @@ export default function PanelView() {
     return () => window.removeEventListener('keydown', onKey);
   }, [visible, items, selected, showSel, horizontal, preview, filter, smart, clearSmart, hide, paste, openPreview, qc, t, picked, clearPicks, copyPicked]);
 
+  // 每张卡片的回调按卡片 id 缓存成固定的函数，调用时再取最新的状态。卡片组件做了 memo，
+  // 回调要是每次渲染都新建，memo 就白做了：面板跟着滚动、悬停换卡片一次次重新渲染时，
+  // 可见的二十来张卡片会全部重画，滚动时一帧要 20~50ms（2026-11 在 165Hz 屏上量出来的卡顿）
+  const live = useRef({ items, paste, showMenu, togglePick, onCardPointerDown });
+  live.current = { items, paste, showMenu, togglePick, onCardPointerDown };
+  const cardHandlers = useRef(new Map<number, CardHandlers>());
+  const handlersFor = (id: number): CardHandlers => {
+    let h = cardHandlers.current.get(id);
+    if (!h) {
+      const find = () => live.current.items.find((i) => i.id === id);
+      const select = () => {
+        const index = live.current.items.findIndex((i) => i.id === id);
+        if (index >= 0) setSelected(index);
+        setShowSel(true);
+      };
+      h = {
+        onHover: (inside) => setHoverId((cur) => (inside ? id : cur === id ? null : cur)),
+        onClick: select,
+        onPaste: () => live.current.paste(find()),
+        onContextMenu: (e) => {
+          e.preventDefault();
+          select();
+          const item = find();
+          if (item) live.current.showMenu(item);
+        },
+        onPick: () => live.current.togglePick(id),
+        onDragPointerDown: (e) => live.current.onCardPointerDown(e, id),
+      };
+      cardHandlers.current.set(id, h);
+    }
+    return h;
+  };
+
   return (
     <div
       className={clsx(
@@ -910,6 +993,7 @@ export default function PanelView() {
             <div data-marquee-origin style={horizontal ? { width: virt.getTotalSize(), height: '100%', position: 'relative' } : { height: virt.getTotalSize(), position: 'relative' }}>
               {virtualItems.map((v) => {
                 const item = items[v.index]!;
+                const h = handlersFor(item.id);
                 return (
                   <div
                     key={item.id}
@@ -932,22 +1016,14 @@ export default function PanelView() {
                       flashing={flashing === item.id}
                       pickMode={pickMode}
                       picked={picked.has(item.id)}
-                      onPick={() => togglePick(item.id)}
+                      onPick={h.onPick}
                       dragging={draggingIds.has(item.id)}
-                      onDragPointerDown={(e) => onCardPointerDown(e, item.id)}
-                      onHover={(inside) => setHoverId((cur) => (inside ? item.id : cur === item.id ? null : cur))}
-                      onClick={() => {
-                        setSelected(v.index);
-                        setShowSel(true);
-                      }}
-                      onActivate={singleClick ? () => paste(item) : undefined}
-                      onDoubleClick={singleClick ? undefined : () => paste(item)}
-                      onContextMenu={(e) => {
-                        e.preventDefault();
-                        setSelected(v.index);
-                        setShowSel(true);
-                        showMenu(item);
-                      }}
+                      onDragPointerDown={h.onDragPointerDown}
+                      onHover={h.onHover}
+                      onClick={h.onClick}
+                      onActivate={singleClick ? h.onPaste : undefined}
+                      onDoubleClick={singleClick ? undefined : h.onPaste}
+                      onContextMenu={h.onContextMenu}
                     />
                   </div>
                 );

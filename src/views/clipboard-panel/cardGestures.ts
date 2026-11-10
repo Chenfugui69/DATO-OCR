@@ -11,6 +11,7 @@ import './gestures.css';
 
 import { useCallback, useEffect, useRef, useState, type RefObject } from 'react';
 
+import { on } from '@/lib/events';
 import { clipboard } from '@/lib/ipc';
 import { modKey } from '@/lib/platform';
 import type { ClipItem } from '@/lib/types';
@@ -179,14 +180,21 @@ export function useCardDrag(opts: {
   idsFor: (id: number) => number[];
   /** 影子里画的那几条（带上标题栏的颜色 ghostTint） */
   itemsFor: (ids: number[]) => (ClipItem & { ghostTint?: string })[];
+  /** 拖到外面松手（要粘贴）。这时面板还是"让开"的状态（不调 `onAway(false)`）：先滑回来再收起会闪一下，
+   *  由调用方在窗口藏好之后自己复原 */
   onDropOutside: (ids: number[]) => void;
   onDropOnBoard?: (ids: number[], board: number | null) => void;
   /**
-   * 拖出这个元素（剪贴板面板本身）之后调一次 `onAway(true)`：面板让开（滑下去、不挡鼠标），后面的输入框才
+   * 拖出这个元素（剪贴板面板的卡片区；鼠标在分组标签上时不算）之后调一次 `onAway(true)`：面板让开（滑下去、不挡鼠标），后面的输入框才
    * 看得见、拖得进去。让开以后松手一律算"拖到外面"。拖完 / 取消时调 `onAway(false)`
    */
   awayFrom?: () => HTMLElement | null;
   onAway?: (away: boolean) => void;
+  /**
+   * 用系统原生拖拽（macOS 面板）：拖动图像由系统画、跟手，松手由目标程序自己收，不用 `onDropOutside`。
+   * 被面板外的程序收下时 Rust 已经收起了面板，再调这个（复原"让开"的状态）
+   */
+  native?: { onDropped: () => void };
 }) {
   const [dragging, setDragging] = useState<number[] | null>(null);
   const optsRef = useRef(opts);
@@ -205,26 +213,33 @@ export function useCardDrag(opts: {
     let over: HTMLElement | null = null;
     let restore: (() => void) | null = null;
     let away = false;
+    let unlisten: (() => void)[] = [];
+    let done = false;
     const setOver = (next: HTMLElement | null) => {
       if (next === over) return;
       over?.removeAttribute('data-drag-over');
       next?.setAttribute('data-drag-over', '');
       over = next;
     };
-    const finish = () => {
+    // keepAway：拖到外面松手要粘贴了，面板别滑回来（见 onDropOutside）
+    const finish = (keepAway = false) => {
+      done = true;
+      for (const fn of unlisten) fn();
+      unlisten = [];
       window.removeEventListener('pointermove', onMove);
       window.removeEventListener('pointerup', onUp);
       window.removeEventListener('pointercancel', onCancel);
       window.removeEventListener('keydown', onKey, true);
       setOver(null);
       document.documentElement.removeAttribute('data-card-dragging');
+      document.documentElement.removeAttribute('data-drag-snap');
       if (ids) {
         swallowNextClick();
-        void clipboard.ghostEnd().catch(() => undefined);
+        if (!optsRef.current.native) void clipboard.ghostEnd().catch(() => undefined);
       }
       restore?.();
       restore = null;
-      if (away) optsRef.current.onAway?.(false);
+      if (away && !keepAway) optsRef.current.onAway?.(false);
       away = false;
       setDragging(null);
     };
@@ -232,6 +247,10 @@ export function useCardDrag(opts: {
       if (!ids) {
         if (Math.hypot(m.clientX - start.x, m.clientY - start.y) < DRAG_MIN) return;
         ids = optsRef.current.idsFor(id);
+        if (optsRef.current.native) {
+          startNative(ids);
+          return;
+        }
         // 拿住鼠标：拖到窗口外面也收得到移动和松开
         try {
           el.setPointerCapture(pointerId);
@@ -239,14 +258,37 @@ export function useCardDrag(opts: {
           // 元素已经不在了（列表滚动回收了）：照样靠 window 上的监听
         }
         document.documentElement.setAttribute('data-card-dragging', '');
+        // 拖到这么远之前网页可能已经开始选字了（macOS），先清掉
+        window.getSelection()?.removeAllRanges();
         setDragging(ids);
         // 影子跟着鼠标走（拖出窗口也看得见）；拖好几张时先把它们收拢到手上这张
         if (ids.length > 1) restore = gather(ids, el);
         // 手上那张画在最上面（粘贴的顺序还是列表里的顺序）
         const shown = [id, ...ids.filter((x) => x !== id)];
         void clipboard.ghostStart(optsRef.current.itemsFor(shown), grab).catch(() => undefined);
+        // macOS 上鼠标拖出窗口后页面收不到移动，面板让开后（鼠标穿透）连松开也收不到：
+        // 靠 Rust 那边盯着鼠标告诉这里"出窗口了""松手了"
+        const keep = (p: Promise<() => void>) =>
+          void p.then((fn) => {
+            if (done) fn();
+            else unlisten.push(fn);
+          });
+        keep(on('clip-ghost-left', () => {
+          if (done || away) return;
+          away = true;
+          setOver(null);
+          optsRef.current.onAway?.(true);
+        }));
+        keep(on('clip-ghost-released', (outside) => {
+          if (done || !ids || !(away || outside)) return;
+          const picked = ids;
+          finish(true);
+          optsRef.current.onDropOutside(picked);
+        }));
       }
-      if (!away) {
+      const hitNow = away ? null : document.elementFromPoint(m.clientX, m.clientY);
+      const onBoard = hitNow instanceof Element && !!hitNow.closest('[data-board-drop]');
+      if (!away && !onBoard) {
         const zone = optsRef.current.awayFrom?.();
         const r = zone?.getBoundingClientRect();
         if (r && (m.clientX < r.left || m.clientX > r.right || m.clientY < r.top || m.clientY > r.bottom)) {
@@ -256,20 +298,101 @@ export function useCardDrag(opts: {
         }
       }
       if (away) return;
-      const hit = document.elementFromPoint(m.clientX, m.clientY);
-      setOver(hit instanceof Element ? hit.closest<HTMLElement>('[data-board-drop]') : null);
+      setOver(hitNow instanceof Element ? hitNow.closest<HTMLElement>('[data-board-drop]') : null);
     };
     const onUp = (u: PointerEvent) => {
       const picked = ids;
       const board = over?.dataset.boardDrop;
       const wasAway = away;
-      finish();
+      const outside = !!picked && (wasAway || u.clientX < 0 || u.clientY < 0 || u.clientX >= window.innerWidth || u.clientY >= window.innerHeight);
+      finish(outside);
       if (!picked) return;
-      const outside = wasAway || u.clientX < 0 || u.clientY < 0 || u.clientX >= window.innerWidth || u.clientY >= window.innerHeight;
       if (outside) optsRef.current.onDropOutside(picked);
       else if (board !== undefined) optsRef.current.onDropOnBoard?.(picked, board === 'clipboard' ? null : Number(board));
     };
     const onCancel = () => finish();
+    // 系统原生拖拽：开始以后页面收不到 pointer 事件了，鼠标在面板里时靠 HTML 的 dragover / drop（分组标签、
+    // 拖出卡片区让开），出了面板、松手靠 Rust 转来的事件
+    const startNative = (picked: number[]) => {
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+      window.removeEventListener('pointercancel', onCancel);
+      window.removeEventListener('keydown', onKey, true);
+      window.getSelection()?.removeAllRanges();
+      const goAway = () => {
+        if (done || away) return;
+        away = true;
+        setOver(null);
+        optsRef.current.onAway?.(true);
+      };
+      // dragover 只用来标出鼠标下的分组标签，松手后按 Rust 给的位置找标签（不靠 drop：WebKit 收下图片 / 文件
+      // 会去打开它，面板窗口拦掉了导航）。鼠标在顶栏的空白处不让开（让开以后窗口鼠标穿透，就拖不到
+      // 标签上了），出了面板窗口才让开（Rust 发 clip-ghost-left）：面板贴着屏幕底边，往上拖过顶栏马上就出窗口了
+      const onDragOver = (d: DragEvent) => {
+        if (done || away) return;
+        setOver(d.target instanceof Element ? d.target.closest<HTMLElement>('[data-board-drop]') : null);
+      };
+      // 万一还是落到了页面上：别让 WebKit 打开拖进来的文件
+      const onDrop = (d: DragEvent) => d.preventDefault();
+      const onDragLeave = (d: DragEvent) => {
+        if (!d.relatedTarget) setOver(null);
+      };
+      document.addEventListener('dragover', onDragOver, true);
+      document.addEventListener('drop', onDrop, true);
+      document.addEventListener('dragleave', onDragLeave, true);
+      unlisten.push(() => {
+        document.removeEventListener('dragover', onDragOver, true);
+        document.removeEventListener('drop', onDrop, true);
+        document.removeEventListener('dragleave', onDragLeave, true);
+      });
+      const keep = (p: Promise<() => void>) =>
+        void p.then((fn) => {
+          if (done) fn();
+          else unlisten.push(fn);
+        });
+      keep(on('clip-ghost-left', goAway));
+      keep(
+        on('clip-native-drag-end', ({ accepted, inside, x, y }) => {
+          if (done) return;
+          if (accepted && !inside) {
+            finish(true);
+            optsRef.current.native?.onDropped();
+            return;
+          }
+          const hit = inside && !away ? document.elementFromPoint(x, y)?.closest<HTMLElement>('[data-board-drop]') : null;
+          const board = hit?.dataset.boardDrop;
+          finish();
+          if (board !== undefined) optsRef.current.onDropOnBoard?.(picked, board === 'clipboard' ? null : Number(board));
+        }),
+      );
+      // 每张卡片的位置（滚出视野没画出来的是 null）：Rust 截下来叠成一摞当拖动图像（像 Paste）。
+      // 先截图再把卡片标成"拖着"（变淡），所以标记等系统开始拖了（clip-native-drag-begin）再做；也不做多选的"收拢"动画
+      keep(
+        on('clip-native-drag-begin', () => {
+          if (done) return;
+          document.documentElement.removeAttribute('data-drag-snap');
+          document.documentElement.setAttribute('data-card-dragging', '');
+          setDragging(picked);
+        }),
+      );
+      // 截图时藏起勾选圈、选中框（Paste 拖出来的卡片上没有这些），画好这一帧再截
+      document.documentElement.setAttribute('data-drag-snap', '');
+      requestAnimationFrame(() =>
+        requestAnimationFrame(() => {
+          if (done) return;
+          // 藏好以后再量（按下时卡片缩了一点，藏的时候也复原了）
+          const rects = picked.map((pid): [number, number, number, number] | null => {
+            const node = pid === id ? el : document.querySelector<HTMLElement>(`[data-clip-id="${pid}"]`);
+            const r = node?.getBoundingClientRect();
+            return r && r.width > 0 && r.right > 0 && r.left < window.innerWidth ? [r.left, r.top, r.width, r.height] : null;
+          });
+          const card = el.getBoundingClientRect();
+          void clipboard
+            .nativeDrag(picked, rects, Math.max(0, picked.indexOf(id)), [start.x - card.left, start.y - card.top])
+            .catch(() => finish());
+        }),
+      );
+    };
     // Esc：不拖了
     const onKey = (k: KeyboardEvent) => {
       if (k.key !== 'Escape' || !ids) return;

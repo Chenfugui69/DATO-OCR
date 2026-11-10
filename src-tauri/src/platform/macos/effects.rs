@@ -18,7 +18,8 @@ use objc2_app_kit::{
     NSAnimatablePropertyContainer, NSAnimationContext, NSApplication, NSAutoresizingMaskOptions,
     NSBezierPath, NSColor, NSEvent, NSImage, NSImageResizingMode, NSPanel,
     NSUserInterfaceItemIdentification, NSView, NSVisualEffectBlendingMode, NSVisualEffectMaterial,
-    NSVisualEffectState, NSVisualEffectView, NSWindow, NSWindowAnimationBehavior,
+    NSGlassEffectView, NSGlassEffectViewStyle, NSVisualEffectState, NSVisualEffectView, NSWindow,
+    NSWindowAnimationBehavior,
     NSWindowCollectionBehavior, NSWindowOrderingMode, NSWindowSharingType, NSWindowStyleMask,
 };
 use objc2_foundation::{NSObjectProtocol, NSString, NSTimer};
@@ -449,6 +450,9 @@ pub fn take_focus(window: &WebviewWindow) -> AppResult<()> {
 }
 
 pub fn set_exclude_from_capture(window: &WebviewWindow, exclude: bool) {
+    // 调试版量动画帧数时要录得到窗口
+    #[cfg(debug_assertions)]
+    let exclude = exclude && std::env::var_os("CHENOCR_CAPTURABLE").is_none();
     with_window(window, move |ns, _| {
         ns.setSharingType(if exclude {
             NSWindowSharingType::None
@@ -484,13 +488,42 @@ pub fn set_round_region(_window: &WebviewWindow, _radius: u32) {}
 /// 背板视图的标识，靠它在内容视图的子视图里把背板找出来
 const BACKDROP_ID: &str = "DatoOcrBackdrop";
 
-fn find_backdrop(content: &NSView) -> Option<Retained<NSVisualEffectView>> {
+/// 系统有没有液态玻璃（macOS 26 起）。有就用液态玻璃，没有（老系统）就退回经典毛玻璃（NSVisualEffectView），
+/// 设置里不再让用户选样式
+pub fn liquid_glass_available() -> bool {
+    static HAS: OnceLock<bool> = OnceLock::new();
+    *HAS.get_or_init(|| AnyClass::get(c"NSGlassEffectView").is_some())
+}
+
+fn liquid() -> bool {
+    liquid_glass_available()
+}
+
+/// 老系统（没有液态玻璃）退回用的系统材质。在同一张彩色背景上比过：弹出框（Popover，以前用的）在浅色下发灰、
+/// 深色下发闷，HUD 浅色下也是灰的，全屏界面（FullScreenUI）深浅两种外观都透得出鲜亮的颜色、磨砂感也足。
+/// 调试版可以用 `CHENOCR_GLASS_MATERIAL=数字` 换着看
+fn classic_material() -> NSVisualEffectMaterial {
+    #[cfg(debug_assertions)]
+    if let Some(n) = std::env::var("CHENOCR_GLASS_MATERIAL").ok().and_then(|v| v.parse::<isize>().ok()) {
+        return NSVisualEffectMaterial(n);
+    }
+    NSVisualEffectMaterial::FullScreenUI
+}
+
+/// 液态玻璃只用磨砂那一档（Regular）：背后整片模糊，面板上的字最清楚，和 Paste 一样（2026-11 在同一块桌面上
+/// 取色对过，几乎一样）。透亮那一档（Clear，程序坞那种）试过，背后是大块文字时面板上的字不好认，不用
+const LIQUID_STYLE: NSGlassEffectViewStyle = NSGlassEffectViewStyle::Regular;
+
+fn find_backdrop(content: &NSView) -> Option<Retained<NSView>> {
     let id = NSString::from_str(BACKDROP_ID);
-    content.subviews().iter().find_map(|view| {
-        let ours = view.identifier().is_some_and(|i| i.isEqualToString(&id));
-        ours.then(|| view.downcast::<NSVisualEffectView>().ok())
-            .flatten()
-    })
+    content
+        .subviews()
+        .iter()
+        .find(|view| view.identifier().is_some_and(|i| i.isEqualToString(&id)))
+}
+
+fn is_liquid(view: &NSView) -> bool {
+    view.downcast_ref::<NSGlassEffectView>().is_some()
 }
 
 fn fill_mask() -> NSAutoresizingMaskOptions {
@@ -498,38 +531,62 @@ fn fill_mask() -> NSAutoresizingMaskOptions {
 }
 
 /// 毛玻璃背板：`Some(半径)`（物理像素）挂上或者更新半径，`None` 去掉。
+/// 样式（液态玻璃 / 经典毛玻璃）换了的话，旧的拆掉按原来的位置换一块新的。
 pub fn set_backdrop(window: &WebviewWindow, radius: Option<u32>) -> bool {
+    let want_liquid = liquid();
     with_window(window, move |ns, mtm| {
         let Some(content) = ns.contentView() else {
             return false;
         };
-        let existing = find_backdrop(&content);
+        let mut existing = find_backdrop(&content);
         let Some(radius) = radius else {
             if let Some(view) = existing {
                 view.removeFromSuperview();
             }
             return true;
         };
-        let view = existing.unwrap_or_else(|| {
-            let view = NSVisualEffectView::initWithFrame(mtm.alloc(), content.bounds());
-            view.setIdentifier(Some(&NSString::from_str(BACKDROP_ID)));
-            view.setMaterial(NSVisualEffectMaterial::Popover);
-            view.setBlendingMode(NSVisualEffectBlendingMode::BehindWindow);
-            // 面板不是应用的主窗口，跟着窗口激活状态走的话材质一直是"没激活"的灰
-            view.setState(NSVisualEffectState::Active);
-            view.setAutoresizingMask(fill_mask());
-            view.setWantsLayer(true);
-            content.addSubview_positioned_relativeTo(&view, NSWindowOrderingMode::Below, None);
-            view
-        });
-        let points = f64::from(radius) / ns.backingScaleFactor().max(1.0);
-        if let Some(layer) = view.layer() {
-            layer.setCornerRadius(points);
-            layer.setMasksToBounds(true);
+        // 样式换了：记下旧背板的位置和伸缩方式，拆掉
+        let mut keep = None;
+        if let Some(view) = existing.take_if(|v| is_liquid(v) != want_liquid) {
+            keep = Some((view.frame(), view.autoresizingMask()));
+            view.removeFromSuperview();
         }
-        // 光靠图层圆角裁不干净：窗口背后的模糊是窗口服务器画的，它按视图的矩形来，四个角上会留下一点方角的
-        // 影子（浅色背景上看得出来）。系统给的办法是蒙版图：一张能拉伸的圆角矩形，模糊只画在它盖住的地方
-        view.setMaskImage(rounded_mask(points).as_deref());
+        let points = f64::from(radius) / ns.backingScaleFactor().max(1.0);
+        let view: Retained<NSView> = match existing {
+            Some(view) => view,
+            None => {
+                let (frame, mask) = keep.unwrap_or((content.bounds(), fill_mask()));
+                let view: Retained<NSView> = if want_liquid {
+                    let glass = NSGlassEffectView::initWithFrame(mtm.alloc(), frame);
+                    glass.setStyle(LIQUID_STYLE);
+                    Retained::into_super(glass)
+                } else {
+                    let vev = NSVisualEffectView::initWithFrame(mtm.alloc(), frame);
+                    vev.setMaterial(classic_material());
+                    vev.setBlendingMode(NSVisualEffectBlendingMode::BehindWindow);
+                    // 面板不是应用的主窗口，跟着窗口激活状态走的话材质一直是"没激活"的灰
+                    vev.setState(NSVisualEffectState::Active);
+                    Retained::into_super(vev)
+                };
+                view.setIdentifier(Some(&NSString::from_str(BACKDROP_ID)));
+                view.setAutoresizingMask(mask);
+                view.setWantsLayer(true);
+                content.addSubview_positioned_relativeTo(&view, NSWindowOrderingMode::Below, None);
+                view
+            }
+        };
+        if let Some(glass) = view.downcast_ref::<NSGlassEffectView>() {
+            // 液态玻璃自己按半径画圆角、边缘折射和高光，不用蒙版
+            glass.setCornerRadius(points);
+        } else if let Some(vev) = view.downcast_ref::<NSVisualEffectView>() {
+            if let Some(layer) = vev.layer() {
+                layer.setCornerRadius(points);
+                layer.setMasksToBounds(true);
+            }
+            // 光靠图层圆角裁不干净：窗口背后的模糊是窗口服务器画的，它按视图的矩形来，四个角上会留下一点方角的
+            // 影子（浅色背景上看得出来）。系统给的办法是蒙版图：一张能拉伸的圆角矩形，模糊只画在它盖住的地方
+            vev.setMaskImage(rounded_mask(points).as_deref());
+        }
         true
     })
     .unwrap_or(false)
@@ -589,8 +646,25 @@ pub fn resize_backdrop(window: &WebviewWindow) -> bool {
     true
 }
 
-/// 背板出场 / 收起的淡入淡出：macOS 的面板出场交给系统，不做。
-pub fn fade_backdrop(_window: &WebviewWindow, _visible: bool, _ms: u32) {}
+/// 背板淡出 / 淡入（`ms` = 0 立刻）。背板是挂在窗口里的原生视图，页面自己滑走、淡掉时它不跟着动：
+/// 剪贴板卡片拖出面板时页面滑下去让开，背板不淡掉的话就剩一块空玻璃留在原地；截图前藏玻璃也走这里
+pub fn fade_backdrop(window: &WebviewWindow, visible: bool, ms: u32) {
+    let alpha = if visible { 1.0 } else { 0.0 };
+    let _ = with_window(window, move |ns, _| {
+        let Some(view) = ns.contentView().and_then(|c| find_backdrop(&c)) else {
+            return;
+        };
+        if ms == 0 {
+            view.setAlphaValue(alpha);
+            return;
+        }
+        NSAnimationContext::beginGrouping();
+        let ctx = NSAnimationContext::currentContext();
+        ctx.setDuration(f64::from(ms) / 1000.0);
+        view.animator().setAlphaValue(alpha);
+        NSAnimationContext::endGrouping();
+    });
+}
 
 /// 背板底边离窗口底边还有多远（点）。`y` 是已经换成视图坐标的原点
 fn y_px_bottom(y: f64, h: f64, flipped: bool, height: f64) -> f64 {

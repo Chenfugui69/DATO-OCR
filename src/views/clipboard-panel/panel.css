@@ -111,6 +111,15 @@ html:not([data-platform='mac'])[data-theme='dark'] .panel-root--blur .panel {
     inset 0 1px 0 rgba(255, 255, 255, 0.12),
     inset 0 0 0 0.5px rgba(255, 255, 255, 0.1);
 }
+/* macOS 液态玻璃：系统那层玻璃自己会按背后的明暗调色、画边缘高光和折射，页面不再铺色调、不描边，
+   不然盖住了它的通透感 */
+html[data-mac-glass='liquid'] .panel-root--blur .panel {
+  background: transparent;
+  box-shadow: none;
+  /* 面板带着全局的 cn-glass-chrome（网页自己的 40px 模糊）：叠在液态玻璃上就成了一团厚雾，看不出玻璃 */
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
 /* 本程序截图的那一刻（Windows）：系统背板藏起来、色调换成不透明，抓到的面板全是页面画的（圆角带抗锯齿），见 useGlassSnapshot */
 html[data-snapshot][data-theme='light'] .panel-root--blur .panel {
   background: rgb(246, 246, 248);
@@ -874,8 +883,8 @@ html:not([data-platform='mac'])[data-theme='dark'] .panel-root--blur .panel__fad
   position: relative;
   display: flex;
   align-items: center;
-  height: 52px;
-  padding: 0 64px 0 16px;
+  height: 48px;
+  padding: 0 60px 0 14px;
   flex: none;
   overflow: hidden;
   color: #fff;
@@ -883,38 +892,38 @@ html:not([data-platform='mac'])[data-theme='dark'] .panel-root--blur .panel__fad
 }
 /* ── 按类型的卡片样式（参照 Paste） ── */
 
-/* 图片：铺满标题栏以下，底栏浮在图片上，尺寸是底部居中的半透明小胶囊 */
+/* 图片（参照 Paste）：标题栏以下整块垫透明格子，图片整张缩小放在中间（不裁，长截图也看得到全貌；
+   小图不放大），底下一行居中的灰字写尺寸。以前是铺满裁掉 + 磨砂小胶囊，宽截图只露一角，看着乱 */
 .clip-card--card.clip-card--bleed .clip-card__foot {
   position: absolute;
   left: 0;
   right: 0;
   bottom: 0;
-  height: 40px;
+  height: 34px;
   pointer-events: none;
 }
 .clip-card--card.clip-card--bleed .clip-card__image {
   box-shadow: none;
+  padding: 0 0 34px;
+  background: var(--cn-bg-elevated)
+    repeating-conic-gradient(var(--cn-fill-quaternary) 0% 25%, transparent 0% 50%) 50% / 28px 28px;
 }
-/* 尺寸胶囊、设备小圆点：透出底下图片颜色的磨砂玻璃（不是一块灰色的底），白字，像 Paste */
-.clip-card--card.clip-card--bleed .clip-card__detail,
-.clip-card--card.clip-card--bleed .clip-card__device {
-  background: rgba(255, 255, 255, 0.16);
-  -webkit-backdrop-filter: blur(14px) saturate(1.8) brightness(0.82);
-  backdrop-filter: blur(14px) saturate(1.8) brightness(0.82);
-  box-shadow: inset 0 0 0 0.5px rgba(255, 255, 255, 0.22);
-  color: rgba(255, 255, 255, 0.96);
-  text-shadow: 0 0.5px 1px rgba(0, 0, 0, 0.25);
+.clip-card--card.clip-card--bleed .clip-card__image img {
+  object-fit: scale-down;
+}
+/* GIF 的两层（第一帧 canvas、动图 img）是绝对定位叠着的，不吃容器的内边距，单独摆进同一块区域 */
+.clip-card--card.clip-card--bleed .clip-card__gif canvas,
+.clip-card--card.clip-card--bleed .clip-card__gif img {
+  inset: 0 0 34px;
+  width: 100%;
+  height: calc(100% - 34px);
+  object-fit: scale-down;
 }
 .clip-card--card.clip-card--bleed .clip-card__detail {
   flex: none;
-  padding: 4px 12px;
-  border-radius: var(--cn-radius-full);
-  font: 500 12px/1.3 var(--cn-font-sans);
+  font: 500 12.5px/1.3 var(--cn-font-sans);
   letter-spacing: 0.01em;
-}
-.clip-card--card.clip-card--bleed .clip-card__device {
-  padding: 5px;
-  border-radius: var(--cn-radius-full);
+  color: var(--cn-label-secondary);
 }
 
 /* 代码：等宽小字，不把第一行当标题，按关键字 / 字符串 / 数字 / 注释上色（Xcode 的配色） */
@@ -1063,14 +1072,15 @@ html:not([data-platform='mac'])[data-theme='dark'] .panel-root--blur .panel__fad
   display: flex;
   align-items: center;
   gap: 6px;
-  font: 650 16px/1.1 var(--cn-font-sans);
+  /* 比 Paste 大一号时显得笨重：标题 15、时间 11，时间不加粗 */
+  font: 600 15px/1.1 var(--cn-font-sans);
   letter-spacing: 0.01em;
   white-space: nowrap;
 }
 .clip-card__head .clip-card__time {
-  font: 500 11px/1.2 var(--cn-font-sans);
+  font: 400 11px/1.2 var(--cn-font-sans);
   color: inherit;
-  opacity: 0.82;
+  opacity: 0.8;
 }
 .clip-card__head .clip-card__marks {
   color: inherit;
@@ -1082,14 +1092,14 @@ html:not([data-platform='mac'])[data-theme='dark'] .panel-root--blur .panel__fad
   position: absolute;
   top: 50%;
   right: -7px;
-  width: 64px;
-  height: 64px;
+  width: 60px;
+  height: 60px;
   transform: translateY(-50%);
 }
 [data-platform='mac'] .clip-card__appicon {
-  right: -15px;
-  width: 80px;
-  height: 80px;
+  right: -14px;
+  width: 74px;
+  height: 74px;
 }
 /* 没有来源应用图标：半透明白色圆角方块里一个白色类型图标 */
 .clip-card__typetile {
@@ -1506,6 +1516,20 @@ html:not([data-platform='mac'])[data-theme='dark'] .panel-root--blur .panel__fad
 }
 .clip-card--dragging {
   opacity: 0.5;
+}
+/* macOS 原生拖拽：截卡片当拖动图像的那一两帧，藏起勾选圈、选中框、按下时的缩小（Paste 拖出来的卡片上没有这些） */
+html[data-drag-snap] .clip-card__pick,
+html[data-drag-snap] .clip-card__actions {
+  display: none;
+}
+html[data-drag-snap] .clip-card--pickmode.clip-card--card .clip-card__head {
+  padding-left: 14px;
+}
+html[data-drag-snap] .clip-card,
+html[data-drag-snap] .clip-card:hover,
+html[data-drag-snap] .clip-card:active {
+  box-shadow: none;
+  transform: none;
 }
 
 /* ── 空格快速预览 ── */

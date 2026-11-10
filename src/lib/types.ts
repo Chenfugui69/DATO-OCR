@@ -354,6 +354,8 @@ export interface CaptureSettings {
 export interface VisualCapabilities {
   glass: boolean;
   backdrop: 'mica' | 'none';
+  /** macOS 浮动面板的背板是液态玻璃（否则是经典毛玻璃） */
+  liquidGlass: boolean;
   darkMode: boolean;
   reducedMotion: boolean;
   transparencyEnabled: boolean;

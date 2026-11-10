@@ -156,7 +156,11 @@ pub fn editable_at(x: i32, y: i32) -> Option<bool> {
     {
         sys::elements::editable_at(x, y)
     }
-    #[cfg(not(windows))]
+    #[cfg(target_os = "macos")]
+    {
+        sys::editable_at(x, y)
+    }
+    #[cfg(not(any(windows, target_os = "macos")))]
     {
         let _ = (x, y);
         None
@@ -238,6 +242,43 @@ pub fn enumerate_children(window: WindowHandle) -> AppResult<Vec<PhysicalRect>> 
 
 pub fn foreground_window() -> Option<WindowHandle> {
     sys::window_enum::foreground_window()
+}
+
+/// 诊断用：窗口所属的应用现在键盘焦点在哪（macOS；其他平台 None）
+pub fn focused_element(window: WindowHandle) -> Option<String> {
+    #[cfg(target_os = "macos")]
+    {
+        sys::focused_element(window)
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = window;
+        None
+    }
+}
+
+/// DATO OCR 自己是不是当前激活的应用（键盘事件发给它）。只有 macOS 问得到，其他平台给 false
+pub fn own_app_active() -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        sys::window_enum::own_app_active()
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        false
+    }
+}
+
+/// 把窗口所属的应用叫到前台（macOS 上就算它已经是"最前面的应用"也再激活一次）
+pub fn activate_app(window: WindowHandle) {
+    #[cfg(target_os = "macos")]
+    {
+        sys::window_enum::activate_app(window);
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = focus_window(window);
+    }
 }
 
 /// 这个窗口是不是 DATO OCR 自己的。
@@ -470,6 +511,18 @@ pub fn set_backdrop_pad(window: &WebviewWindow, pad: u32) {
 }
 
 /// 毛玻璃背板：`Some(物理像素半径)` 挂上 / 更新，`None` 去掉（见 windows/effects.rs）。只能在 UI 线程调用。
+/// 系统有没有液态玻璃（macOS 26 起；其他平台 false）
+pub fn liquid_glass_available() -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        sys::effects::liquid_glass_available()
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        false
+    }
+}
+
 pub fn set_backdrop(window: &WebviewWindow, radius: Option<u32>) -> bool {
     sys::effects::set_backdrop(window, radius)
 }
@@ -592,6 +645,31 @@ pub fn click_here() -> AppResult<()> {
     sys::input::click_here()
 }
 
+#[cfg(all(debug_assertions, target_os = "macos"))]
+pub fn debug_wheel(at: (f64, f64), count: u32, delta: i32, units: u32, every_ms: u64) -> AppResult<()> {
+    sys::input::debug_wheel(at, count, delta, units, every_ms)
+}
+
+#[cfg(all(debug_assertions, target_os = "macos"))]
+pub fn debug_key(key: u16, flags: u64) -> AppResult<()> {
+    sys::input::debug_key(key, flags)
+}
+
+#[cfg(all(debug_assertions, target_os = "macos"))]
+pub fn debug_click(at: (f64, f64), flags: u64) -> AppResult<()> {
+    sys::input::debug_click(at, flags)
+}
+
+#[cfg(all(debug_assertions, target_os = "macos"))]
+pub fn debug_drag(points: &[(f64, f64)]) -> AppResult<()> {
+    sys::input::debug_drag(points)
+}
+
+/// 在屏幕物理坐标 `(x, y)` 点一下左键（指针会跳到那儿）
+pub fn click_at(x: i32, y: i32) -> AppResult<()> {
+    sys::input::click_at(x, y)
+}
+
 pub fn send_paste() -> AppResult<()> {
     sys::input::send_paste()
 }
@@ -709,3 +787,7 @@ pub fn system_ocr(image: &RgbaImage) -> AppResult<Vec<SysOcrLine>> {
 pub fn scan_codes(image: &RgbaImage) -> AppResult<Vec<ScannedCode>> {
     sys::scan_codes(image)
 }
+
+/// 剪贴板卡片的系统原生拖拽（只有 macOS；Windows 还是自己画的影子窗口）
+#[cfg(target_os = "macos")]
+pub use sys::drag as native_drag;

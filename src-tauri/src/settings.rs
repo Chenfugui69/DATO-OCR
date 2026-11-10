@@ -1365,7 +1365,7 @@ pub struct ClipboardSettings {
     pub enabled: bool,
     /// bottom | vertical
     pub panel_style: String,
-    /// 面板毛玻璃
+    /// 面板带玻璃（macOS 26 起是液态玻璃；关掉是不透明的纯色底，给配置低的电脑用）
     pub panel_blur: bool,
     /// 底部样式贴边：直角、紧贴屏幕底部（不贴边是四周留空的悬浮圆角卡片）
     pub panel_docked: bool,
@@ -1488,7 +1488,8 @@ impl Default for ClipboardSettings {
         Self {
             enabled: true,
             panel_style: "bottom".into(),
-            panel_blur: false,
+            // macOS 默认带玻璃；Windows 照旧默认不带
+            panel_blur: cfg!(target_os = "macos"),
             panel_docked: false,
             panel_over_dock: false,
             panel_animation: true,

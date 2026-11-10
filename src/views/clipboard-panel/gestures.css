@@ -61,6 +61,9 @@
 html[data-card-dragging],
 html[data-card-dragging] * {
   cursor: grabbing !important;
+  /* 拖着卡片时不选字：macOS 的网页内核会把这一下拖动同时当成拖选文字，一路选过去铺满选中色 */
+  -webkit-user-select: none !important;
+  user-select: none !important;
 }
 
 /* 主窗口截图库、识字记录：列表那层当框选的参照，框画在它里面 */

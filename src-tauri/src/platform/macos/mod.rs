@@ -9,6 +9,7 @@ pub mod backdrop;
 pub mod capture;
 pub mod clipboard;
 pub mod cursor;
+pub mod drag;
 pub mod effects;
 pub mod hook;
 pub mod input;
@@ -31,7 +32,7 @@ mod media;
 mod speech;
 mod video;
 
-pub use elements::{elements_at, elements_near};
+pub use elements::{editable_at, elements_at, elements_near, focused_element};
 pub use media::{media_access, request_media_access, Camera};
 pub use speech::{is_speaking, speak, stop_speaking, voices};
 pub use video::{export as export_video, VideoWriter};

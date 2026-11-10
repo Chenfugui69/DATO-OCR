@@ -906,6 +906,41 @@ pub fn payload_of_many(app: &AppHandle, ids: &[i64], plain: bool) -> AppResult<C
     })
 }
 
+/// 多选粘贴：几条按列表顺序分成几段，一段一段粘。文字和图片 / 文件混在一起时一份剪贴板装不下
+/// （合成文件列表的话文字就丢了，多数程序也只认一种格式），所以挨着的文字合成一段、图片和文件各自一段。
+/// 只有文字、或者只有图片文件时还是合成一份（`payload_of_many`），一次粘完
+pub fn paste_runs(app: &AppHandle, ids: &[i64]) -> AppResult<Vec<ClipboardPayload>> {
+    let st = state(app);
+    let kinds = st.db.with(|c| {
+        ids.iter()
+            .map(|id| repo::get_detail(c, *id).map(|d| d.item.kind))
+            .collect::<AppResult<Vec<_>>>()
+    })?;
+    let is_text = |k: &str| k != "image" && k != "files";
+    let mixed = kinds.iter().any(|k| is_text(k)) && kinds.iter().any(|k| !is_text(k));
+    if !mixed {
+        return Ok(vec![payload_of_many(app, ids, false)?]);
+    }
+    let mut runs: Vec<ClipboardPayload> = Vec::new();
+    for (id, kind) in ids.iter().zip(&kinds) {
+        let payload = payload_of(app, *id, false)?;
+        if is_text(kind) {
+            if let (Some(ClipboardPayload::Text { text: prev, html, rtf }), ClipboardPayload::Text { text, .. }) =
+                (runs.last_mut(), &payload)
+            {
+                // 挨着的几段文字拼成一段（格式只留纯文字，几段的格式拼不到一起）
+                prev.push('\n');
+                prev.push_str(text);
+                *html = None;
+                *rtf = None;
+                continue;
+            }
+        }
+        runs.push(payload);
+    }
+    Ok(runs)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

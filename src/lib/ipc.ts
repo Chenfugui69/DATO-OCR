@@ -220,6 +220,9 @@ export const clipboard = {
   /** 拖卡片时的影子：开始跟着鼠标（grab 是鼠标按在卡片上的位置，CSS 像素）/ 收起 / 先建好窗口 */
   ghostStart: (items: ClipItem[], grab: { x: number; y: number }) => call<void>('clipboard_ghost_start', { items, grabX: grab.x, grabY: grab.y }),
   ghostEnd: () => call<void>('clipboard_ghost_end'),
+  /** 系统原生拖拽（只有 macOS）：cards = 每条的卡片位置 [x, y, w, h]（没画出来的 null），grabbed = 手上那张的下标，grab = 鼠标按在它上面的点 */
+  nativeDrag: (ids: number[], cards: ([number, number, number, number] | null)[], grabbed: number, grab: [number, number]) =>
+    call<void>('clipboard_native_drag', { ids, cards, grabbed, grab }),
   ghostPrepare: () => call<void>('clipboard_ghost_prepare'),
   /** 多选复制：几条合成一份写进剪贴板 */
   copyMany: (ids: number[]) => call<void>('clipboard_copy_many', { ids }),

@@ -866,6 +866,14 @@ function onPointerDown(e: React.PointerEvent) {
   }
   if (e.button !== 0) return;
   const p = toPx(e);
+  // 拖选区、改大小、画标注时别让网页顺手开始选字：原位翻译后选区上叠着一层能选的透明译文
+  // （TranslationText），macOS 的网页内核会把这一下拖动当成拖选文字，一路选过去，整片铺满选中色。
+  // 直接按在译文 / 原位表格上才是要选字，照常放行
+  const target = e.target instanceof Element ? e.target : null;
+  if (!target?.closest('.cap-trtext__line, .cap-inplace, input, textarea, [contenteditable="true"]')) {
+    e.preventDefault();
+    window.getSelection()?.removeAllRanges();
+  }
 
   if (st.phase === 'passive' && activeElsewhere !== null) {
     // 另一块屏上已经有选区了：把焦点还给它，键盘操作才有效

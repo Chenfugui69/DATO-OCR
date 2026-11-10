@@ -32,6 +32,15 @@ pub const CLIP_PEEK: &str = "clip-peek";
 pub const CLIP_GHOST: &str = "clip-ghost";
 /// 拖卡片时鼠标下面是不是输入框（影子缩小表示松手就贴在这儿）
 pub const CLIP_GHOST_TARGET: &str = "clip-ghost-target";
+/// 拖卡片时松开了鼠标（发给开始拖的那个窗口，带着松手时在不在那个窗口外面）。macOS 上鼠标拖出窗口、
+/// 窗口设成鼠标穿透后，页面收不到移动和松开，靠 Rust 盯着鼠标告诉它
+pub const CLIP_GHOST_RELEASED: &str = "clip-ghost-released";
+/// 拖卡片时鼠标出了开始拖的那个窗口（面板该让开了）
+pub const CLIP_GHOST_LEFT: &str = "clip-ghost-left";
+/// 系统原生拖拽卡片开始了（macOS；截好了拖动图像，系统接管了拖动）
+pub const CLIP_NATIVE_DRAG_BEGIN: &str = "clip-native-drag-begin";
+/// 系统原生拖拽卡片结束（macOS）：{ accepted, inside }
+pub const CLIP_NATIVE_DRAG_END: &str = "clip-native-drag-end";
 /// 多端同步的状态变了（设备上下线、有人申请加入、网盘同步结果…）
 pub const SYNC_CHANGED: &str = "sync-changed";
 /// 检查更新 / 下载安装的状态变了

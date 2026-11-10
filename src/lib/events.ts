@@ -62,6 +62,14 @@ export interface EventMap {
   'clip-ghost': { items: import('./types').ClipItem[]; grab: [number, number] };
   /** 拖卡片时鼠标下面是不是输入框 */
   'clip-ghost-target': boolean;
+  /** 拖卡片时松开了鼠标（Rust 盯着鼠标键发的：面板让开后鼠标穿透，macOS 上页面收不到松开） */
+  'clip-ghost-released': boolean;
+  /** 拖卡片时鼠标出了开始拖的那个窗口 */
+  'clip-ghost-left': null;
+  /** 系统原生拖拽卡片开始了（macOS）：拖动图像截好了 */
+  'clip-native-drag-begin': null;
+  /** 系统原生拖拽卡片结束（macOS）：有没有程序收下、松手时在不在面板里 */
+  'clip-native-drag-end': { accepted: boolean; inside: boolean; x: number; y: number };
   /** 多端同步的状态变了，重新拉一次 */
   'sync-changed': null;
   'update-status': UpdateStatus;

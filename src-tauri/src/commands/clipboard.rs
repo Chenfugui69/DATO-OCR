@@ -113,13 +113,42 @@ pub async fn clipboard_peek_show(app: AppHandle, id: i64, card: clipboard::peek:
 
 /// 拖卡片：影子开始跟着鼠标走。`items` 是拖着的那几条（原样转给影子页面），`grab_x/y` 是鼠标按在卡片上的位置
 #[tauri::command]
-pub async fn clipboard_ghost_start(app: AppHandle, items: serde_json::Value, grab_x: f64, grab_y: f64) -> AppResult<()> {
+pub async fn clipboard_ghost_start(
+    app: AppHandle,
+    window: tauri::WebviewWindow,
+    items: serde_json::Value,
+    grab_x: f64,
+    grab_y: f64,
+) -> AppResult<()> {
     let (tx, rx) = tokio::sync::oneshot::channel();
     let ui = app.clone();
+    let origin = window.label().to_string();
     app.run_on_main_thread(move || {
-        let _ = tx.send(clipboard::ghost::start(&ui, items, (grab_x, grab_y)));
+        let _ = tx.send(clipboard::ghost::start(&ui, items, (grab_x, grab_y), origin));
     })?;
     rx.await.map_err(|e| AppError::msg(e.to_string()))?
+}
+
+/// 系统原生拖拽卡片（macOS）。`cards` 是每条的卡片在页面里的位置 [x, y, w, h]（没画出来的是 null），
+/// `grabbed` 是手上那张在 `ids` 里的下标，`grab` 是鼠标按在它上面的点
+#[cfg(target_os = "macos")]
+#[tauri::command]
+pub async fn clipboard_native_drag(
+    app: AppHandle,
+    window: tauri::WebviewWindow,
+    ids: Vec<i64>,
+    cards: Vec<Option<[f64; 4]>>,
+    grabbed: usize,
+    grab: [f64; 2],
+) -> AppResult<()> {
+    blocking(move || panel::native_drag(&app, &window, ids, cards, grabbed, (grab[0], grab[1]))).await
+}
+
+/// 别的系统没有原生拖拽：页面不会调
+#[cfg(not(target_os = "macos"))]
+#[tauri::command]
+pub async fn clipboard_native_drag() -> AppResult<()> {
+    Err(AppError::msg("只有 macOS 支持"))
 }
 
 #[tauri::command]

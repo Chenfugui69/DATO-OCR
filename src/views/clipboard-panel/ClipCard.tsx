@@ -342,8 +342,9 @@ export const ClipCard = memo(function ClipCard({
   );
   const time = <span className="clip-card__time">{relativeTime(item.lastUsedAt)}</span>;
   const appName = item.sourceApp ?? t('clip.unknownApp');
-  // 底栏右边的设备图标；同步来的悬停时带上那台设备的名字（这时 sourceApp 就是设备名）
-  const device = isDeviceKind(item.deviceKind) && (
+  // 底栏右边的设备图标；同步来的悬停时带上那台设备的名字（这时 sourceApp 就是设备名）。
+  // 卡片条里只给别的设备同步来的显示（本机的每张都挂一个，底栏就不再是安安静静的一行字了，参照 Paste）
+  const device = isDeviceKind(item.deviceKind) && (layout !== 'card' || item.remote) && (
     <span className="clip-card__device">
       <DeviceIcon
         kind={item.deviceKind}
