@@ -17,6 +17,8 @@ pub const LABEL: &str = "clip-peek";
 /// 预览最大多大（逻辑像素）。图片按比例缩进去，文字、文件用固定大小
 const MAX: (f64, f64) = (520.0, 380.0);
 const TEXT: (f64, f64) = (440.0, 280.0);
+/// 小图预览最多放大到原图的几倍
+const UPSCALE: f64 = 3.0;
 /// 和卡片之间留多少（逻辑像素）
 const GAP: f64 = 10.0;
 
@@ -80,11 +82,12 @@ pub fn show(app: &AppHandle, id: i64, card: CardRect) -> AppResult<()> {
         (w * k, h * k)
     };
     let (max, text) = ((MAX.0 * zoom, MAX.1 * zoom), (TEXT.0 * zoom, TEXT.1 * zoom));
-    // 窗口大小：图片按比例放进 max 里（不放大），别的固定大小
+    // 窗口大小：图片按比例放进 max 里，别的固定大小。小图也放大到 max 那么大（不放大的话 240×319 这种小图
+    // 预览出来和卡片里一样大，按 Shift 等于白看），只是最多放大到原图的 UPSCALE 倍，再大就糊了
     let (lw, lh) = match (item.kind.as_str(), item.width, item.height) {
         ("image", Some(w), Some(h)) if w > 0 && h > 0 => {
             let (w, h) = (w as f64 / s, h as f64 / s);
-            let k = (max.0 / w).min(max.1 / h).min(1.0);
+            let k = (max.0 / w).min(max.1 / h).min(UPSCALE);
             fit((w * k).max(160.0), (h * k).max(120.0))
         }
         ("image", ..) => fit(max.0, max.1),

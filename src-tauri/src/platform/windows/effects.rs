@@ -225,14 +225,17 @@ static REGION_RECT: parking_lot::Mutex<Option<HashMap<isize, LocalRect>>> =
 fn apply_region(h: HWND) {
     let key = h.0 as isize;
     let rect = REGION_RECT.lock().as_ref().and_then(|m| m.get(&key).copied());
+    // 不让系统跟着重画（第三个参数 false）：重画会给这个无边框窗口画一遍非客户区，新露出来的地方闪过一帧
+    // 老式的浅蓝标题栏（剪贴板面板打开筛选时放开顶上预留那截，屏幕下半截闪一下）。网页内容是 WebView2
+    // 自己合成的，不需要系统重画
     // SAFETY: h 是存活的本进程窗口。SetWindowRgn 成功后区域归系统所有，失败才由我们释放。
     unsafe {
         let Some((x, y, w, hh)) = rect else {
-            let _ = SetWindowRgn(h, None, true);
+            let _ = SetWindowRgn(h, None, false);
             return;
         };
         let rgn = CreateRectRgn(x, y, x + w, y + hh);
-        if SetWindowRgn(h, Some(rgn), true) == 0 {
+        if SetWindowRgn(h, Some(rgn), false) == 0 {
             let _ = DeleteObject(rgn.into());
         }
     }
@@ -465,16 +468,20 @@ pub fn slide_window(window: &WebviewWindow, to: PhysicalRect, ms: u32) {
     // 两头里靠下的那个位置的顶边 = 面板"长出来"的那条线，线以下的部分裁掉
     let line = from_y.max(to_y);
     let handle = h.0 as isize;
+    // 要求过"只保留窗口里的一块"（`set_rect_region`，剪贴板面板顶上给筛选面板的预留）：滑动时也只露那一块
+    let keep = REGION_RECT.lock().as_ref().and_then(|m| m.get(&handle).copied());
+    let (kx, ky, kw, kh) = keep.unwrap_or((0, 0, w, hh));
     let gen = SLIDE_GEN.fetch_add(1, Ordering::SeqCst) + 1;
     let step = move |y: i32, last: bool| {
         let h = HWND(handle as *mut _);
         // SAFETY: 句柄来自本进程的窗口；窗口没了这些调用只是失败。区域设置成功后归系统所有。
         unsafe {
             if last && to_y < line {
-                // 停稳在上面：整个窗口都要显示，去掉裁剪
-                let _ = SetWindowRgn(h, None, false);
+                // 停稳在上面：整个窗口（或者要求保留的那一块）都要显示
+                apply_region(h);
             } else {
-                let rgn = CreateRectRgn(0, 0, w, (line - y).clamp(0, hh));
+                let bottom = (line - y).clamp(0, hh).min(ky + kh);
+                let rgn = CreateRectRgn(kx, ky, kx + kw, bottom.max(ky));
                 if SetWindowRgn(h, Some(rgn), false) == 0 {
                     let _ = DeleteObject(rgn.into());
                 }
@@ -575,7 +582,7 @@ pub fn set_rounded(window: &WebviewWindow, rounded: bool) {
 fn suppress_nc_frame(h: HWND) {
     use windows::Win32::Foundation::{LPARAM, LRESULT, WPARAM};
     use windows::Win32::UI::Shell::{DefSubclassProc, SetWindowSubclass};
-    use windows::Win32::UI::WindowsAndMessaging::WM_NCACTIVATE;
+    use windows::Win32::UI::WindowsAndMessaging::{WM_NCACTIVATE, WM_NCPAINT};
 
     unsafe extern "system" fn proc(
         h: HWND,
@@ -587,6 +594,10 @@ fn suppress_nc_frame(h: HWND) {
     ) -> LRESULT {
         if msg == WM_NCACTIVATE {
             return LRESULT(1);
+        }
+        // 非客户区也不画：窗口区域变了、露出新的一块时系统会来画，画出来是一帧老式标题栏
+        if msg == WM_NCPAINT {
+            return LRESULT(0);
         }
         // SAFETY: 原样交给下一层窗口过程。
         unsafe { DefSubclassProc(h, msg, wparam, lparam) }

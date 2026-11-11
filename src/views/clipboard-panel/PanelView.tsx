@@ -44,7 +44,7 @@ import { DropdownMenu, notify } from '@/ui/overlays';
 import { clipMenu } from './actions';
 import { BoardTabs, boardColor, moveToBoard } from './BoardTabs';
 import { useCardDrag, useKeyHeld, useMultiPick } from './cardGestures';
-import { type CardAction, ClipCard, isGifItem } from './ClipCard';
+import { type CardAction, ClipCard, isGifItem, preloadCard } from './ClipCard';
 import { type DateRange, FilterPanel, rangeBounds } from './FilterPanel';
 import { HScrollbar } from './HScrollbar';
 import { OtpBody } from './OtpBody';
@@ -71,6 +71,8 @@ const CARD_INSET = 24;
 /** 筛选面板弹在横向面板上方：窗口临时往上长这么多，筛选面板宽这么多（逻辑像素） */
 const FILTER_RAISE = 440;
 const FILTER_W = 460;
+/** 换筛选时新结果最多等多久（毫秒）：等前面几张卡片的图片解码好、标题栏颜色算好再换上去 */
+const SWAP_WAIT = 250;
 const FILTERS: Filter[] = ['all', 'text', 'image', 'link', 'files', 'pinned', 'favorite'];
 const FILTER_ICONS: Partial<Record<Filter, LucideIcon>> = {
   all: LayoutGrid,
@@ -167,6 +169,20 @@ export default function PanelView() {
   const panelRef = useRef<HTMLDivElement>(null);
   /** 横向面板的筛选面板弹在面板上方（照 Paste）：窗口临时往上长 FILTER_RAISE，弹出的位置（相对窗口） */
   const [raised, setRaised] = useState<{ panelH: number; left: number; bottom: number; arrow: number } | null>(null);
+  /** Windows 横向面板：窗口顶上预留给筛选面板的高度（Rust 弹出面板时留好、用窗口区域裁掉，见 clipboard::panel 的
+   *  FILTER_ROOM）。面板排在这下面；打开筛选面板只放开裁剪，窗口不动。0 = 没留，打开时临时把窗口往上长 */
+  const [reserve, setReserve] = useState(0);
+  /** 预留的那一截已经放开裁剪、可以画筛选面板了 */
+  const [bandOpen, setBandOpen] = useState(false);
+  /** 筛选面板第几次打开（见打开筛选面板的 effect） */
+  const filterSeq = useRef(0);
+  /** 改窗口裁剪排队做：Rust 那边命令是异步跑的，快速开关筛选时"裁回去"可能晚于"放开"执行，筛选面板就一直被裁着 */
+  const regionQueue = useRef<Promise<unknown>>(Promise.resolve());
+  const setRegion = useCallback((rect: Parameters<typeof system.setRegion>[0]) => {
+    const next = regionQueue.current.catch(() => undefined).then(() => system.setRegion(rect));
+    regionQueue.current = next;
+    return next;
+  }, []);
   /** 面板每弹出一次加一（窗口往上长着时面板被收起、又弹出来：那次的位置已经重新摆过，不能再按老位置缩回去） */
   const showGen = useRef(0);
   /** 当前看的分组（Paste 的图钉板）；null = 剪贴板（全部历史） */
@@ -194,7 +210,31 @@ export default function PanelView() {
   }, [keyword]);
 
   const query = useClipItems(useMemo(() => queryOf(filter, debounced, board, app, range), [filter, debounced, board, app, range]), 50);
-  const history = useMemo(() => query.data?.pages.flatMap((p) => p.items) ?? [], [query.data]);
+  const fetched = useMemo(() => query.data?.pages.flatMap((p) => p.items) ?? [], [query.data]);
+  // 卡片标题栏跟着来源应用图标的主色走（像 Paste）。后端按图标缓存；这里也记着问过的，只问新出现的图标
+  const colorCache = useRef<Record<string, string>>({});
+  const [colors, setColors] = useState<Record<string, string>>({});
+  const ensureColors = useCallback(async (list: ClipItem[]) => {
+    const missing = [...new Set(list.map((i) => i.sourceIcon).filter((s): s is string => !!s && !(s in colorCache.current)))];
+    if (!missing.length) return;
+    const got = await clipboard.iconColors(missing);
+    for (const k of missing) colorCache.current[k] = got[k] ?? '';
+    setColors({ ...colorCache.current });
+  }, []);
+  // 换了筛选 / 搜索词 / 分组：新结果先在后台把前面几张卡片的图（预览图、文件图标、应用图标）解码好、标题栏颜色算好再一次换上去
+  // （最多等 SWAP_WAIT）。直接换的话新卡片先画一帧备用色的标题栏、空着的图片，下一帧才对，看着闪一下
+  const [history, setHistory] = useState<ClipItem[]>([]);
+  useEffect(() => {
+    let cancelled = false;
+    const ready = Promise.all([ensureColors(fetched.slice(0, 40)), ...fetched.slice(0, 12).map((i) => preloadCard(i, qc))]).catch(() => undefined);
+    void Promise.race([ready, new Promise((r) => window.setTimeout(r, SWAP_WAIT))]).then(() => {
+      if (!cancelled) setHistory(fetched);
+    });
+    void ensureColors(fetched).catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [fetched, ensureColors, qc]);
   // 有推荐结果时：推荐的排最前（带暖色描边），后面照常是历史（去掉重复的）
   const suggestedIds = useMemo(() => new Set(smart?.phase === 'done' ? smart.items.map((i) => i.id) : []), [smart]);
   const items = useMemo(
@@ -208,15 +248,10 @@ export default function PanelView() {
   useEffect(() => {
     if (board !== null && groups.data && !groups.data.some((g) => g.id === board)) setBoard(null);
   }, [board, groups.data]);
-  // 卡片标题栏跟着来源应用图标的主色走（像 Paste）；后端按图标缓存，只在出现新图标时才再问
-  const icons = useMemo(() => [...new Set(items.map((i) => i.sourceIcon).filter((s): s is string => !!s))].sort(), [items]);
-  const iconColors = useQuery({
-    queryKey: ['clip-icon-colors', icons],
-    queryFn: () => clipboard.iconColors(icons),
-    enabled: icons.length > 0,
-    staleTime: Infinity,
-    placeholderData: (prev) => prev,
-  });
+  // 推荐结果等别处来的卡片也要有颜色
+  useEffect(() => {
+    void ensureColors(items).catch(() => undefined);
+  }, [items, ensureColors]);
 
   const horizontal = style === 'bottom';
   const virt = useVirtualizer({
@@ -277,6 +312,36 @@ export default function PanelView() {
     const cx = b.left + b.width / 2;
     const left = Math.round(Math.min(Math.max(cx - FILTER_W / 2, 12), window.innerWidth - FILTER_W - 12));
     const gen = showGen.current;
+    // 收起时"缩回去之后再清掉位置"是异步的：那之前筛选又打开了（快速关了又开、效果重跑），迟到的清除不能把
+    // 新打开的位置抹掉，不然筛选开着却什么都不画
+    const seq = ++filterSeq.current;
+    const stillMine = () => showGen.current === gen && filterSeq.current === seq;
+    if (reserve > 0) {
+      // 上面已经留好地方：先放开窗口裁剪（那一截这时还是透明的），放开以后才把筛选面板画出来。
+      // 反过来（裁着的时候先画好再放开）的话，WebView2 有时不把裁掉期间画的那块显示出来，筛选面板只露出伸到
+      // 面板里的那个尖角
+      let cancelled = false;
+      setRaised({ panelH: p.height, left, bottom: window.innerHeight - p.top + 2, arrow: cx - left });
+      void setRegion(null)
+        .then(() => {
+          if (!cancelled) setBandOpen(true);
+        })
+        .catch(notify.error);
+      return () => {
+        cancelled = true;
+        setBandOpen(false);
+        if (showGen.current !== gen) {
+          setRaised(null);
+          return;
+        }
+        // 宽高给大一点，系统按窗口大小截掉，不会因为换算取整少裁或多裁一像素
+        void setRegion({ x: 0, y: reserve, width: 100_000, height: 100_000 })
+          .catch(notify.error)
+          .finally(() => {
+            if (stillMine()) setRaised(null);
+          });
+      };
+    }
     const blurNow = blurRef.current;
     const win = getCurrentWindow();
     let done = false;
@@ -304,10 +369,10 @@ export default function PanelView() {
         .setBounds(b0.x, b0.y, b0.w, b0.h, blurNow ? { x: 0, y: 0, width: b0.w, height: b0.h } : undefined)
         .catch(notify.error)
         .finally(() => {
-          if (showGen.current === gen) setRaised(null);
+          if (stillMine()) setRaised(null);
         });
     };
-  }, [filterOpen, horizontal]);
+  }, [filterOpen, horizontal, reserve, setRegion]);
   // 一按下 Ctrl 就出勾选框（不像 Ctrl+1–9 的提示那样等一下）
   const ctrlHeld = useKeyHeld('Control', visible);
   const pickMode = ctrlHeld || picked.size > 0;
@@ -326,7 +391,7 @@ export default function PanelView() {
       ids
         .map((id) => items.find((i) => i.id === id))
         .filter((i): i is ClipItem => !!i)
-        .map((i) => ({ ...i, ghostTint: i.sourceIcon ? iconColors.data?.[i.sourceIcon] : undefined })),
+        .map((i) => ({ ...i, ghostTint: i.sourceIcon ? colors[i.sourceIcon] || undefined : undefined })),
     // 松手时面板还是"让开"的（滑走、玻璃淡掉、鼠标穿透），就这样收起；窗口藏好之后（粘贴完）再复原，
     // 不然先滑回来再收起会闪一下
     onDropOutside: (ids) => {
@@ -500,6 +565,7 @@ export default function PanelView() {
   useEvent('clipboard-panel-show', (p) => {
     showGen.current += 1;
     setRaised(null);
+    setReserve(p.reserve);
     hiding.current = false;
     resetAway();
     setStyle(p.style);
@@ -974,11 +1040,16 @@ export default function PanelView() {
         away && 'panel-root--away',
         raised && 'panel-root--raised',
       )}
-      style={raised ? ({ '--panel-h': `${raised.panelH}px` } as React.CSSProperties) : undefined}
+      style={
+        {
+          ...(raised && { '--panel-h': `${raised.panelH}px` }),
+          ...(reserve > 0 && horizontal && { top: reserve }),
+        } as React.CSSProperties
+      }
       data-visible={visible}
       data-smart={orbColor}
     >
-      {filterOpen && horizontal && raised && (
+      {filterOpen && horizontal && raised && (reserve === 0 || bandOpen) && (
         <FilterPanel
           ref={filterPanelRef}
           above={{ left: raised.left, bottom: raised.bottom, arrow: raised.arrow, width: FILTER_W }}
@@ -1151,7 +1222,7 @@ export default function PanelView() {
                   >
                     <ClipCard
                       item={item}
-                      tint={item.sourceIcon ? iconColors.data?.[item.sourceIcon] : undefined}
+                      tint={item.sourceIcon ? colors[item.sourceIcon] || undefined : undefined}
                       board={boardStyle}
                       suggested={suggestedIds.has(item.id)}
                       onAction={horizontal ? onCardAction : undefined}

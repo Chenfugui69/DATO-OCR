@@ -1,6 +1,6 @@
 // 数据库数据走 TanStack Query（规格 01 §4.2：服务端状态不放 Zustand）。
 
-import { useInfiniteQuery, useQueryClient } from '@tanstack/react-query';
+import { keepPreviousData, useInfiniteQuery, useQueryClient } from '@tanstack/react-query';
 
 import { useEvent } from './events';
 import { clipboard, library, ocr } from './ipc';
@@ -12,6 +12,8 @@ export function useClipItems(query: Omit<ClipQuery, 'cursor' | 'limit'>, limit =
     queryFn: ({ pageParam }) => clipboard.query({ ...query, cursor: pageParam, limit }),
     initialPageParam: null as string | null,
     getNextPageParam: (last) => last.nextCursor,
+    // 换筛选 / 搜索词时新结果到之前先留着上一次的，不然中间有一帧是空列表，卡片闪一下
+    placeholderData: keepPreviousData,
   });
 }
 

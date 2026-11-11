@@ -5,8 +5,8 @@
 
 import clsx from 'clsx';
 import { Check, Eye, File, Globe, Image, KeyRound, Languages, Link2, MonitorSmartphone, Palette, Pin, ScanText, Sparkles, Star, Type } from 'lucide-react';
-import { useQuery } from '@tanstack/react-query';
-import { memo, useEffect, useRef, useState } from 'react';
+import { type QueryClient, useQuery } from '@tanstack/react-query';
+import { memo, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import { readableOn, relativeTime } from '@/lib/format';
@@ -57,10 +57,10 @@ function GifPreview({ item, playing, layout }: { item: ClipItem; playing: boolea
     };
   }, [item.id, rel, failed]);
   const src = assetUrl(rel);
-  useEffect(() => {
+  // 画面出来之前就画好第一帧（useLayoutEffect）：预加载过（preloadCard）的直接画，不然卡片先空着出来一帧
+  useLayoutEffect(() => {
     if (!src) return;
-    const img = new window.Image();
-    img.onload = () => {
+    const draw = (img: HTMLImageElement) => {
       const c = canvas.current;
       if (!c || !img.naturalWidth) return;
       // 卡片就两百来像素宽，第一帧缩小了画，省内存
@@ -69,6 +69,13 @@ function GifPreview({ item, playing, layout }: { item: ClipItem; playing: boolea
       c.height = Math.max(1, Math.round(img.naturalHeight * scale));
       c.getContext('2d')?.drawImage(img, 0, 0, c.width, c.height);
     };
+    const hit = decoded.get(src);
+    if (hit) {
+      draw(hit);
+      return;
+    }
+    const img = new window.Image();
+    img.onload = () => draw(img);
     img.onerror = () => setFailed(true);
     img.src = src;
     return () => {
@@ -132,13 +139,15 @@ function shortPath(path: string): string {
   return path.replace(/^\/Users\/[^/]+\//, '').replace(/^[A-Za-z]:\\Users\\[^\\]+\\/, '');
 }
 
+const fileIconQuery = (path: string) => ({
+  queryKey: ['clip-file-icon', path],
+  queryFn: () => clipboard.fileIcon(path),
+  staleTime: Infinity,
+});
+
 /** 文件卡片的大图标：系统给这个文件的图标（同类文件后端只取一次）；取不到用线条图标 */
 function FileArt({ path }: { path: string }) {
-  const icon = useQuery({
-    queryKey: ['clip-file-icon', path],
-    queryFn: () => clipboard.fileIcon(path),
-    staleTime: Infinity,
-  });
+  const icon = useQuery(fileIconQuery(path));
   if (icon.data) return <img className="clip-card__fileicon" src={assetUrl(icon.data)} alt="" draggable={false} />;
   return <File className="clip-card__fileicon clip-card__fileicon--line" strokeWidth={1.2} />;
 }
@@ -202,6 +211,41 @@ const LABEL_ZONE = 30;
  *  WebKit 把 256 的原图缩到 154 会发虚 */
 function cardIconPath(icon: string): string {
   return isMac && icon.endsWith('-hd.png') ? icon.replace(/-hd\.png$/, '-card.png') : icon;
+}
+
+/** 解码好的图（按地址）。GIF 卡片的第一帧要画到 canvas 上，有现成的就不用等加载回调 */
+const decoded = new Map<string, HTMLImageElement>();
+
+function decodeImage(src: string | null | undefined): Promise<void> {
+  if (!src) return Promise.resolve();
+  if (decoded.has(src)) return Promise.resolve();
+  const img = new window.Image();
+  img.src = src;
+  return img
+    .decode()
+    .then(() => {
+      decoded.set(src, img);
+      // 只留最近的一些，别一直攒着
+      if (decoded.size > 300) decoded.delete(decoded.keys().next().value!);
+    })
+    .catch(() => undefined);
+}
+
+/** 卡片上要显示的图（预览图、文件图标、标题栏的应用图标）先加载、解码好：换上去的那一帧就都有，不会先空一下 */
+export async function preloadCard(item: ClipItem, qc: QueryClient): Promise<void> {
+  const jobs: Promise<void>[] = [];
+  if (item.sourceIcon) jobs.push(decodeImage(assetUrl(cardIconPath(item.sourceIcon))));
+  if (item.type === 'image') jobs.push(decodeImage(assetUrl(item.thumbPath ?? item.filePath)));
+  else if (isGifItem(item)) jobs.push(decodeImage(assetUrl(item.thumbPath ?? null)));
+  else if (item.type === 'files' && item.files[0]) {
+    jobs.push(
+      qc
+        .fetchQuery(fileIconQuery(item.files[0]))
+        .then((rel) => decodeImage(assetUrl(rel ?? null)))
+        .catch(() => undefined),
+    );
+  }
+  await Promise.all(jobs);
 }
 
 export function imageFit(width: number | null | undefined, height: number | null | undefined): { cover: boolean; underLabel: boolean } {

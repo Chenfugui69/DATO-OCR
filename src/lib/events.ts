@@ -53,7 +53,7 @@ export interface EventMap {
   /** 贴图的鼠标穿透被（托盘菜单）取消了 */
   'pin-click-through': boolean;
   'clipboard-changed': ClipChanged;
-  'clipboard-panel-show': { style: 'bottom' | 'vertical' };
+  'clipboard-panel-show': { style: 'bottom' | 'vertical'; reserve: number };
   /** 大预览窗口要显示哪一条 */
   'clip-preview': number;
   /** 按住 Shift 的悬浮预览看哪一条（null = 收起） */

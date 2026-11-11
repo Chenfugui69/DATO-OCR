@@ -20,6 +20,8 @@
     "截图库框选很多张图时不再卡顿",
     "贴图拖四个角等比缩放，钉住的角不再晃",
     "远程控制时也看得到正在拖动的剪贴板卡片",
+    "剪贴板按住 Shift 预览小图时会放大显示，不再和卡片里一样大",
+    "剪贴板切换筛选、搜索时卡片直接换好，不再先闪一下",
     "截图自动框选去掉容易认错的「区块」档，只留窗口和元素"
   ],
   "fixed": [
@@ -52,6 +54,8 @@
       "Box-selecting many images in the screenshot library no longer stutters",
       "Pinned images scale proportionally from all four corners, and the anchored corner stays put",
       "Dragged clipboard cards are visible during remote control",
+      "Holding Shift to preview a small clipboard image now shows it enlarged instead of card-sized",
+      "Switching clipboard filters or searching swaps the cards in cleanly without a flicker",
       "Auto-detect in screenshots drops the error-prone \"block\" level, keeping window and element"
     ],
     "fixed": [

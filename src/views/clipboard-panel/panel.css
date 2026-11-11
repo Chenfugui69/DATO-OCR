@@ -725,6 +725,16 @@ html[data-snapshot][data-theme='dark'] .panel-root--blur .panel {
 .filterpanel--above {
   transform-origin: var(--arrow-x) 100%;
 }
+/* Windows：弹在面板上方那一截是窗口临时长出来的透明区域，没有系统毛玻璃，backdrop-filter 也模糊不到桌面，
+   八成的底色挡不住后面窗口的字（原样透出两成，很乱）。底色做成不透明 */
+html:not([data-platform='mac']) .filterpanel,
+html:not([data-platform='mac']) .filterpanel__arrow {
+  background: #f8f8fa;
+}
+html:not([data-platform='mac'])[data-theme='dark'] .filterpanel,
+html:not([data-platform='mac'])[data-theme='dark'] .filterpanel__arrow {
+  background: #222224;
+}
 .panel-root--vertical .filterpanel {
   top: 108px;
   left: 8px;

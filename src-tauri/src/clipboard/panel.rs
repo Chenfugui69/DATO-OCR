@@ -27,6 +27,11 @@ const VERTICAL_PAD: f64 = 6.0;
 /// 悬浮样式的圆角：竖版和 panel.css 的 --cn-radius-2xl 一致，横向那一条大一些（panel.css 里同样是 26，和 Paste 一样）
 const RADIUS: f64 = 16.0;
 const BOTTOM_RADIUS: f64 = 26.0;
+/// Windows 横向面板顶上预留多高（逻辑像素，和页面 PanelView 的 FILTER_RAISE 一致）：筛选面板弹在面板上方。
+/// 打开筛选时再把窗口往上长的话，窗口挪动和网页重画对不上同一帧，旧画面会在高出 440 的地方闪一下；
+/// 所以面板弹出时（窗口还没显示）就留好，留出来的部分用窗口区域裁掉（不显示、点击穿透），打开筛选时只放开裁剪。
+/// 上面放不下这么多就不留，页面退回临时长窗口的做法
+const FILTER_ROOM: f64 = 440.0;
 
 static PREVIOUS: Mutex<Option<WindowHandle>> = Mutex::new(None);
 
@@ -51,6 +56,8 @@ const SLIDE_OUT_MS: u32 = 200;
 #[serde(rename_all = "camelCase")]
 struct PanelShow {
     style: String,
+    /// 窗口顶上预留了多高（逻辑像素，见 `FILTER_ROOM`），面板在这下面
+    reserve: f64,
 }
 
 pub fn prewarm(app: &AppHandle) {
@@ -130,6 +137,7 @@ fn show(app: &AppHandle) -> AppResult<()> {
     let style = cb.panel_style.clone();
     let mut slide = None;
     let mut placed = None;
+    let mut reserve = 0.0;
     // 上一次滑出去时窗口被裁成了一条看不见的缝（Windows 的滑动是边挪边裁），这次不管滑不滑都先放开
     platform::set_rect_region(&window, None);
     // 上一次筛选面板开着时被收起：窗口往上长过、背板只铺在下面一块。这次窗口重新摆，背板也恢复铺满
@@ -195,13 +203,25 @@ fn show(app: &AppHandle) -> AppResult<()> {
                 }
             };
             placed = Some(rect);
+            let mut win = rect;
+            if cfg!(windows) {
+                let want = (FILTER_ROOM * s).round() as i32;
+                let rp = want.min(rect.y - monitor.bounds.y);
+                if rp >= want / 2 {
+                    win = PhysicalRect::new(rect.x, rect.y - rp, rect.width, rect.height + rp as u32);
+                    reserve = f64::from(rp) / s;
+                    let (w, h) = (rect.width as i32, rect.height as i32);
+                    platform::set_rect_region(&window, Some((0, rp, w, h)));
+                    platform::set_backdrop_rect(&window, Some((0.0, rp as f32, w as f32, h as f32)), 0);
+                }
+            }
             if cb.panel_animation && platform::slides_windows(blur) {
                 // 先摆在滑入的起点（看不见），显示出来之后再滑上去
-                let start = platform::slide_start(rect, &monitor);
+                let start = platform::slide_start(win, &monitor);
                 platform::set_bounds(&window, start.x, start.y, start.width, start.height)?;
-                slide = Some((rect, start));
+                slide = Some((win, start));
             } else {
-                platform::place_window(&window, rect.x, rect.y, rect.width, rect.height)?;
+                platform::place_window(&window, win.x, win.y, win.width, win.height)?;
             }
         }
     }
@@ -212,7 +232,7 @@ fn show(app: &AppHandle) -> AppResult<()> {
         let s = window.outer_size().ok()?;
         Some(PhysicalRect::new(p.x, p.y, s.width, s.height))
     });
-    let _ = app.emit_to(LABEL, events::CLIPBOARD_PANEL_SHOW, PanelShow { style });
+    let _ = app.emit_to(LABEL, events::CLIPBOARD_PANEL_SHOW, PanelShow { style, reserve });
     window.show()?;
     platform::take_focus(&window)?;
     // 面板开着的时候允许被截图（用户就是想截它）；藏起来时再排除 —— 不排除的隐藏窗口会被

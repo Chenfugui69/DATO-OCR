@@ -439,8 +439,16 @@ pub async fn window_set_region(
             h.round() as i32,
         )
     });
-    crate::platform::set_rect_region(&window, rect);
-    Ok(())
+    // 在窗口所在的 UI 线程上改：异步线程上跨线程连着改两次（裁上、马上又放开），系统实际生效的先后不一定和
+    // 调用顺序一样，最后可能停在"裁上"（剪贴板面板的筛选面板就这样偶尔出不来）
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    let w = window.clone();
+    window.run_on_main_thread(move || {
+        crate::platform::set_rect_region(&w, rect);
+        let _ = tx.send(());
+    })?;
+    rx.await
+        .map_err(|_| crate::error::AppError::msg("窗口操作被取消"))
 }
 
 /// 毛玻璃背板只铺窗口里的一块，`ms` > 0 时动画过去（和页面同一条缓动曲线）；`rect` 为空 = 铺满窗口。
