@@ -1,93 +1,82 @@
 {
-  "version": "0.3.4",
-  "pub_date": "2026-10-25T15:57:41.127Z",
-  "notes": "新增：截图里直接识别表格：认出的表格盖在原来的位置上，样子和原图几乎一样，像 Excel 一样框选、打字、复制粘贴、撤销，还能导出 Excel；截图里直接识别公式：公式原位显示，可以改 LaTeX，复制 LaTeX 或 MathML；选区里有好几张表、或者表格和公式混在一起时，自动分开认，每张表各自盖在原处；本地公式识别（设置 → 文字识别里下载）：不用 AI，印刷体公式一般不到一秒就认出来；可以给「识别表格 / 公式」单独选一个更快的 AI 模型，对话照样用原来的；录屏合并成一个「录制」按钮：先进录制准备，选格式（MP4 / GIF / APNG）、倒计时、麦克风、系统声音、摄像头，再开始；录制时可以显示鼠标点击、鼠标轨迹、滚动和按下的键，加进度条或播放时间，拖右下角把手挪动录制区域；录完可以先剪辑：掐头去尾、0.5–4 倍速（声音不变调）；Windows 也能录 MP4 视频，带系统声音、麦克风和摄像头；截图标注新工具：荧光笔、序号、橡皮擦、测量、水印、标注模板，还有聚光灯和放大镜；截图时识别二维码 / 条码，点一下复制或打开链接；选区可以输入坐标和宽高、锁定比例，支持自由形状选区和延时截图；取色时按 P 把颜色贴到桌面上，HEX / RGB / HSL 一键复制；贴图里的文字可以直接选中复制；贴图能旋转、翻转、鼠标穿透，也能恢复刚关掉的贴图；选区框的拖柄可以选「半圆条」，只露出框外的一半，不挡选区里的内容；录屏时的拖柄单独设置；划词小圆点可以自定义液态玻璃效果（色差、模糊、折射等），调整时有实时预览；设置页可以搜索（Ctrl+F / ⌘F），在搜索结果里直接修改；界面语言新增繁體中文、日本語、한국어\n改进：截图翻译按表格格子原位翻译，粗体和字号跟着原文，纯数字不再重画；识别公式快了一倍以上；待机时占用的内存减少约一半；截图工具条新增扁平样式，磨砂玻璃样式在拖动、录制时也不会丢；录制准备时不再压暗屏幕，录制框以外的窗口照常可以点；录制中也能截图；截图时框选整张表更准：贴着表格边或在表格外侧不远处都能框到整张表；二级工具条展开时不再从屏幕左上角飞进来；Mac 版支持自动更新\n修复：划词翻译面板的圆角有锯齿，截图里四个角露出方块或台阶（Windows）；主窗口收进任务栏 / 程序坞后，用划词或截图时主窗口会自己跳出来；表格只有表头上下两道线时，整张表被认成一行；录制时副屏上的控制条点不中",
+  "version": "0.3.5",
+  "pub_date": "2026-11-11T14:29:39.369Z",
+  "notes": "新增：输入翻译换了新样子：按 Alt+Q 屏幕中间弹出一条输入框，边打字下面边出译文；剪贴板卡片可以直接拖出去：拖出面板时面板自动让开，拖到输入框上卡片会缩小，松手就粘贴在松手的位置；多选时文字和图片混着也能一起拖进去；Mac 上剪贴板卡片改用系统原生拖拽，跟手不延迟，多选时叠成一摞带数量角标，能直接拖进访达、聊天窗口等任何收得下的地方；剪贴板按住 Ctrl 可以框选多张卡片一起复制，悬停可以预览卡片内容；剪贴板新增筛选面板：按类型、来源应用、分组、日期筛，几项可以叠着用；剪贴板可以按时间清理旧记录，看得到各类数据占了多少空间；划词小圆点可以选跟着鼠标还是跟着选中的文字，新增颜色、白边和四档大小；截图工具栏可以拖到别的位置\n改进：托盘菜单、剪贴板右键菜单和筛选菜单重新设计，带图标；剪贴板卡片样式重新调整：间距更舒展、图片卡片整张显示并写上尺寸，滚动更顺；剪贴板面板顶栏重新排布：搜索挪到中间，分组标签更大更好点；卡片标题栏的颜色更贴近应用图标，Mac 上图标更清楚；截图原位翻译更准更整齐：一整段一起翻不再断成几截，表格每格分开翻，按钮上的字居中，同一列的字一样大；Mac 剪贴板面板默认带玻璃，macOS 26 起是液态玻璃；划词翻译面板在浅色背景上不再和后面的界面混在一起，翻译卡片边缘更清楚，开毛玻璃时也有阴影；长截图时预览逐帧跟着滚动，往哪边滚就往哪边长；截图库框选很多张图时不再卡顿；贴图拖四个角等比缩放，钉住的角不再晃；远程控制时也看得到正在拖动的剪贴板卡片；剪贴板按住 Shift 预览小图时会放大显示，不再和卡片里一样大；剪贴板切换筛选、搜索时卡片直接换好，不再先闪一下；截图自动框选去掉容易认错的「区块」档，只留窗口和元素\n修复：原位翻译遇到特别窄的文字框时程序卡死、内存暴涨；界面偶尔卡死点不动：现在十几秒内会自动恢复；程序在后台挂久了之后截图没反应；没钉住的划词翻译面板，点别处有时不会收起；截图做完原位翻译后再拖动选区，整片被选中色铺满；Mac 上剪贴板面板的玻璃四角露出浅色方角",
   "changes": {
     "added": [
-      "截图里直接识别表格：认出的表格盖在原来的位置上，样子和原图几乎一样，像 Excel 一样框选、打字、复制粘贴、撤销，还能导出 Excel",
-      "截图里直接识别公式：公式原位显示，可以改 LaTeX，复制 LaTeX 或 MathML",
-      "选区里有好几张表、或者表格和公式混在一起时，自动分开认，每张表各自盖在原处",
-      "本地公式识别（设置 → 文字识别里下载）：不用 AI，印刷体公式一般不到一秒就认出来",
-      "可以给「识别表格 / 公式」单独选一个更快的 AI 模型，对话照样用原来的",
-      "录屏合并成一个「录制」按钮：先进录制准备，选格式（MP4 / GIF / APNG）、倒计时、麦克风、系统声音、摄像头，再开始",
-      "录制时可以显示鼠标点击、鼠标轨迹、滚动和按下的键，加进度条或播放时间，拖右下角把手挪动录制区域",
-      "录完可以先剪辑：掐头去尾、0.5–4 倍速（声音不变调）",
-      "Windows 也能录 MP4 视频，带系统声音、麦克风和摄像头",
-      "截图标注新工具：荧光笔、序号、橡皮擦、测量、水印、标注模板，还有聚光灯和放大镜",
-      "截图时识别二维码 / 条码，点一下复制或打开链接",
-      "选区可以输入坐标和宽高、锁定比例，支持自由形状选区和延时截图",
-      "取色时按 P 把颜色贴到桌面上，HEX / RGB / HSL 一键复制",
-      "贴图里的文字可以直接选中复制；贴图能旋转、翻转、鼠标穿透，也能恢复刚关掉的贴图",
-      "选区框的拖柄可以选「半圆条」，只露出框外的一半，不挡选区里的内容；录屏时的拖柄单独设置",
-      "划词小圆点可以自定义液态玻璃效果（色差、模糊、折射等），调整时有实时预览",
-      "设置页可以搜索（Ctrl+F / ⌘F），在搜索结果里直接修改",
-      "界面语言新增繁體中文、日本語、한국어"
+      "输入翻译换了新样子：按 Alt+Q 屏幕中间弹出一条输入框，边打字下面边出译文",
+      "剪贴板卡片可以直接拖出去：拖出面板时面板自动让开，拖到输入框上卡片会缩小，松手就粘贴在松手的位置；多选时文字和图片混着也能一起拖进去",
+      "Mac 上剪贴板卡片改用系统原生拖拽，跟手不延迟，多选时叠成一摞带数量角标，能直接拖进访达、聊天窗口等任何收得下的地方",
+      "剪贴板按住 Ctrl 可以框选多张卡片一起复制，悬停可以预览卡片内容",
+      "剪贴板新增筛选面板：按类型、来源应用、分组、日期筛，几项可以叠着用",
+      "剪贴板可以按时间清理旧记录，看得到各类数据占了多少空间",
+      "划词小圆点可以选跟着鼠标还是跟着选中的文字，新增颜色、白边和四档大小",
+      "截图工具栏可以拖到别的位置"
     ],
     "fixed": [
-      "划词翻译面板的圆角有锯齿，截图里四个角露出方块或台阶（Windows）",
-      "主窗口收进任务栏 / 程序坞后，用划词或截图时主窗口会自己跳出来",
-      "表格只有表头上下两道线时，整张表被认成一行",
-      "录制时副屏上的控制条点不中"
+      "原位翻译遇到特别窄的文字框时程序卡死、内存暴涨",
+      "界面偶尔卡死点不动：现在十几秒内会自动恢复",
+      "程序在后台挂久了之后截图没反应",
+      "没钉住的划词翻译面板，点别处有时不会收起",
+      "截图做完原位翻译后再拖动选区，整片被选中色铺满",
+      "Mac 上剪贴板面板的玻璃四角露出浅色方角"
     ],
     "improved": [
-      "截图翻译按表格格子原位翻译，粗体和字号跟着原文，纯数字不再重画",
-      "识别公式快了一倍以上",
-      "待机时占用的内存减少约一半",
-      "截图工具条新增扁平样式，磨砂玻璃样式在拖动、录制时也不会丢",
-      "录制准备时不再压暗屏幕，录制框以外的窗口照常可以点；录制中也能截图",
-      "截图时框选整张表更准：贴着表格边或在表格外侧不远处都能框到整张表",
-      "二级工具条展开时不再从屏幕左上角飞进来",
-      "Mac 版支持自动更新"
+      "托盘菜单、剪贴板右键菜单和筛选菜单重新设计，带图标",
+      "剪贴板卡片样式重新调整：间距更舒展、图片卡片整张显示并写上尺寸，滚动更顺",
+      "剪贴板面板顶栏重新排布：搜索挪到中间，分组标签更大更好点；卡片标题栏的颜色更贴近应用图标，Mac 上图标更清楚",
+      "截图原位翻译更准更整齐：一整段一起翻不再断成几截，表格每格分开翻，按钮上的字居中，同一列的字一样大",
+      "Mac 剪贴板面板默认带玻璃，macOS 26 起是液态玻璃",
+      "划词翻译面板在浅色背景上不再和后面的界面混在一起，翻译卡片边缘更清楚，开毛玻璃时也有阴影",
+      "长截图时预览逐帧跟着滚动，往哪边滚就往哪边长",
+      "截图库框选很多张图时不再卡顿",
+      "贴图拖四个角等比缩放，钉住的角不再晃",
+      "远程控制时也看得到正在拖动的剪贴板卡片",
+      "剪贴板按住 Shift 预览小图时会放大显示，不再和卡片里一样大",
+      "剪贴板切换筛选、搜索时卡片直接换好，不再先闪一下",
+      "截图自动框选去掉容易认错的「区块」档，只留窗口和元素"
     ]
   },
   "changesEn": {
     "added": [
-      "Recognize tables right in a screenshot: the table is laid back over the original, looking almost the same, and you can select, type, copy, paste and undo like in Excel, or export it to Excel",
-      "Recognize formulas right in a screenshot: the formula is shown in place, you can edit its LaTeX and copy LaTeX or MathML",
-      "When the selection contains several tables, or tables mixed with formulas, each is recognized separately and laid over its own spot",
-      "Local formula recognition (download it in Settings → Text recognition): no AI needed, printed formulas are usually read in under a second",
-      "Pick a separate, faster AI model just for table and formula recognition while chat keeps using yours",
-      "Screen recording is now one Record button: set up the format (MP4 / GIF / APNG), countdown, microphone, system audio and camera first, then start",
-      "Show mouse clicks, the mouse trail, scrolling and key presses while recording, add a progress bar or elapsed time, and move the recording area with the corner handle",
-      "Trim recordings and change their speed (0.5–4×, pitch preserved) before saving",
-      "MP4 recording on Windows, with system audio, microphone and camera",
-      "New annotation tools: highlighter, numbered markers, eraser, measure, watermark and templates, plus spotlight and magnifier",
-      "Scan QR codes and barcodes while capturing, then copy or open the link with one click",
-      "Enter the selection's position and size, lock the aspect ratio, draw freeform selections, or take delayed screenshots",
-      "Press P while picking a color to pin it on the desktop, with one-click HEX / RGB / HSL copy",
-      "Select and copy text inside pinned screenshots; rotate, flip and click through pins, and bring back the one you just closed",
-      "Half-bar selection handles that only show the outer half so nothing inside the selection is covered; recording has its own handle setting",
-      "Customize the liquid-glass look of the selection dot (dispersion, blur, refraction and more) with a live preview",
-      "Search Settings (Ctrl+F / ⌘F) and change options right in the results",
-      "New interface languages: Traditional Chinese, Japanese and Korean"
+      "A new input translator: press Alt+Q for a search-style box in the middle of the screen, with translations appearing as you type",
+      "Drag clipboard cards straight out: the panel moves out of the way, the card shrinks over a text box, and letting go pastes right where you drop it, even a mix of text and images",
+      "On Mac, clipboard cards now use native system drag and drop: it follows the cursor instantly, stacks multiple cards with a count badge, and drops into Finder, chat apps and anywhere else that accepts them",
+      "Hold Ctrl to box-select several clipboard cards and copy them together, and hover a card to preview it",
+      "A new clipboard filter panel: filter by type, source app, group and date, and combine them",
+      "Clean up old clipboard history by age and see how much space each kind of data takes",
+      "The selection dot can follow the mouse or the selected text, with new colors, an optional white border and four sizes",
+      "The screenshot toolbar can be dragged to a different spot"
     ],
     "fixed": [
-      "Jagged corners on the translation popup, and square or stepped corners on it in screenshots (Windows)",
-      "The main window popped up during text selection or capture after being minimized to the taskbar / Dock",
-      "Tables with only lines above and below the header were read as a single row",
-      "Recording controls on a secondary display couldn't be clicked"
+      "In-place translation froze the app and used huge amounts of memory on very narrow text boxes",
+      "The interface could occasionally freeze; it now recovers by itself within seconds",
+      "Screenshots stopped responding after the app had been running in the background for a long time",
+      "The unpinned translation popup sometimes didn't close when clicking elsewhere",
+      "After in-place translation in a screenshot, dragging the selection filled the whole area with highlight color",
+      "On Mac, the clipboard panel's glass showed light square corners"
     ],
     "improved": [
-      "Screenshot translation now works cell by cell in tables, keeps bold text and font sizes, and leaves plain numbers alone",
-      "Formula recognition is more than twice as fast",
-      "About half the memory use while idle",
-      "A new flat capture toolbar style; the frosted-glass style no longer drops while dragging or recording",
-      "Recording setup no longer dims the screen, windows outside the area stay usable, and you can take screenshots while recording",
-      "Picking a whole table while capturing is more accurate, even when the pointer is on the table's edge or just outside it",
-      "The secondary toolbar no longer flies in from the top-left corner of the screen",
-      "Automatic updates on Mac"
+      "Redesigned tray menu, clipboard context menu and filter menu, now with icons",
+      "Refreshed clipboard cards: roomier spacing, image cards show the whole picture with its size, and smoother scrolling",
+      "Rearranged clipboard header: search moves to the center, group tabs are larger and easier to hit, card header colors match app icons more closely, and icons are sharper on Mac",
+      "In-place screenshot translation is more accurate and tidier: whole paragraphs translate together, table cells translate separately, button text stays centered, and items in a list keep the same size",
+      "The Mac clipboard panel uses glass by default, with Liquid Glass on macOS 26 and later",
+      "The translation popup no longer blends into light backgrounds, cards have clearer edges, and it keeps its shadow with frosted glass on",
+      "The long-screenshot preview now follows every frame and grows in the direction you scroll",
+      "Box-selecting many images in the screenshot library no longer stutters",
+      "Pinned images scale proportionally from all four corners, and the anchored corner stays put",
+      "Dragged clipboard cards are visible during remote control",
+      "Holding Shift to preview a small clipboard image now shows it enlarged instead of card-sized",
+      "Switching clipboard filters or searching swaps the cards in cleanly without a flicker",
+      "Auto-detect in screenshots drops the error-prone \"block\" level, keeping window and element"
     ]
   },
   "platforms": {
     "windows-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVRK3F5ZUpBMEtwdVZOK1NVdVJidVQzREhSUUVKQUVpTmV2TnY4a0RXMzhtb1RBclRlOUVHRzJBVmp0cnJ6dndwYkpISTcvbmNEcWc2UXUrUk1JaE8vTjlJZnREZXJKNlE4PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkyOTQzODYxCWZpbGU6REFUTy1PQ1JfMC4zLjRfeDY0LXNldHVwLmV4ZQp1MFY3NEM1TGpEL1BJOHp4VURaS2FVRXVyNEMxcnBLUU1yUml1TlNaZ1gxRlF1MmM0aG1sQ1NnWVVLazkvMkRMWk1UV2s2Q0wxZ2wycWdzR3ZWNGZBQT09Cg==",
-      "url": "https://github.com/Chenfugui69/DATO-OCR/releases/download/v0.3.4/DATO-OCR_0.3.4_x64-setup.exe",
-      "size": 24365539
-    },
-    "darwin-aarch64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVRK3F5ZUpBMEtwdWJ2THNFc3hmT3N0bG9uTFJWTFdaRmUvY0VJVzMrZy9EZ09RSlBQbXZvY0hJaS9FUE1FTHZBQklsekJ3WXZMQkJJV2VlSUN3ZnVSL1NSVkdWN2IwQXdrPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkzMDE4MTQ4CWZpbGU6REFUTy1PQ1JfMC4zLjRfbWFjb3MtYXJtNjQuYXBwLnRhci5negpiVk41NTJuT3BIempmSUxmZUZWdW9LbUhHNlNmcFZjUkpSWlpjQS9DVVFSUEkrTCtpUGhsTXIyaVJhQmQ0WEI4WVE2MHl4M0UrbkRDM2Z5OUpjcVZEdz09Cg==",
-      "url": "https://github.com/Chenfugui69/DATO-OCR/releases/download/v0.3.4/DATO-OCR_0.3.4_macos-arm64.app.tar.gz",
-      "size": 6896552
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVRK3F5ZUpBMEtwdVNuajFCQi9kMkx1ZzRqMGpvUEE0ZTlTY243UzYyeTMvaU53a1RKT0VDWUJ2U21kNVU2bEE2RnhSaDFISEJ1WXRXbytxOEtDTUdPNUV5RUJ3K2ZlVEFFPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzk0NDA3Mzc5CWZpbGU6REFUTy1PQ1JfMC4zLjVfeDY0LXNldHVwLmV4ZQp6ZXh2WVE1S2R3M0lzSmFDUEJNNWpIN3dMbXJPSXlCYm1NRnFIN094Tm5waXc3S0JPZytobWl0S2Q2THZZYnUzWGhrR1ZHT2UrN0lYN3FZaDlwZ2lCUT09Cg==",
+      "url": "https://github.com/Chenfugui69/DATO-OCR/releases/download/v0.3.5/DATO-OCR_0.3.5_x64-setup.exe",
+      "size": 24481890
     }
   }
 }
