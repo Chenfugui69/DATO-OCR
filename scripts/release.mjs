@@ -5,6 +5,8 @@
 //
 //   node scripts/release.mjs              # 打包 + 签名 + 生成清单
 //   node scripts/release.mjs --skip-build # 安装包已经打好了，只签名和生成清单
+//   node scripts/release.mjs --mac        # 在 Windows 上给 Mac 那台打好的更新包签名并合进清单（私钥只在 Windows 上时用）：
+//                                           # 先把 Mac 上 release/<版本>/ 里的 .app.tar.gz 和 .dmg 放到这边同一个目录
 //   node scripts/release.mjs --github-only # Gitee 还没准备好：只生成国外清单。国内渠道读不到清单时会自动改走 GitHub，
 //                                           # 比写一份指向不存在的 Gitee 下载地址的清单安全
 //
@@ -54,6 +56,8 @@ for (const k of ['added', 'fixed', 'improved']) {
 }
 
 const MAC = process.platform === 'darwin';
+// 不在 Mac 上、但签的是 Mac 那台打好的包：只签名、合清单，不打包
+const MAC_PREBUILT = !MAC && process.argv.includes('--mac');
 // rustup 装的 cargo 不一定在 PATH 里（Mac 上常见）：给子进程补上
 const cargoBin = join(homedir(), '.cargo', 'bin');
 if (existsSync(cargoBin) && !(process.env.PATH ?? '').split(delimiter).includes(cargoBin)) {
@@ -76,7 +80,14 @@ mkdirSync(outDir, { recursive: true });
 let name; // 进清单、要签名的那个文件
 let platformKey; // 清单里的平台名，和 update.rs 的 platform_key 一致
 const extraFiles = []; // 也要上传、但不进清单的
-if (MAC) {
+if (MAC_PREBUILT) {
+  platformKey = 'darwin-aarch64';
+  name = `DATO-OCR_${version}_macos-arm64.app.tar.gz`;
+  if (!existsSync(join(outDir, name))) fail(`找不到 ${join(outDir, name)}：先把 Mac 上打好的更新包放过来`);
+  const dmg = `DATO-OCR_${version}_macos-arm64.dmg`;
+  if (existsSync(join(outDir, dmg))) extraFiles.push(dmg);
+  else console.warn(`\n! 没有 ${dmg}：手动下载用的 DMG 也要一起上传，记得从 Mac 拷过来`);
+} else if (MAC) {
   const arch = process.arch === 'arm64' ? 'arm64' : 'x64';
   platformKey = arch === 'arm64' ? 'darwin-aarch64' : 'darwin-x86_64';
   // 编译产物目录可能被 .cargo/config.toml 挪到别处，问 cargo 最准
