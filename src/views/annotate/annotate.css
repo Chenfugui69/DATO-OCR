@@ -16,6 +16,26 @@
     0 0 0 0.5px rgba(0, 0, 0, 0.22),
     inset 0 0.5px 0 rgba(255, 255, 255, 0.14);
 }
+/* 拖动把手（截图时工具条可以拖走）：一条窄的竖点，按住拖 */
+.an-toolbar__grip {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 14px;
+  height: 34px;
+  margin-right: 2px;
+  border-radius: 6px;
+  color: var(--cn-label-tertiary);
+  cursor: grab;
+}
+.an-toolbar__grip:hover {
+  color: var(--cn-label-secondary);
+  background: var(--cn-bg-hover);
+}
+html[data-bar-drag],
+html[data-bar-drag] * {
+  cursor: grabbing !important;
+}
 .an-btn {
   width: 34px;
   height: 34px;

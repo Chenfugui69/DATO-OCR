@@ -25,6 +25,8 @@ export interface TranslatedBlock {
   bold: boolean;
   /** 按原文墨的上下范围估的字号（物理像素）；0 = 估不出来，按行高算 */
   fontSize: number;
+  /** 原文在按钮里居中 */
+  centered?: boolean;
 }
 
 type Rgb = [number, number, number];
@@ -90,16 +92,18 @@ export function lineColors(src: PixelSource, r: Rect): { bg: string; fg: string;
   return { bg: css(bg), fg: css(fg), light: luma(bg) > 140 };
 }
 
-/** 从原文的字号起步，排不进框就缩小。 */
-export function fitFontSize(text: string, r: Rect, start: number, minSize: number, bold = false): number {
+/** 从原文的字号起步，排不进框就缩小。行数不比原文多就算排得下：识字框的高矮不准（同一列表里
+ *  一样大的字，框能差一成多），按框高卡，有的项会被缩小、一列字大小不一 */
+export function fitFontSize(text: string, r: Rect, start: number, minSize: number, bold = false, maxLines = 1): number {
   let size = Math.max(minSize, start);
   for (let i = 0; i < 24 && size > minSize; i += 1) {
     const pad = Math.max(1, size * 0.08);
     const lines = wrapLabel(text, size, r.width - pad * 2, bold);
-    if (lines.length * size * LABEL_LINE_HEIGHT <= r.height * 1.06) break;
+    if (lines.length <= maxLines || lines.length * size * LABEL_LINE_HEIGHT <= r.height * 1.06) break;
     size = Math.max(minSize, size * 0.92);
   }
-  return Math.round(size * 2) / 2;
+  // 往下取整：往上取半号，刚好排成一行的字会折成两行
+  return Math.floor(size * 2) / 2;
 }
 
 const median = (xs: number[]) => [...xs].sort((a, b) => a - b)[Math.floor(xs.length / 2)] ?? 0;
@@ -121,7 +125,8 @@ function groupByLineHeight(heights: number[]): number[][] {
 
 /** 识别 + 翻译的结果 → 文字块标注。`clip` 是选区（块不出选区）。 */
 export function buildLabels(blocks: TranslatedBlock[], src: PixelSource | null, scale: number, clip: Rect | null): Annotation[] {
-  const list = blocks.filter((b) => b.text.trim());
+  // 译文和原文一样（"118 MB"、产品名）不重画：留着原图上的字
+  const list = blocks.filter((b) => b.text.trim() && b.text.trim() !== b.source.trim());
   const rects = list.map((b) => {
     // 识别框贴着字，往外扩一点才盖得住字的边缘
     const grow = Math.max(2 * scale, b.lineHeight * 0.12);
@@ -134,11 +139,13 @@ export function buildLabels(blocks: TranslatedBlock[], src: PixelSource | null, 
   // 字号：同组按组里的中位行高起步各自排版，再不超过组里排出来的中位字号 —— 一组里字号一致，
   // 只有实在放不下的那块会更小
   const sizes = new Array<number>(list.length).fill(0);
+  // 原文有几行
+  const rows = list.map((b) => Math.max(1, Math.round(b.height / (b.lineHeight > 0 ? b.lineHeight : b.height))));
   // 起步字号：原文墨的高度估出来的（识字框的高矮不准，同样大的字能差三成）；估不出来按行高
   const start = (b: TranslatedBlock) => (b.fontSize > 0 ? b.fontSize : b.lineHeight * 0.74);
   for (const group of groupByLineHeight(list.map(start))) {
     const s0 = median(group.map((i) => start(list[i]!)));
-    const fits = group.map((i) => fitFontSize(list[i]!.text.trim(), rects[i]!, s0, 9 * scale, list[i]!.bold));
+    const fits = group.map((i) => fitFontSize(list[i]!.text.trim(), rects[i]!, s0, 9 * scale, list[i]!.bold, rows[i]));
     const cap = median(fits);
     group.forEach((i, k) => (sizes[i] = Math.min(fits[k]!, cap)));
   }
@@ -154,6 +161,8 @@ export function buildLabels(blocks: TranslatedBlock[], src: PixelSource | null, 
       fontSize: sizes[i]!,
       bold: b.bold,
       group: TRANSLATION_GROUP,
+      center: !!b.centered,
+      top: rows[i]! > 1,
     };
   });
 }

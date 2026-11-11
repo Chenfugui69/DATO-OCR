@@ -566,6 +566,11 @@ export interface ClipQuery {
   pinnedOnly?: boolean;
   favoriteOnly?: boolean;
   groupId?: number | null;
+  /** 只要从这个应用复制来的 */
+  app?: string | null;
+  /** 最后使用时间在 [since, until) 里（毫秒） */
+  since?: number | null;
+  until?: number | null;
   cursor?: string | null;
   limit: number;
 }
@@ -579,6 +584,13 @@ export interface ClipStats {
   total: number;
   pinned: number;
   favorite: number;
+}
+
+/** 历史里出现过的来源应用（筛选面板"应用"一节） */
+export interface ClipSourceApp {
+  name: string;
+  icon: string | null;
+  count: number;
 }
 
 export interface ClipGroup {

@@ -43,6 +43,7 @@ export function BoardTabs({
   board,
   onSelect,
   onMenuClosed,
+  compact = false,
   children,
 }: {
   /** 跟在"+"后面的东西（多选时的"已选 N 项 · 复制"） */
@@ -53,6 +54,8 @@ export function BoardTabs({
   onSelect: (board: number | null) => void;
   /** 原生菜单 / 对话框关掉之后（面板要盯一下焦点，见 PanelView 的 watchFocus） */
   onMenuClosed: () => void;
+  /** 只留图标 / 色点、不要名字和新建（横向面板搜索框展开时，照 Paste），名字放在悬停提示里 */
+  compact?: boolean;
 }) {
   const { t } = useTranslation();
   // 拖着卡片悬停时标签上会被加上 data-drag-over（高亮），松手由 useCardDrag 读 data-board-drop
@@ -108,22 +111,23 @@ export function BoardTabs({
   };
 
   return (
-    <nav className="boards">
+    <nav className={clsx('boards', compact && 'boards--compact')}>
       <button
         type="button"
         className={clsx('boards__tab', board === null && 'boards__tab--active')}
+        title={compact ? t('clip.board.clipboard') : undefined}
         onClick={() => onSelect(null)}
         {...dropProps(null)}
       >
-        <History size={13} strokeWidth={2} />
-        {t('clip.board.clipboard')}
+        <History size={16} strokeWidth={2} />
+        {!compact && t('clip.board.clipboard')}
       </button>
       {groups.map((g) => (
         <button
           key={g.id}
           type="button"
           className={clsx('boards__tab', board === g.id && 'boards__tab--active')}
-          title={t('clip.board.count', { count: g.count })}
+          title={compact ? `${g.name} · ${t('clip.board.count', { count: g.count })}` : t('clip.board.count', { count: g.count })}
           onClick={() => onSelect(g.id)}
           onContextMenu={(e) => {
             e.preventDefault();
@@ -132,12 +136,14 @@ export function BoardTabs({
           {...dropProps(g.id)}
         >
           <span className="boards__dot" style={{ background: boardColor(g) }} />
-          {g.name}
+          {!compact && g.name}
         </button>
       ))}
-      <button type="button" className="boards__add" title={t('clip.board.new')} onClick={() => void create()}>
-        <Plus size={14} strokeWidth={2} />
-      </button>
+      {!compact && (
+        <button type="button" className="boards__add" title={t('clip.board.new')} onClick={() => void create()}>
+          <Plus size={17} strokeWidth={2} />
+        </button>
+      )}
       {children}
     </nav>
   );

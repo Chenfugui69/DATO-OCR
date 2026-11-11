@@ -20,6 +20,7 @@ import {
   type LucideIcon,
   MoreHorizontal,
   Pin,
+  Search,
   Settings,
   Sparkles,
   Star,
@@ -44,6 +45,7 @@ import { clipMenu } from './actions';
 import { BoardTabs, boardColor, moveToBoard } from './BoardTabs';
 import { useCardDrag, useKeyHeld, useMultiPick } from './cardGestures';
 import { type CardAction, ClipCard, isGifItem } from './ClipCard';
+import { type DateRange, FilterPanel, rangeBounds } from './FilterPanel';
 import { HScrollbar } from './HScrollbar';
 import { OtpBody } from './OtpBody';
 import { PickBar } from './PickBar';
@@ -52,7 +54,6 @@ import { ZoomImage } from './ZoomImage';
 
 type Filter = 'all' | ClipType | 'pinned' | 'favorite';
 /** 底部卡片条：卡片宽度和间距（高度见 panel.css 的 .panel__cell） */
-/** 卡片条里每张卡片的宽度：和高度（240）差不多，接近 Paste 的方卡片 */
 /** 一张卡片的回调（按 id 缓存，见 PanelView 里的 handlersFor） */
 type CardHandlers = {
   onHover: (inside: boolean) => void;
@@ -63,9 +64,13 @@ type CardHandlers = {
   onDragPointerDown: (e: React.PointerEvent<HTMLDivElement>) => void;
 };
 
-const CARD_W = 236;
-// 卡片间距：Paste 约 20 点，14 点时卡片挤在一起
-const CARD_GAP = 20;
+// 卡片 232×232 的方卡片、间距 24、离面板左右边 24：都是照 Paste 实际截图量的
+const CARD_W = 232;
+const CARD_GAP = 24;
+const CARD_INSET = 24;
+/** 筛选面板弹在横向面板上方：窗口临时往上长这么多，筛选面板宽这么多（逻辑像素） */
+const FILTER_RAISE = 440;
+const FILTER_W = 460;
 const FILTERS: Filter[] = ['all', 'text', 'image', 'link', 'files', 'pinned', 'favorite'];
 const FILTER_ICONS: Partial<Record<Filter, LucideIcon>> = {
   all: LayoutGrid,
@@ -77,10 +82,12 @@ const FILTER_ICONS: Partial<Record<Filter, LucideIcon>> = {
   favorite: Star,
 };
 
-function queryOf(filter: Filter, keyword: string, board: number | null) {
+function queryOf(filter: Filter, keyword: string, board: number | null, app: string | null, range: DateRange | null) {
   return {
     keyword: keyword || undefined,
     groupId: board,
+    app,
+    ...rangeBounds(range),
     kinds: filter === 'text' ? (['text', 'color', 'otp'] as ClipType[]) : ['image', 'link', 'files'].includes(filter) ? [filter as ClipType] : [],
     pinnedOnly: filter === 'pinned',
     favoriteOnly: filter === 'favorite',
@@ -151,6 +158,17 @@ export default function PanelView() {
   const [keyword, setKeyword] = useState('');
   const [debounced, setDebounced] = useState('');
   const [filter, setFilter] = useState<Filter>('all');
+  // 筛选面板的另外两节：来源应用、日期（类型就是 filter，分组就是 board）
+  const [app, setApp] = useState<string | null>(null);
+  const [range, setRange] = useState<DateRange | null>(null);
+  const [filterOpen, setFilterOpen] = useState(false);
+  const filterPanelRef = useRef<HTMLDivElement>(null);
+  const filterBtnRef = useRef<HTMLButtonElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
+  /** 横向面板的筛选面板弹在面板上方（照 Paste）：窗口临时往上长 FILTER_RAISE，弹出的位置（相对窗口） */
+  const [raised, setRaised] = useState<{ panelH: number; left: number; bottom: number; arrow: number } | null>(null);
+  /** 面板每弹出一次加一（窗口往上长着时面板被收起、又弹出来：那次的位置已经重新摆过，不能再按老位置缩回去） */
+  const showGen = useRef(0);
   /** 当前看的分组（Paste 的图钉板）；null = 剪贴板（全部历史） */
   const [board, setBoard] = useState<number | null>(null);
   const [selected, setSelected] = useState(0);
@@ -161,6 +179,8 @@ export default function PanelView() {
   // 按住 Ctrl 一小会儿才亮出卡片上的 Ctrl+1–9（Ctrl+P / Ctrl+D 这种一按就松的不闪一下）
   const [showKeys, setShowKeys] = useState(false);
   const searchRef = useRef<HTMLInputElement>(null);
+  // 横向面板的搜索照 Paste 收在中间：平时只是一个放大镜，点它 / 直接打字 / 搜着词 / 选了筛选时才展开成一条搜索框
+  const [searchFocus, setSearchFocus] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const hiding = useRef(false);
   const visibleRef = useRef(false);
@@ -173,7 +193,7 @@ export default function PanelView() {
     return () => window.clearTimeout(id);
   }, [keyword]);
 
-  const query = useClipItems(useMemo(() => queryOf(filter, debounced, board), [filter, debounced, board]), 50);
+  const query = useClipItems(useMemo(() => queryOf(filter, debounced, board, app, range), [filter, debounced, board, app, range]), 50);
   const history = useMemo(() => query.data?.pages.flatMap((p) => p.items) ?? [], [query.data]);
   // 有推荐结果时：推荐的排最前（带暖色描边），后面照常是历史（去掉重复的）
   const suggestedIds = useMemo(() => new Set(smart?.phase === 'done' ? smart.items.map((i) => i.id) : []), [smart]);
@@ -205,8 +225,8 @@ export default function PanelView() {
     getScrollElement: () => scrollRef.current,
     estimateSize: (i) => (horizontal ? CARD_W + CARD_GAP : items[i]?.type === 'image' ? 120 + 8 : 72 + 8),
     overscan: 3,
-    paddingStart: horizontal ? 16 : 8,
-    paddingEnd: horizontal ? 16 : 8,
+    paddingStart: horizontal ? CARD_INSET : 8,
+    paddingEnd: horizontal ? CARD_INSET : 8,
   });
 
   // 滚到接近末尾时加载下一页（keyset 分页）
@@ -225,49 +245,69 @@ export default function PanelView() {
   }, [selected, items.length, virt]);
 
   // ── 多选（Ctrl 点选 / 框选）、拖出去粘贴、按住 Shift 悬浮预览 ──
-  const fadeLeft = useRef<HTMLDivElement>(null);
-  const fadeRight = useRef<HTMLDivElement>(null);
-  // 卡片条两头渐隐只在那头还有没露出来的卡片时才有：滚到头了那头不再淡掉（以前一直淡着，
-  // 最左边那张卡片的边透出后面的毛玻璃，桌面是亮色时看着是一道发白的模糊）
-  useEffect(() => {
-    const el = scrollRef.current;
-    if (!el || !horizontal) return;
-    const sync = () => {
-      const max = el.scrollWidth - el.clientWidth;
-      // 渐隐是盖在卡片两头的两块（.panel__fade），只盖卡片那一条的高度（卡片上下的空隙不盖，
-      // 不然和顶栏之间多出一块颜色不一样的方块）
-      const card = el.querySelector<HTMLElement>('[data-clip-id]');
-      const host = el.offsetParent as HTMLElement | null;
-      const band = card && host ? card.getBoundingClientRect() : null;
-      const base = host?.getBoundingClientRect();
-      for (const [fade, on] of [
-        [fadeLeft.current, el.scrollLeft > 1],
-        [fadeRight.current, el.scrollLeft < max - 1],
-      ] as const) {
-        if (!fade) continue;
-        fade.style.top = `${band && base ? band.top - base.top : el.offsetTop}px`;
-        fade.style.height = `${band ? band.height : el.offsetHeight}px`;
-        fade.toggleAttribute('data-on', on && !!band);
-      }
-    };
-    sync();
-    el.addEventListener('scroll', sync, { passive: true });
-    const ro = new ResizeObserver(sync);
-    ro.observe(el);
-    if (el.firstElementChild) ro.observe(el.firstElementChild);
-    return () => {
-      el.removeEventListener('scroll', sync);
-      ro.disconnect();
-    };
-  }, [horizontal, visible, items.length]);
-
   // 顶栏的空白处也能按住 Ctrl 拉框（框的还是下面的卡片）
   const barRef = useRef<HTMLElement>(null);
   const { picked, toggle: togglePick, clear: clearPicks } = useMultiPick(scrollRef, visible, [barRef]);
   /** 勾上的按列表里的顺序排（复制、粘贴时就是这个顺序） */
   const pickedInOrder = useCallback(() => items.filter((i) => picked.has(i.id)).map((i) => i.id), [items, picked]);
   // 换了筛选 / 分组 / 搜索词，勾的那些多半不在眼前了：清掉
-  useEffect(() => clearPicks(), [filter, board, debounced, clearPicks]);
+  useEffect(() => clearPicks(), [filter, app, range, board, debounced, clearPicks]);
+  // 筛选面板开着：点它和筛选按钮以外的地方就收起
+  useEffect(() => {
+    if (!filterOpen) return;
+    const onDown = (e: PointerEvent) => {
+      const target = e.target as Node;
+      if (filterPanelRef.current?.contains(target) || filterBtnRef.current?.contains(target)) return;
+      // 点在窗口往上长出来的那截空白里：按下之后窗口就缩回去了，不拦的话松手时会在面板里拉出一片选中的字
+      if (!panelRef.current?.contains(target)) e.preventDefault();
+      setFilterOpen(false);
+    };
+    document.addEventListener('pointerdown', onDown, true);
+    return () => document.removeEventListener('pointerdown', onDown, true);
+  }, [filterOpen]);
+  // 横向面板打开筛选面板：窗口一步往上长 FILTER_RAISE（毛玻璃背板同一帧改成只铺下面原来那块），
+  // 面板在页面里钉在底部、高度不变，筛选面板画在长出来的那一截里；收起时窗口缩回去
+  useEffect(() => {
+    if (!filterOpen || !horizontal) return;
+    const panel = panelRef.current;
+    const btn = filterBtnRef.current;
+    if (!panel || !btn) return;
+    const p = panel.getBoundingClientRect();
+    const b = btn.getBoundingClientRect();
+    const cx = b.left + b.width / 2;
+    const left = Math.round(Math.min(Math.max(cx - FILTER_W / 2, 12), window.innerWidth - FILTER_W - 12));
+    const gen = showGen.current;
+    const blurNow = blurRef.current;
+    const win = getCurrentWindow();
+    let done = false;
+    let base: { x: number; y: number; w: number; h: number } | null = null;
+    void (async () => {
+      const s = await win.scaleFactor();
+      const pos = await win.outerPosition();
+      const size = await win.outerSize();
+      if (done) return;
+      base = { x: pos.x / s, y: pos.y / s, w: size.width / s, h: size.height / s };
+      // 先把面板钉住（固定高度、靠底），再长窗口：窗口变高的那一帧面板不会被拉伸
+      setRaised({ panelH: p.height, left, bottom: window.innerHeight - p.top + 2, arrow: cx - left });
+      await new Promise(requestAnimationFrame);
+      if (done) return;
+      await system.setBounds(base.x, base.y - FILTER_RAISE, base.w, base.h + FILTER_RAISE, blurNow ? { x: 0, y: FILTER_RAISE, width: base.w, height: base.h } : undefined);
+    })().catch(notify.error);
+    return () => {
+      done = true;
+      const b0 = base;
+      if (!b0 || showGen.current !== gen) {
+        setRaised(null);
+        return;
+      }
+      void system
+        .setBounds(b0.x, b0.y, b0.w, b0.h, blurNow ? { x: 0, y: 0, width: b0.w, height: b0.h } : undefined)
+        .catch(notify.error)
+        .finally(() => {
+          if (showGen.current === gen) setRaised(null);
+        });
+    };
+  }, [filterOpen, horizontal]);
   // 一按下 Ctrl 就出勾选框（不像 Ctrl+1–9 的提示那样等一下）
   const ctrlHeld = useKeyHeld('Control', visible);
   const pickMode = ctrlHeld || picked.size > 0;
@@ -458,11 +498,17 @@ export default function PanelView() {
   }, []);
 
   useEvent('clipboard-panel-show', (p) => {
+    showGen.current += 1;
+    setRaised(null);
     hiding.current = false;
     resetAway();
     setStyle(p.style);
     setKeyword('');
     setDebounced('');
+    setFilter('all');
+    setApp(null);
+    setRange(null);
+    setFilterOpen(false);
     setSelected(0);
     setShowSel(false);
     setPreview(null);
@@ -714,7 +760,16 @@ export default function PanelView() {
         e.preventDefault();
         if (preview) setPreview(null);
         else if (picked.size) clearPicks();
-        else if (smart?.phase === 'done') clearSmart();
+        else if (filterOpen) setFilterOpen(false);
+        else if (searching || keyword || filter !== 'all' || app || range) {
+          // 搜索 / 筛选着：先清掉搜索词和筛选（横向面板的搜索框跟着收起），再按一次才关面板
+          setKeyword('');
+          setFilter('all');
+          setApp(null);
+          setRange(null);
+          setSelected(0);
+          searchRef.current?.blur();
+        } else if (smart?.phase === 'done') clearSmart();
         else hide();
         return;
       }
@@ -799,7 +854,7 @@ export default function PanelView() {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [visible, items, selected, showSel, horizontal, preview, filter, smart, clearSmart, hide, paste, openPreview, qc, t, picked, clearPicks, copyPicked]);
+  }, [visible, items, selected, showSel, horizontal, preview, filter, app, range, filterOpen, keyword, smart, clearSmart, hide, paste, openPreview, qc, t, picked, clearPicks, copyPicked]);
 
   // 每张卡片的回调按卡片 id 缓存成固定的函数，调用时再取最新的状态。卡片组件做了 memo，
   // 回调要是每次渲染都新建，memo 就白做了：面板跟着滚动、悬停换卡片一次次重新渲染时，
@@ -834,6 +889,75 @@ export default function PanelView() {
     return h;
   };
 
+
+  const filtered = filter !== 'all' || app !== null || range !== null;
+  const searchOpen = horizontal && (searchFocus || keyword !== '' || filtered || filterOpen);
+  /** 筛选按钮上写着选了什么（"图片 · Claude · 今天"） */
+  const filterLabel = [filter !== 'all' ? t(`clip.filter.${filter}`) : null, app, range ? t(`clip.filterPanel.${range}`) : null].filter(Boolean).join(' · ');
+  const searchBox = (
+    <div className="panel__searchbox">
+      <SearchField
+        ref={searchRef}
+        className="panel__search"
+        value={keyword}
+        placeholder={t('clip.search')}
+        onFocus={() => setSearchFocus(true)}
+        onBlur={() => setSearchFocus(false)}
+        onChange={(v) => {
+          setKeyword(v);
+          setSelected(0);
+          setSmart(null);
+        }}
+      />
+      {/* 筛选：点开筛选面板（FilterPanel，类型 / 应用 / 分组 / 日期）。按下时不抢搜索框的焦点 */}
+      <button
+        ref={filterBtnRef}
+        type="button"
+        className={clsx('panel__filterbtn', filtered && 'panel__filterbtn--on', filterOpen && 'panel__filterbtn--open')}
+        title={t('clip.filterHint')}
+        aria-expanded={filterOpen}
+        onMouseDown={(e) => e.preventDefault()}
+        onClick={() => setFilterOpen((o) => !o)}
+      >
+        {filterLabel && <span className="cn-truncate">{filterLabel}</span>}
+        <ListFilter size={14} strokeWidth={1.9} />
+      </button>
+    </div>
+  );
+  const centerTabs =
+    smart?.phase === 'done' ? (
+      <div className="panel__smartbar">
+        {smart.refining ? <WaterOrb color={orbColor} size={14} busy /> : <Sparkles size={14} strokeWidth={2} />}
+        <span className="cn-truncate">
+          {smart.items.length === 0
+            ? t('clip.smart.refining')
+            : smart.app
+              ? t('clip.smart.forApp', { app: smart.app, count: smart.items.length })
+              : t('clip.smart.found', { count: smart.items.length })}
+          {smart.refining && smart.items.length > 0 && <span className="panel__smartwhy"> · {t('clip.smart.refining')}</span>}
+          {!smart.refining && smart.reason && <span className="panel__smartwhy"> · {smart.reason}</span>}
+        </span>
+        <button type="button" className="panel__smartclear" title={t('clip.smart.clear')} onClick={clearSmart}>
+          <X size={13} strokeWidth={2.2} />
+        </button>
+      </div>
+    ) : (
+      <BoardTabs
+        groups={groups.data ?? []}
+        board={board}
+        onSelect={(b) => {
+          setBoard(b);
+          setSelected(0);
+          setSmart(null);
+        }}
+        onMenuClosed={watchFocus}
+        compact={searchOpen}
+      >
+        {/* 多选了几张：跟在分组标签后面，复制 / 取消（也可以 Ctrl+C、Esc），勾上的还能一起拖出去粘贴 */}
+        <PickBar count={picked.size} onCopy={copyPicked} onClear={clearPicks} />
+      </BoardTabs>
+    );
+
   return (
     <div
       className={clsx(
@@ -848,11 +972,46 @@ export default function PanelView() {
         showKeys && 'panel-root--keys',
         dragging && 'panel-root--dragging',
         away && 'panel-root--away',
+        raised && 'panel-root--raised',
       )}
+      style={raised ? ({ '--panel-h': `${raised.panelH}px` } as React.CSSProperties) : undefined}
       data-visible={visible}
       data-smart={orbColor}
     >
-      <div className="panel cn-glass-chrome">
+      {filterOpen && horizontal && raised && (
+        <FilterPanel
+          ref={filterPanelRef}
+          above={{ left: raised.left, bottom: raised.bottom, arrow: raised.arrow, width: FILTER_W }}
+          types={FILTERS.filter((f): f is Exclude<Filter, 'all'> => f !== 'all')}
+          typeIcons={FILTER_ICONS}
+          type={filter === 'all' ? null : filter}
+          onType={(f) => {
+            setFilter(f ?? 'all');
+            setSelected(0);
+            setSmart(null);
+          }}
+          app={app}
+          onApp={(a) => {
+            setApp(a);
+            setSelected(0);
+            setSmart(null);
+          }}
+          groups={groups.data ?? []}
+          board={board}
+          onBoard={(b) => {
+            setBoard(b);
+            setSelected(0);
+            setSmart(null);
+          }}
+          range={range}
+          onRange={(r) => {
+            setRange(r);
+            setSelected(0);
+            setSmart(null);
+          }}
+        />
+      )}
+      <div ref={panelRef} className="panel cn-glass-chrome">
         {/* 智能推荐模式：面板边缘的光（光晕 + 沿上下边缘游走的光 + 扫过面板的流光 + 卡片后面飘动的底光） */}
         {glow && (
           <>
@@ -864,8 +1023,10 @@ export default function PanelView() {
             </div>
           </>
         )}
-        <header ref={barRef} className="panel__bar">
-          {/* 左：搜索（类型筛选做在搜索框里）；中：分组标签 / 推荐结果；右：智能推荐和更多 */}
+        <header ref={barRef} className={clsx('panel__bar', searchOpen && 'panel__bar--search')}>
+          {/* 竖版：左边水珠 + 搜索框（类型筛选做在框里），中间分组标签 / 推荐结果，右边更多。
+              横向（照 Paste）：左边只有水珠（和下面第一张卡片左边对齐），中间放大镜 + 分组标签 + 新建，
+              搜索时中间展开成一条搜索框、分组标签缩成只剩图标；右边更多 */}
           <div className="panel__side">
             {/* 智能推荐：面板最左边一颗暖色光球，只放图标 */}
             <button
@@ -877,73 +1038,25 @@ export default function PanelView() {
             >
               <WaterOrb color={orbColor} size={24} busy={smart?.phase === 'thinking'} alive={smart !== null} interactive />
             </button>
-            <div className="panel__searchbox">
-              <SearchField
-                ref={searchRef}
-                className="panel__search"
-                value={keyword}
-                placeholder={t('clip.search')}
-                onChange={(v) => {
-                  setKeyword(v);
-                  setSelected(0);
-                  setSmart(null);
-                }}
-              />
-              {/* 筛选：程序自己画的下拉菜单（系统菜单在 Windows 上是老式样子），每项带图标，选中的末尾打勾 */}
-              <DropdownMenu
-                className="panel__filtermenu"
-                onCloseAutoFocus={(e) => {
-                  e.preventDefault();
-                  searchRef.current?.focus();
-                }}
-                items={FILTERS.map((f) => ({
-                  label: t(`clip.filter.${f}`),
-                  icon: FILTER_ICONS[f],
-                  selected: f === filter,
-                  onSelect: () => {
-                    setFilter(f);
-                    setSelected(0);
-                    setSmart(null);
-                  },
-                }))}
-              >
-                <button type="button" className={clsx('panel__filterbtn', filter !== 'all' && 'panel__filterbtn--on')} title={t('clip.filterHint')}>
-                  {filter !== 'all' && <span>{t(`clip.filter.${filter}`)}</span>}
-                  <ListFilter size={14} strokeWidth={1.9} />
-                </button>
-              </DropdownMenu>
-            </div>
+            {!horizontal && searchBox}
           </div>
-          {smart?.phase === 'done' ? (
-            <div className="panel__smartbar">
-              {smart.refining ? <WaterOrb color={orbColor} size={14} busy /> : <Sparkles size={14} strokeWidth={2} />}
-              <span className="cn-truncate">
-                {smart.items.length === 0
-                  ? t('clip.smart.refining')
-                  : smart.app
-                    ? t('clip.smart.forApp', { app: smart.app, count: smart.items.length })
-                    : t('clip.smart.found', { count: smart.items.length })}
-                {smart.refining && smart.items.length > 0 && <span className="panel__smartwhy"> · {t('clip.smart.refining')}</span>}
-                {!smart.refining && smart.reason && <span className="panel__smartwhy"> · {smart.reason}</span>}
-              </span>
-              <button type="button" className="panel__smartclear" title={t('clip.smart.clear')} onClick={clearSmart}>
-                <X size={13} strokeWidth={2.2} />
+          {horizontal ? (
+            <div className="panel__center">
+              <button
+                type="button"
+                className="panel__searchbtn"
+                title={t('clip.search')}
+                aria-label={t('clip.search')}
+                tabIndex={-1}
+                onClick={() => searchRef.current?.focus()}
+              >
+                <Search size={19} strokeWidth={2} />
               </button>
+              {searchBox}
+              {centerTabs}
             </div>
           ) : (
-            <BoardTabs
-              groups={groups.data ?? []}
-              board={board}
-              onSelect={(b) => {
-                setBoard(b);
-                setSelected(0);
-                setSmart(null);
-              }}
-              onMenuClosed={watchFocus}
-            >
-              {/* 多选了几张：跟在分组标签后面，复制 / 取消（也可以 Ctrl+C、Esc），勾上的还能一起拖出去粘贴 */}
-              <PickBar count={picked.size} onCopy={copyPicked} onClear={clearPicks} />
-            </BoardTabs>
+            centerTabs
           )}
           <div className="panel__side panel__side--end">
             {/* 应用自己的菜单（不用系统菜单：Windows 上系统菜单是老式样式）。只有几项、从顶栏往下开，面板里放得下 */}
@@ -976,11 +1089,43 @@ export default function PanelView() {
               ]}
             >
               <button type="button" className="panel__more" aria-label={t('common.more')}>
-                <MoreHorizontal size={16} strokeWidth={2} />
+                <MoreHorizontal size={18} strokeWidth={2.25} />
               </button>
             </DropdownMenu>
           </div>
         </header>
+        {filterOpen && !horizontal && (
+          <FilterPanel
+            ref={filterPanelRef}
+            types={FILTERS.filter((f): f is Exclude<Filter, 'all'> => f !== 'all')}
+            typeIcons={FILTER_ICONS}
+            type={filter === 'all' ? null : filter}
+            onType={(f) => {
+              setFilter(f ?? 'all');
+              setSelected(0);
+              setSmart(null);
+            }}
+            app={app}
+            onApp={(a) => {
+              setApp(a);
+              setSelected(0);
+              setSmart(null);
+            }}
+            groups={groups.data ?? []}
+            board={board}
+            onBoard={(b) => {
+              setBoard(b);
+              setSelected(0);
+              setSmart(null);
+            }}
+            range={range}
+            onRange={(r) => {
+              setRange(r);
+              setSelected(0);
+              setSmart(null);
+            }}
+          />
+        )}
 
         <div ref={scrollRef} className="panel__list">
           {query.isLoading ? (
@@ -1032,12 +1177,6 @@ export default function PanelView() {
           )}
         </div>
 
-        {horizontal && (
-          <>
-            <div ref={fadeLeft} className="panel__fade panel__fade--left" aria-hidden />
-            <div ref={fadeRight} className="panel__fade panel__fade--right" aria-hidden />
-          </>
-        )}
         {horizontal && <HScrollbar target={scrollRef} watch={`${items.length}:${query.isLoading}:${style}`} />}
 
         {preview && (

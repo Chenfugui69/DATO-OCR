@@ -239,7 +239,8 @@ export function wrapLabel(text: string, fontSize: number, maxWidth: number, bold
     let line = '';
     for (const tok of tokens) {
       const next = line + tok;
-      if (line && ctx.measureText(next).width > maxWidth) {
+      // 句读、后括号不放在行首（"）和三种……" "，重启"）：挂在上一行末尾，宁可略超出一点
+      if (line && ctx.measureText(next).width > maxWidth && !CLOSING.test(tok)) {
         out.push(line.trimEnd());
         line = tok.trimStart();
         // 单个词就比框宽：硬拆。按整字（码点）拆，每次至少拿走一个字：
@@ -264,6 +265,31 @@ export function wrapLabel(text: string, fontSize: number, maxWidth: number, bold
 
 export const LABEL_LINE_HEIGHT = 1.28;
 
+/** 不能出现在行首的标点 */
+const CLOSING = /^[，。、；：！？）》」』】〉”’,.;:!?)\]}%]$/u;
+
+/** 文字块每行的位置：字少就在框里竖直居中（top：原文是好几行的段落，从顶上排，和原文第一行对齐），
+ *  多了从顶上排（超出的部分照画，不裁）；center：原文在按钮里居中，每行水平居中 */
+export function labelLayout(a: Extract<Annotation, { kind: 'label' }>): { lines: { text: string; x: number; y: number; width: number }[]; lh: number; pad: number } {
+  const r = a.rect;
+  const pad = Math.max(1, a.fontSize * 0.08);
+  const lines = wrapLabel(a.text, a.fontSize, r.width - pad * 2, a.bold);
+  const lh = a.fontSize * LABEL_LINE_HEIGHT;
+  const total = lines.length * lh;
+  const top = total < r.height && !a.top ? r.y + (r.height - total) / 2 : r.y;
+  measureCtx ??= new OffscreenCanvas(1, 1).getContext('2d');
+  if (measureCtx) measureCtx.font = textFont({ fontSize: a.fontSize, bold: !!a.bold });
+  return {
+    lh,
+    pad,
+    lines: lines.map((text, i) => {
+      const width = measureCtx?.measureText(text).width ?? 0;
+      const x = a.center ? r.x + Math.max(pad, (r.width - width) / 2) : r.x + pad;
+      return { text, x, y: top + i * lh, width };
+    }),
+  };
+}
+
 /** 译文显现动画一块的时长（毫秒），见 drawLabel 的 progress */
 export const LABEL_REVEAL_MS = 640;
 
@@ -272,17 +298,12 @@ function drawLabel(ctx: Ctx, a: Extract<Annotation, { kind: 'label' }>, progress
   const r = a.rect;
   ctx.fillStyle = a.bg;
   ctx.fillRect(r.x, r.y, r.width, r.height);
-  const pad = Math.max(1, a.fontSize * 0.08);
-  const lines = wrapLabel(a.text, a.fontSize, r.width - pad * 2, a.bold);
-  const lh = a.fontSize * LABEL_LINE_HEIGHT;
-  const total = lines.length * lh;
-  // 字少就在框里竖直居中，多了从顶上排（超出的部分照画，不裁）
-  const top = total < r.height ? r.y + (r.height - total) / 2 : r.y;
+  const { lines, lh } = labelLayout(a);
   ctx.font = textFont({ fontSize: a.fontSize, bold: !!a.bold });
   ctx.textBaseline = 'middle';
   ctx.fillStyle = a.color;
   if (progress >= 1) {
-    lines.forEach((line, i) => ctx.fillText(line, r.x + pad, top + i * lh + lh / 2));
+    lines.forEach((line) => ctx.fillText(line.text, line.x, line.y + lh / 2));
     return;
   }
   // 多行时后一行比前一行晚一点起步，总时长不变
@@ -294,7 +315,7 @@ function drawLabel(ctx: Ctx, a: Extract<Annotation, { kind: 'label' }>, progress
     const e = 1 - (1 - q) ** 4;
     ctx.globalAlpha = e;
     ctx.filter = e < 0.995 ? `blur(${((1 - e) * a.fontSize * 0.28).toFixed(2)}px)` : 'none';
-    ctx.fillText(line, r.x + pad, top + i * lh + lh / 2 + (1 - e) * a.fontSize * 0.24);
+    ctx.fillText(line.text, line.x, line.y + lh / 2 + (1 - e) * a.fontSize * 0.24);
   });
   ctx.globalAlpha = 1;
   ctx.filter = 'none';

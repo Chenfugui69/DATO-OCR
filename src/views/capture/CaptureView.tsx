@@ -1949,7 +1949,35 @@ function Toolbars({
   const recognize = useRecognizeHints(rect);
 
   const css = { x: rect.x / s, y: rect.y / s, width: rect.width / s, height: rect.height / s };
-  const pos = placeToolbar(css, bar, viewport);
+  // 用户拖过工具条：就停在拖到的地方（不再跟着选区走），换一次截图才回到自动摆放
+  const sessionId = useOverlay((x) => x.session?.sessionId ?? 0);
+  const [moved, setMoved] = useState<{ x: number; y: number; session: number } | null>(null);
+  const auto = placeToolbar(css, bar, viewport);
+  const pos =
+    moved && moved.session === sessionId
+      ? {
+          x: Math.max(0, Math.min(moved.x, viewport.width - bar.width)),
+          y: Math.max(0, Math.min(moved.y, viewport.height - bar.height)),
+          inside: false,
+        }
+      : auto;
+  // 工具条只在内容变了时重画（见下面的 useMemo），拖动的回调读的是最新位置，不能闭包住某一次的 pos
+  const live = useRef({ pos, sessionId });
+  live.current = { pos, sessionId };
+  const dragBar = useRef((e: React.PointerEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    const { pos: p0, sessionId: sid } = live.current;
+    const from = { x: e.clientX, y: e.clientY, bx: p0.x, by: p0.y };
+    const move = (ev: PointerEvent) => setMoved({ x: from.bx + ev.clientX - from.x, y: from.by + ev.clientY - from.y, session: sid });
+    const up = () => {
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', up);
+      document.documentElement.removeAttribute('data-bar-drag');
+    };
+    document.documentElement.setAttribute('data-bar-drag', '');
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up);
+  }).current;
   const above = !pos.inside && pos.y < css.y;
 
   let subY = above ? pos.y - 4 - sub.height : pos.y + bar.height + 4;
@@ -2008,6 +2036,7 @@ function Toolbars({
         onAction={onAction}
         disabledTools={{ mosaic: !pixelsReady }}
         disabledActions={{ translate: translating, qr: scanning }}
+        onDragStart={dragBar}
       />
     ),
     // version：撤销栈、选中的标注变了工具条上的状态可能跟着变

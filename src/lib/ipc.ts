@@ -2,7 +2,7 @@
 
 import { Channel, invoke } from '@tauri-apps/api/core';
 
-import type { AiContext, AppInfo, CaptureIntent, CaptureTables, ChatEvent, ChatRequest, ClipDetail, ClipGroup, ClipPage, ClipQuery, ClipStats, DavDevice, EditorAction, EditorDoc, EngineStatus, FinishAction, FormulaRegions, HotkeyStatus, MailCodeSettings, MailCodesStatus, McpStatus, MediaAccess, MediaKind, RecordEditInfo, OcrJob, RegionStyle, SmartSuggestion, OcrPage, Permissions, PhysicalRect, PinInfo, PinText, RegionRect, ScannedCode, ProviderInfo, RegionTranslation, SecretsStatus, SessionInfo, Settings, ShotPage, SyncStatus, UpdateStatus, ShotQuery, TranslateRequest, TranslateResult, VisualCapabilities,
+import type { AiContext, AppInfo, CaptureIntent, CaptureTables, ChatEvent, ChatRequest, ClipDetail, ClipGroup, ClipPage, ClipQuery, ClipSourceApp, ClipStats, DavDevice, EditorAction, EditorDoc, EngineStatus, FinishAction, FormulaRegions, HotkeyStatus, MailCodeSettings, MailCodesStatus, McpStatus, MediaAccess, MediaKind, RecordEditInfo, OcrJob, RegionStyle, SmartSuggestion, OcrPage, Permissions, PhysicalRect, PinInfo, PinText, RegionRect, ScannedCode, ProviderInfo, RegionTranslation, SecretsStatus, SessionInfo, Settings, ShotPage, SyncStatus, UpdateStatus, ShotQuery, TranslateRequest, TranslateResult, VisualCapabilities,
   PopItem,
   ClipItem,
   CleanResult,
@@ -239,6 +239,7 @@ export const clipboard = {
   setNote: (id: number, note: string | null) => call<void>('clipboard_set_note', { id, note }),
   setGroup: (ids: number[], groupId: number | null) => call<void>('clipboard_set_group', { ids, groupId }),
   groups: () => call<ClipGroup[]>('clipboard_groups'),
+  sourceApps: () => call<ClipSourceApp[]>('clipboard_source_apps'),
   createGroup: (name: string, color?: string) => call<number>('clipboard_create_group', { name, color: color ?? null }),
   setGroupColor: (id: number, color: string | null) => call<void>('clipboard_set_group_color', { id, color }),
   renameGroup: (id: number, name: string) => call<void>('clipboard_rename_group', { id, name }),

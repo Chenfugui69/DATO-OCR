@@ -54,9 +54,9 @@ html[data-view='clipboard'] body {
 .panel-root--vertical .panel {
   transform-origin: top left;
 }
-/* 横向那一条又宽又矮，圆角大一些才显得圆润（和 clipboard/panel.rs 的 BOTTOM_RADIUS 一致） */
+/* 横向那一条又宽又矮，圆角大一些才显得圆润：26，和 Paste 一样（和 clipboard/panel.rs 的 BOTTOM_RADIUS 一致） */
 .panel-root--bottom .panel {
-  border-radius: 22px;
+  border-radius: 26px;
 }
 .panel-root--vertical[data-visible='false'] .panel {
   transform: scale(0.96);
@@ -151,8 +151,10 @@ html[data-snapshot][data-theme='dark'] .panel-root--blur .panel {
   display: flex;
   align-items: center;
   gap: var(--cn-space-3);
-  height: 52px;
-  padding: 0 var(--cn-space-4);
+  /* 高 60、按钮中线离面板顶 30，和 Paste 一样。左边 20：蓝圆按钮 32 里水珠是 24，水珠左边 = 20 + 4 = 24，
+     和下面第一张卡片的左边（CARD_INSET）对齐；右边 18：“更多”的中心离面板右边 32，同 Paste */
+  height: 60px;
+  padding: 0 18px 0 20px;
   flex: none;
 }
 .panel__side {
@@ -173,9 +175,64 @@ html[data-snapshot][data-theme='dark'] .panel-root--blur .panel {
 .panel__search {
   width: 100%;
 }
-/* 搜索框右端留出筛选按钮的位置 */
-.panel__searchbox .cn-field input,
-.panel__searchbox input {
+/* 横向面板（照 Paste）：中间一组 = 放大镜 + 分组标签 + 新建。搜索框平时收成 0 宽（还在页面里，
+   直接打字时能把焦点给它），点放大镜 / 打字 / 有搜索词 / 选了筛选时展开，分组标签缩成只剩图标 */
+.panel__center {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+  min-width: 0;
+  max-width: 64%;
+}
+.panel__searchbtn {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 32px;
+  height: 32px;
+  margin-right: 4px;
+  border-radius: var(--cn-radius-full);
+  color: var(--cn-label);
+}
+.panel__searchbtn:hover {
+  background: var(--cn-bg-hover);
+}
+.panel-root--bottom .panel__searchbox {
+  flex: none;
+  width: 0;
+  opacity: 0;
+  overflow: hidden;
+  pointer-events: none;
+  /* 焦点圈（3px 外发光）展开后要露得出来 */
+  padding: 3px 0;
+  margin: -3px 0;
+  transition:
+    width 220ms var(--cn-ease-out),
+    opacity 160ms var(--cn-ease-out);
+}
+.panel__bar--search .panel__searchbtn {
+  display: none;
+}
+.panel__bar--search .panel__searchbox {
+  width: 400px;
+  max-width: 100%;
+  padding: 3px;
+  margin: -3px 2px -3px -3px;
+  opacity: 1;
+  overflow: visible;
+  pointer-events: auto;
+}
+.panel-root--bottom .panel__search {
+  height: 32px;
+  padding-left: 12px;
+  border-radius: var(--cn-radius-full);
+}
+.panel-root--bottom .panel__search input {
+  font-size: 14px;
+}
+/* 搜索框右端留出筛选按钮的位置（留在框上而不是输入区上：清除的 × 排在输入区后面，才不会压到筛选按钮底下） */
+.panel__searchbox .cn-field.panel__search {
   padding-right: 34px;
 }
 .panel-root--vertical .panel__bar {
@@ -541,7 +598,7 @@ html[data-snapshot][data-theme='dark'] .panel-root--blur .panel {
 .boards {
   display: flex;
   align-items: center;
-  gap: 2px;
+  gap: 4px;
   min-width: 0;
   overflow-x: auto;
   scrollbar-width: none;
@@ -558,11 +615,12 @@ html[data-snapshot][data-theme='dark'] .panel-root--blur .panel {
   align-items: center;
   gap: 6px;
   flex: none;
-  height: 26px;
-  padding: 0 10px;
+  /* 照 Paste：28 高、13 号半粗字、16 的图标，没选中的也是白字 */
+  height: 28px;
+  padding: 0 11px 0 10px;
   border-radius: var(--cn-radius-full);
-  font: 500 12px/1 var(--cn-font-sans);
-  color: var(--cn-label-secondary);
+  font: 600 13px/1 var(--cn-font-sans);
+  color: var(--cn-label);
   white-space: nowrap;
   transition:
     background-color var(--cn-duration-fast),
@@ -584,9 +642,14 @@ html[data-snapshot][data-theme='dark'] .panel-root--blur .panel {
   box-shadow: inset 0 0 0 1.5px var(--cn-accent);
   color: var(--cn-label);
 }
+.boards--compact .boards__tab {
+  width: 30px;
+  padding: 0;
+  justify-content: center;
+}
 .boards__dot {
-  width: 9px;
-  height: 9px;
+  width: 11px;
+  height: 11px;
   border-radius: 50%;
   flex: none;
 }
@@ -594,10 +657,11 @@ html[data-snapshot][data-theme='dark'] .panel-root--blur .panel {
   display: grid;
   place-items: center;
   flex: none;
-  width: 26px;
-  height: 26px;
+  width: 30px;
+  height: 30px;
+  margin-left: 6px;
   border-radius: var(--cn-radius-full);
-  color: var(--cn-label-secondary);
+  color: var(--cn-label);
 }
 .boards__add:hover {
   background: var(--cn-bg-hover);
@@ -628,6 +692,155 @@ html[data-snapshot][data-theme='dark'] .panel-root--blur .panel {
   padding: 0 6px 0 8px;
   background: color-mix(in srgb, var(--cn-accent) 15%, transparent);
   color: var(--cn-accent);
+}
+.panel__filterbtn {
+  max-width: 60%;
+  min-width: 24px;
+  justify-content: center;
+}
+/* 横向面板的搜索框外面包着 3px（留给焦点圈），按钮离框右边也要和上下一样留 4 */
+.panel-root--bottom .panel__filterbtn {
+  right: 7px;
+}
+.panel__filterbtn--open:not(.panel__filterbtn--on) {
+  background: var(--cn-bg-hover);
+  color: var(--cn-label);
+}
+
+/* 筛选面板（FilterPanel，参照 Paste）：一块玻璃，四节（类型 / 应用 / 分组 / 日期）上下排，每节三列小胶囊。
+   横向面板里弹在面板上方（--above，窗口临时往上长，见 PanelView 的 FILTER_RAISE），底下尖角指着筛选按钮；
+   竖版面板里盖在卡片上 */
+.filterpanel {
+  position: absolute;
+  z-index: 20;
+  border-radius: 20px;
+  background: var(--cn-glass-bg-thick);
+  backdrop-filter: blur(28px) saturate(170%);
+  box-shadow:
+    0 12px 32px rgba(0, 0, 0, 0.28),
+    0 0 0 0.5px var(--cn-separator),
+    inset 0 0.5px 0 rgba(255, 255, 255, 0.12);
+  animation: cn-pop-in 140ms var(--cn-ease-out);
+}
+.filterpanel--above {
+  transform-origin: var(--arrow-x) 100%;
+}
+.panel-root--vertical .filterpanel {
+  top: 108px;
+  left: 8px;
+  right: 8px;
+  bottom: 8px;
+  transform-origin: top center;
+}
+.filterpanel__scroll {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  /* PanelView 的 FILTER_RAISE（440）减去尖角和离屏幕的余量 */
+  max-height: 412px;
+  padding: 14px 16px 16px;
+  overflow-y: auto;
+  scrollbar-width: none;
+}
+.panel-root--vertical .filterpanel__scroll {
+  max-height: 100%;
+}
+.filterpanel__scroll::-webkit-scrollbar {
+  display: none;
+}
+/* 尖角：同样的玻璃底，指着筛选按钮 */
+.filterpanel__arrow {
+  position: absolute;
+  bottom: -9px;
+  left: calc(var(--arrow-x) - 11px);
+  width: 22px;
+  height: 10px;
+  background: var(--cn-glass-bg-thick);
+  backdrop-filter: blur(28px) saturate(170%);
+  clip-path: polygon(0 0, 100% 0, 50% 100%);
+}
+/* 筛选面板开着时窗口往上长了一截：面板钉在底部、高度不变 */
+.panel-root--raised {
+  align-items: flex-end;
+}
+.panel-root--raised .panel {
+  flex: 1 1 auto;
+  height: var(--panel-h);
+}
+.filterpanel__section {
+  display: flex;
+  flex-direction: column;
+  flex: none;
+  gap: 8px;
+  min-width: 0;
+}
+.filterpanel__section h3 {
+  margin: 0;
+  padding-left: 2px;
+  font: 600 12px/1.2 var(--cn-font-sans);
+  color: var(--cn-label-secondary);
+}
+.filterpanel__grid,
+.filterpanel__list {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+.panel-root--vertical .filterpanel__grid,
+.panel-root--vertical .filterpanel__list {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+.filterpanel__chip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 34px;
+  padding: 0 12px 0 10px;
+  border-radius: var(--cn-radius-full);
+  background: var(--cn-fill-tertiary);
+  font: 500 13px/1 var(--cn-font-sans);
+  color: var(--cn-label);
+  text-align: left;
+  transition:
+    background-color var(--cn-duration-fast),
+    box-shadow var(--cn-duration-fast);
+}
+.filterpanel__chip:hover {
+  background: var(--cn-fill-secondary);
+}
+.filterpanel__chip--on,
+.filterpanel__chip--on:hover {
+  background: color-mix(in srgb, var(--cn-accent) 26%, transparent);
+  box-shadow: inset 0 0 0 1.5px var(--cn-accent);
+}
+.filterpanel__icon {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 18px;
+  height: 18px;
+}
+.filterpanel__icon img {
+  width: 20px;
+  height: 20px;
+  object-fit: contain;
+}
+.filterpanel__blank {
+  width: 14px;
+  height: 14px;
+  border-radius: 4px;
+  background: var(--cn-fill-secondary);
+}
+.filterpanel__dot {
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+}
+.filterpanel__empty {
+  margin: 0;
+  padding: 8px 2px;
+  font: var(--cn-text-caption);
+  color: var(--cn-label-tertiary);
 }
 /* 智能推荐：面板最左边一颗水珠（WaterOrb），只有图标；悬停放大一点、朝鼠标倾斜，等结果时发光 */
 .panel__smart {
@@ -667,7 +880,7 @@ html[data-snapshot][data-theme='dark'] .panel-root--blur .panel {
   width: 28px;
   height: 28px;
   border-radius: var(--cn-radius-full);
-  color: var(--cn-label-secondary);
+  color: var(--cn-label);
 }
 .panel__more:hover {
   background: var(--cn-bg-hover);
@@ -713,57 +926,9 @@ html[data-snapshot][data-theme='dark'] .panel-root--blur .panel {
   overflow-y: hidden;
   contain: paint;
 }
-/* 底部卡片条不用系统滚动条（见 HScrollbar）。哪头还有没露出来的卡片，哪头渐隐（data-more-left / right，
-   PanelView 按滚动位置设），提示还能往那边滚；滚到头了那头不淡。
-   不用 mask 渐变到透明：面板（尤其毛玻璃样式）本身是半透明的，渐隐的地方会透出窗口后面的桌面，
-   后面是亮色窗口时就是一道发白的模糊。改成盖一层和面板底色一样的渐变（.panel__fade），透不到后面 */
+/* 底部卡片条不用系统滚动条（见 HScrollbar）；两头也不加渐隐（Paste 没有，卡片直接被面板边切掉） */
 .panel-root--bottom .panel__list {
   scrollbar-width: none;
-}
-.panel__fade {
-  position: absolute;
-  z-index: 3;
-  width: 30px;
-  pointer-events: none;
-  opacity: 0;
-  transition: opacity 200ms ease;
-  --fade-tint: 34, 34, 36;
-  --fade-max: 0.9;
-}
-[data-theme='light'] .panel__fade {
-  /* 浅色面板上整块白盖上去很晃眼：窄一点、淡一点 */
-  width: 22px;
-  --fade-tint: 246, 246, 248;
-  --fade-max: 0.7;
-}
-html:not([data-platform='mac'])[data-theme='dark'] .panel-root--blur .panel__fade {
-  --fade-tint: 30, 30, 32;
-}
-/* 渐变按缓出曲线走（几个停靠点），不是一条直线：靠里那头几乎看不出从哪开始 */
-.panel__fade--left {
-  left: 0;
-  background: linear-gradient(
-    90deg,
-    rgba(var(--fade-tint), var(--fade-max)),
-    rgba(var(--fade-tint), calc(var(--fade-max) * 0.62)) 30%,
-    rgba(var(--fade-tint), calc(var(--fade-max) * 0.28)) 60%,
-    rgba(var(--fade-tint), calc(var(--fade-max) * 0.08)) 85%,
-    rgba(var(--fade-tint), 0)
-  );
-}
-.panel__fade--right {
-  right: 0;
-  background: linear-gradient(
-    270deg,
-    rgba(var(--fade-tint), var(--fade-max)),
-    rgba(var(--fade-tint), calc(var(--fade-max) * 0.62)) 30%,
-    rgba(var(--fade-tint), calc(var(--fade-max) * 0.28)) 60%,
-    rgba(var(--fade-tint), calc(var(--fade-max) * 0.08)) 85%,
-    rgba(var(--fade-tint), 0)
-  );
-}
-.panel__fade[data-on] {
-  opacity: 1;
 }
 .panel-root--bottom .panel__list::-webkit-scrollbar {
   display: none;
@@ -780,11 +945,11 @@ html:not([data-platform='mac'])[data-theme='dark'] .panel-root--blur .panel__fad
   position: absolute;
   top: 0;
   left: 0;
-  height: 240px;
+  height: 232px;
   padding: 0;
 }
 .panel-root--bottom .panel__cell {
-  top: 6px;
+  top: 8px;
 }
 
 /* ── 悬浮滚动条 ── */
@@ -820,7 +985,7 @@ html:not([data-platform='mac'])[data-theme='dark'] .panel-root--blur .panel__fad
   background: var(--cn-label-secondary);
 }
 
-/* ── 卡片：200×240，圆角 14 ── */
+/* ── 卡片：232×232，圆角 16（和 Paste 一样） ── */
 .clip-card {
   /* 标题栏的颜色，按类型取苹果的系统色（颜色类卡片整张就是那个颜色） */
   --clip-tint: #ff9500;
@@ -829,7 +994,7 @@ html:not([data-platform='mac'])[data-theme='dark'] .panel-root--blur .panel__fad
   height: 100%;
   display: flex;
   flex-direction: column;
-  border-radius: 14px;
+  border-radius: 16px;
   background: var(--cn-bg-elevated);
   /* 不描边（以前一圈 0.5px 的分隔线，压在图片边上像一道灰框）：只靠柔和的投影和背景分开，像 Paste */
   box-shadow:
@@ -884,7 +1049,8 @@ html:not([data-platform='mac'])[data-theme='dark'] .panel-root--blur .panel__fad
   display: flex;
   align-items: center;
   height: 48px;
-  padding: 0 60px 0 14px;
+  /* 文字离卡片左边 12（Paste 约 12–13） */
+  padding: 0 60px 0 12px;
   flex: none;
   overflow: hidden;
   color: #fff;
@@ -892,8 +1058,9 @@ html:not([data-platform='mac'])[data-theme='dark'] .panel-root--blur .panel__fad
 }
 /* ── 按类型的卡片样式（参照 Paste） ── */
 
-/* 图片（参照 Paste）：标题栏以下整块垫透明格子，图片整张等比缩放到放得下的最大（不裁：竖图上下顶满、
-   横图左右顶满，长截图是细细一条也看得到全貌），尺寸是浮在底部居中的磨砂小胶囊 */
+/* 图片（参照 Paste）：标题栏以下整块垫透明格子。比例和图片区差不多的铺满（--fill，裁掉一点边），
+   差得多的（宽截图、竖长图）整张等比缩放到放得下的最大、不裁（见 ClipCard 的 imageFit）。
+   尺寸在底部居中：压在图片上（--onimage）时是半透明深色胶囊，落在格子上就是一行灰字 */
 .clip-card--card.clip-card--bleed .clip-card__foot {
   position: absolute;
   left: 0;
@@ -915,26 +1082,31 @@ html[data-theme='dark'] .clip-card--card.clip-card--bleed .clip-card__image {
 .clip-card--card.clip-card--bleed .clip-card__gif img {
   object-fit: contain;
 }
-/* 尺寸胶囊、设备小圆点：透出底下图片颜色的磨砂玻璃（不是一块灰色的底），白字 */
-.clip-card--card.clip-card--bleed .clip-card__detail,
-.clip-card--card.clip-card--bleed .clip-card__device {
-  background: rgba(255, 255, 255, 0.16);
-  -webkit-backdrop-filter: blur(14px) saturate(1.8) brightness(0.82);
-  backdrop-filter: blur(14px) saturate(1.8) brightness(0.82);
-  box-shadow: inset 0 0 0 0.5px rgba(255, 255, 255, 0.22);
-  color: rgba(255, 255, 255, 0.96);
-  text-shadow: 0 0.5px 1px rgba(0, 0, 0, 0.25);
+.clip-card--card.clip-card--bleed.clip-card--fill .clip-card__image img,
+.clip-card--card.clip-card--bleed.clip-card--fill .clip-card__gif canvas,
+.clip-card--card.clip-card--bleed.clip-card--fill .clip-card__gif img {
+  object-fit: cover;
 }
 .clip-card--card.clip-card--bleed .clip-card__detail {
   flex: none;
-  padding: 4px 12px;
+  /* 照 Paste 量的：胶囊高 18、字 12 */
+  padding: 2px 10px;
   border-radius: var(--cn-radius-full);
-  font: 500 12px/1.3 var(--cn-font-sans);
+  font: 500 12px/14px var(--cn-font-sans);
   letter-spacing: 0.01em;
+  color: var(--cn-label-secondary);
 }
 .clip-card--card.clip-card--bleed .clip-card__device {
   padding: 5px;
   border-radius: var(--cn-radius-full);
+}
+/* 压在图片上：半透明深色胶囊（Paste 的约 60% 黑，透出一点底下的颜色），浅灰白字 */
+.clip-card--card.clip-card--onimage .clip-card__detail,
+.clip-card--card.clip-card--onimage .clip-card__device {
+  background: rgba(0, 0, 0, 0.56);
+  -webkit-backdrop-filter: blur(12px) saturate(1.4);
+  backdrop-filter: blur(12px) saturate(1.4);
+  color: rgba(255, 255, 255, 0.86);
 }
 
 /* 代码：等宽小字，不把第一行当标题，按关键字 / 字符串 / 数字 / 注释上色（Xcode 的配色） */
@@ -1076,22 +1248,23 @@ html[data-theme='dark'] .clip-card--card.clip-card--bleed .clip-card__image {
 .clip-card__title {
   display: flex;
   flex-direction: column;
-  gap: 3px;
+  /* 两行贴紧一点（Paste 标题和时间之间约 4.5 点），读起来是一块 */
+  gap: 1px;
   min-width: 0;
 }
 .clip-card__type {
   display: flex;
   align-items: center;
   gap: 6px;
-  /* 比 Paste 大一号时显得笨重：标题 15、时间 11，时间不加粗 */
+  /* 照 Paste：标题 15 半粗、时间 12 常规 */
   font: 600 15px/1.1 var(--cn-font-sans);
   letter-spacing: 0.01em;
   white-space: nowrap;
 }
 .clip-card__head .clip-card__time {
-  font: 400 11px/1.2 var(--cn-font-sans);
+  font: 400 12px/1.2 var(--cn-font-sans);
   color: inherit;
-  opacity: 0.8;
+  opacity: 0.84;
 }
 .clip-card__head .clip-card__marks {
   color: inherit;
@@ -1113,10 +1286,11 @@ html:not([data-platform='mac']) .clip-card__appicon {
   /* 参照 Paste：左边一道窄窄的暗边，像图标微微浮在标题栏上 */
   filter: drop-shadow(-1px 0 1.5px rgba(0, 0, 0, 0.13));
 }
+/* 照 Paste 量的：图标比标题栏大一圈，左边缘离卡片右边 62 */
 [data-platform='mac'] .clip-card__appicon {
-  right: -14px;
-  width: 74px;
-  height: 74px;
+  right: -15px;
+  width: 77px;
+  height: 77px;
 }
 /* 没有来源应用图标：半透明白色圆角方块里一个白色类型图标 */
 .clip-card__typetile {
@@ -1540,7 +1714,7 @@ html[data-drag-snap] .clip-card__actions {
   display: none;
 }
 html[data-drag-snap] .clip-card--pickmode.clip-card--card .clip-card__head {
-  padding-left: 14px;
+  padding-left: 12px;
 }
 html[data-drag-snap] .clip-card,
 html[data-drag-snap] .clip-card:hover,

@@ -88,6 +88,11 @@ pub struct ClipQuery {
     pub pinned_only: bool,
     pub favorite_only: bool,
     pub group_id: Option<i64>,
+    /// 只要从这个应用复制来的（`source_app`，筛选面板的"应用"一节）
+    pub app: Option<String>,
+    /// 最后使用时间在 [since, until) 里（毫秒；筛选面板的"日期"一节，起止按本地日历算好了传过来）
+    pub since: Option<i64>,
+    pub until: Option<i64>,
     /// 上一页最后一条的游标，`pinned:last_used_at:id`
     pub cursor: Option<String>,
     pub limit: u32,
@@ -106,6 +111,14 @@ pub struct ClipStats {
     pub total: i64,
     pub pinned: i64,
     pub favorite: i64,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ClipSourceApp {
+    pub name: String,
+    pub icon: Option<String>,
+    pub count: i64,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -299,6 +312,18 @@ pub fn query(conn: &Connection, q: &ClipQuery) -> AppResult<ClipPage> {
         wheres.push("group_id = ?".into());
         args.push(Box::new(g));
     }
+    if let Some(app) = q.app.as_deref().filter(|a| !a.is_empty()) {
+        wheres.push("source_app = ?".into());
+        args.push(Box::new(app.to_owned()));
+    }
+    if let Some(since) = q.since {
+        wheres.push("last_used_at >= ?".into());
+        args.push(Box::new(since));
+    }
+    if let Some(until) = q.until {
+        wheres.push("last_used_at < ?".into());
+        args.push(Box::new(until));
+    }
     if let Some(cursor) = q.cursor.as_deref().and_then(parse_cursor) {
         let (p, t, id) = cursor;
         wheres.push(
@@ -427,6 +452,26 @@ pub fn set_group(conn: &Connection, ids: &[i64], group: Option<i64>) -> AppResul
         )?;
     }
     Ok(())
+}
+
+/// 历史里出现过的来源应用（筛选面板的"应用"一节），最近用过的在前；图标取这个应用最近一条记下的
+pub fn source_apps(conn: &Connection, limit: u32) -> AppResult<Vec<ClipSourceApp>> {
+    // SQLite 里和 MAX() 一起选的普通列，取的就是 MAX 那一行的值
+    let mut stmt = conn.prepare(
+        "SELECT source_app, source_icon, COUNT(*), MAX(last_used_at) FROM clipboard_items
+         WHERE source_app IS NOT NULL AND source_app != ''
+         GROUP BY source_app ORDER BY MAX(last_used_at) DESC LIMIT ?1",
+    )?;
+    let apps = stmt
+        .query_map([limit], |r| {
+            Ok(ClipSourceApp {
+                name: r.get(0)?,
+                icon: r.get(1)?,
+                count: r.get(2)?,
+            })
+        })?
+        .collect::<Result<_, _>>()?;
+    Ok(apps)
 }
 
 pub fn list_groups(conn: &Connection) -> AppResult<Vec<ClipGroup>> {

@@ -1,6 +1,6 @@
 //! 剪贴板卡片标题栏的颜色：常见应用用固定的颜色（参照 Paste：照片是红色、备忘录是黄色、Xcode 是蓝色……），
 //! 图标是好几种颜色拼起来的（照片的花瓣、Chrome）按图标算主色会算偏，所以单独列出来。
-//! 其余的按图标主色算（`imaging::dominant_color`）。
+//! 其余的按图标底色算（`imaging::header_color`）。
 
 /// 应用文件名（小写，macOS 是 `xxx.app`，Windows 是 `xxx.exe`）→ 颜色
 const KNOWN: &[(&str, &str)] = &[
@@ -54,9 +54,9 @@ const KNOWN: &[(&str, &str)] = &[
     ("excel.exe", "#217346"),
     ("microsoft powerpoint.app", "#d24726"),
     ("powerpnt.exe", "#d24726"),
-    // Claude：品牌色 #d97757 偏淡偏粉，按图标算也一样发灰（Windows 的图标就是这个色），用 Paste 标题栏那种更亮的橙
-    ("claude.app", "#ed652c"),
-    ("claude.exe", "#ed652c"),
+    // Claude：Mac 上按图标底色算出来就是 Paste 那种橙（见 imaging::header_color）；Windows 的图标是品牌色
+    // #d97757 偏淡偏粉，算出来发灰，固定成同一种橙
+    ("claude.exe", "#ef7a3d"),
     ("notion.app", "#1c1c1e"),
     ("notion.exe", "#1c1c1e"),
     ("figma.app", "#1c1c1e"),

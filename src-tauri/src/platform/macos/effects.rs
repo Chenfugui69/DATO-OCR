@@ -578,6 +578,12 @@ pub fn set_backdrop(window: &WebviewWindow, radius: Option<u32>) -> bool {
         if let Some(glass) = view.downcast_ref::<NSGlassEffectView>() {
             // 液态玻璃自己按半径画圆角、边缘折射和高光，不用蒙版
             glass.setCornerRadius(points);
+            // 但它背后的模糊仍按整块矩形取，圆角外面那一小块会被糊上一层浅灰（浅色背景上看得出一个方角的影子，
+            // Paste 也有）。再让图层按同样的圆角把自己裁一刀，模糊就只留在圆角里面
+            if let Some(layer) = glass.layer() {
+                layer.setCornerRadius(points);
+                layer.setMasksToBounds(true);
+            }
         } else if let Some(vev) = view.downcast_ref::<NSVisualEffectView>() {
             if let Some(layer) = vev.layer() {
                 layer.setCornerRadius(points);

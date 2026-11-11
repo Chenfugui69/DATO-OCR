@@ -6,7 +6,7 @@
 
 import type { AnnotationEngine } from '@/views/annotate/engine';
 import { TEXT_FONT } from '@/views/annotate/model';
-import { LABEL_LINE_HEIGHT, wrapLabel } from '@/views/annotate/render';
+import { labelLayout } from '@/views/annotate/render';
 import { TRANSLATION_GROUP, type TranslatedBlock } from '@/views/annotate/translateLayer';
 
 interface Line {
@@ -26,14 +26,9 @@ function labelLines(engine: AnnotationEngine): Line[] {
   const out: Line[] = [];
   for (const a of engine.annotations) {
     if (a.kind !== 'label' || a.group !== TRANSLATION_GROUP) continue;
-    const r = a.rect;
-    const pad = Math.max(1, a.fontSize * 0.08);
-    const lines = wrapLabel(a.text, a.fontSize, r.width - pad * 2, a.bold);
-    const lh = a.fontSize * LABEL_LINE_HEIGHT;
-    const total = lines.length * lh;
-    const top = total < r.height ? r.y + (r.height - total) / 2 : r.y;
-    lines.forEach((text, i) =>
-      out.push({ key: `${a.id}-${i}`, x: r.x + pad, y: top + i * lh, width: r.width - pad * 2, height: lh, fontSize: a.fontSize, bold: !!a.bold, lineHeight: lh, text }),
+    const { lines, lh } = labelLayout(a);
+    lines.forEach((l, i) =>
+      out.push({ key: `${a.id}-${i}`, x: l.x, y: l.y, width: l.width + 2, height: lh, fontSize: a.fontSize, bold: !!a.bold, lineHeight: lh, text: l.text }),
     );
   }
   return out;

@@ -749,11 +749,54 @@ pub(crate) fn app_icon(app: &AppHandle, exe: &Path) -> Option<String> {
     let icon = platform::extract_app_icon(exe)?;
     let bytes = imaging::encode_png(&icon).ok()?;
     std::fs::write(&abs, bytes).ok()?;
+    ensure_card_icon(app, &rel);
     Some(rel)
 }
 
+/// Mac 卡片标题栏的图标显示 77pt（Retina 上 154 像素）。256 的原图交给网页缩，WebKit 缩小用的是
+/// 双线性，边缘发虚（量过比 Paste 糊一成左右）；这里预先按显示大小用 Lanczos 缩好一份
+/// `…-card.png`，网页一比一画（前端 `cardIconUrl`，取不到退回原图）。旧图标在列卡片时补上（`icon_colors`）。
+pub(crate) const CARD_ICON_PX: u32 = 154;
+
+/// 已有的来源图标都补一份 `…-card.png`（启动时，见 `maintenance::spawn`）
+pub fn ensure_card_icons(app: &AppHandle) {
+    if !cfg!(target_os = "macos") {
+        return;
+    }
+    let Ok(dir) = std::fs::read_dir(state(app).paths.app_icons()) else {
+        return;
+    };
+    for entry in dir.flatten() {
+        let name = entry.file_name().to_string_lossy().to_string();
+        if name.ends_with("-hd.png") {
+            ensure_card_icon(app, &format!("app-icons/{name}"));
+        }
+    }
+}
+
+fn ensure_card_icon(app: &AppHandle, rel: &str) {
+    if !cfg!(target_os = "macos") {
+        return;
+    }
+    let Some(base) = rel.strip_suffix("-hd.png") else {
+        return;
+    };
+    let st = state(app);
+    let card = st.paths.abs(&format!("{base}-card.png"));
+    if card.exists() {
+        return;
+    }
+    let Ok(img) = imaging::load(&st.paths.abs(rel)) else {
+        return;
+    };
+    let small = imaging::resize_sharp(&img, CARD_ICON_PX, CARD_ICON_PX);
+    if let Ok(bytes) = imaging::encode_png(&small) {
+        let _ = std::fs::write(card, bytes);
+    }
+}
+
 /// 卡片标题栏的颜色（`#rrggbb`），按来源应用图标查：常见应用用固定颜色（`app_colors`），
-/// 其余按图标主色算。按图标路径缓存，算不出的不返回（卡片用类型的颜色）。
+/// 其余按图标底色算（`imaging::header_color`，照 Paste）。按图标路径缓存，算不出的不返回（卡片用类型的颜色）。
 pub fn icon_colors(app: &AppHandle, icons: &[String]) -> std::collections::HashMap<String, String> {
     static CACHE: Mutex<Option<std::collections::HashMap<String, Option<String>>>> =
         Mutex::new(None);
@@ -765,6 +808,7 @@ pub fn icon_colors(app: &AppHandle, icons: &[String]) -> std::collections::HashM
         if !icon.starts_with("app-icons/") {
             continue;
         }
+        ensure_card_icon(app, icon);
         let color = cache.entry(icon.clone()).or_insert_with(|| {
             let app_path = st
                 .db
@@ -775,7 +819,7 @@ pub fn icon_colors(app: &AppHandle, icons: &[String]) -> std::collections::HashM
                 return Some(known.to_string());
             }
             let img = imaging::load(&st.paths.abs(icon)).ok()?;
-            let [r, g, b] = imaging::dominant_color(&img)?;
+            let [r, g, b] = imaging::header_color(&img)?;
             Some(format!("#{r:02x}{g:02x}{b:02x}"))
         });
         if let Some(c) = color {

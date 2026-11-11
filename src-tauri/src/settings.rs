@@ -1591,7 +1591,8 @@ impl Settings {
         if !matches!(c.inplace_original.as_str(), "side" | "toggle") {
             c.inplace_original = "side".into();
         }
-        if !matches!(c.element_level.as_str(), "block" | "element") {
+        // "区块"档去掉了（只是把小框丢掉，剩下的常是看不见的包装层，反而框错）：以前选了区块的按元素算
+        if c.element_level != "element" {
             c.element_level = "element".into();
         }
         if !matches!(c.right_click.as_str(), "none" | "exit" | "cancelSelection") {

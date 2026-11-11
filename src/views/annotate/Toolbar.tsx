@@ -11,6 +11,7 @@ import {
   Eraser,
   Focus,
   Grid2x2,
+  GripVertical,
   Highlighter,
   Languages,
   Pencil,
@@ -268,6 +269,8 @@ export interface ToolbarProps {
   groupDirect?: Record<string, { action: ActionId; label: string }>;
   className?: string;
   style?: React.CSSProperties;
+  /** 给了就能拖：最左边多一个拖动把手，按住把手（或工具条上按钮之间的空处）拖动时调它 */
+  onDragStart?: (e: React.PointerEvent<HTMLDivElement>) => void;
 }
 
 /** 工具条上的一个按钮组 */
@@ -319,6 +322,7 @@ export const Toolbar = forwardRef<HTMLDivElement, ToolbarProps>(function Toolbar
     groupDirect,
     className,
     style,
+    onDragStart,
   },
   ref,
 ) {
@@ -360,7 +364,22 @@ export const Toolbar = forwardRef<HTMLDivElement, ToolbarProps>(function Toolbar
     );
   };
   return (
-    <div ref={ref} className={clsx('an-toolbar cn-glass', className)} style={style} onPointerDown={(e) => e.stopPropagation()}>
+    <div
+      ref={ref}
+      className={clsx('an-toolbar cn-glass', className)}
+      style={style}
+      onPointerDown={(e) => {
+        e.stopPropagation();
+        // 按在把手上，或者按钮之间的空处（工具条本身、分隔线）：拖整条工具条
+        const target = e.target as HTMLElement;
+        if (onDragStart && e.button === 0 && (target === e.currentTarget || target.closest('.an-toolbar__grip, .an-sep'))) onDragStart(e);
+      }}
+    >
+      {onDragStart && (
+        <span className="an-toolbar__grip" aria-hidden>
+          <GripVertical size={14} strokeWidth={2} />
+        </span>
+      )}
       {((tools?.length ? tools : TOOLS) as string[]).filter(shown).map((entry) => {
         if (entry.startsWith(GROUP_PREFIX)) return groupButton(entry);
         const id = entry as Tool;

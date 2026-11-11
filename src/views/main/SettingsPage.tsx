@@ -416,13 +416,15 @@ export function SettingsPage({ section }: { section: string | null }) {
             </Row>
             <Row title={t('settings.capture.detectLevel')} desc={t('settings.capture.detectLevelDesc')}>
               <Segmented
-                value={!c.detectWindows ? 'off' : !c.detectChildWindows ? 'window' : c.elementLevel === 'block' ? 'block' : 'element'}
-                options={(['off', 'window', 'block', 'element'] as const).map((v) => ({ value: v, label: t(`settings.capture.detectLevelOpt.${v}`) }))}
+                // 以前还有一档"区块"（只框大块）：和"元素"用的是同一批框、只是丢掉小的，剩下的常是看不见的包装层，
+                // 反而框错；元素档本来就能滚轮切外层 / 内层，所以去掉了
+                value={!c.detectWindows ? 'off' : !c.detectChildWindows ? 'window' : 'element'}
+                options={(['off', 'window', 'element'] as const).map((v) => ({ value: v, label: t(`settings.capture.detectLevelOpt.${v}`) }))}
                 onChange={(v) =>
                   set((d) => {
                     d.capture.detectWindows = v !== 'off';
-                    d.capture.detectChildWindows = v === 'block' || v === 'element';
-                    if (v === 'block' || v === 'element') d.capture.elementLevel = v;
+                    d.capture.detectChildWindows = v === 'element';
+                    d.capture.elementLevel = 'element';
                   })
                 }
               />

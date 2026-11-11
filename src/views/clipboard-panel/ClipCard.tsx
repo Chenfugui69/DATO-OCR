@@ -11,7 +11,7 @@ import { useTranslation } from 'react-i18next';
 
 import { readableOn, relativeTime } from '@/lib/format';
 import { clipboard } from '@/lib/ipc';
-import { assetUrl, modKey } from '@/lib/platform';
+import { assetUrl, isMac, modKey } from '@/lib/platform';
 import { Tooltip } from '@/ui/overlays';
 import type { ClipItem } from '@/lib/types';
 
@@ -188,6 +188,33 @@ const ACTION_ICON = { preview: Eye, translate: Languages, ocr: ScanText, ai: Spa
 /** 没有来源应用图标时，标题栏右边用类型图标顶上 */
 const TYPE_ICON = { text: Type, image: Image, link: Link2, files: File, color: Palette, otp: KeyRound } as const;
 
+
+/** 卡片条里图片区的大小（卡片 232×232 去掉 48 的标题栏，见 PanelView 的 CARD_W、panel.css 的 .panel__cell） */
+const IMAGE_AREA = { width: 232, height: 184 };
+/** 尺寸文字占底部多高（离底 11、高 18）：图片下边离卡片底不到这么多，字就压在图上 */
+const LABEL_ZONE = 30;
+
+/**
+ * 图片在卡片里怎么摆（照 Paste）：比例和图片区差不多的（整张缩进去也能占满八成以上）铺满、裁掉一点边；
+ * 差得多的（宽截图、竖长图）整张缩放到放得下的最大，不裁。尺寸文字压在图片上时才加深色胶囊，落在格子上就是灰字
+ */
+/** Mac 上标题栏图标用后端按显示大小预先缩好的一份（`…-card.png`，见 `clipboard::ensure_card_icon`）：
+ *  WebKit 把 256 的原图缩到 154 会发虚 */
+function cardIconPath(icon: string): string {
+  return isMac && icon.endsWith('-hd.png') ? icon.replace(/-hd\.png$/, '-card.png') : icon;
+}
+
+export function imageFit(width: number | null | undefined, height: number | null | undefined): { cover: boolean; underLabel: boolean } {
+  if (!width || !height) return { cover: false, underLabel: true };
+  const area = IMAGE_AREA.width / IMAGE_AREA.height;
+  const ratio = width / height;
+  const cover = Math.min(ratio / area, area / ratio) >= 0.8;
+  if (cover) return { cover, underLabel: true };
+  // 整张放进去：比图片区宽的左右顶满、上下居中；窄的上下顶满
+  const shownH = ratio >= area ? IMAGE_AREA.width / ratio : IMAGE_AREA.height;
+  return { cover, underLabel: (IMAGE_AREA.height - shownH) / 2 < LABEL_ZONE };
+}
+
 export const ClipCard = memo(function ClipCard({
   item,
   tint,
@@ -248,8 +275,9 @@ export const ClipCard = memo(function ClipCard({
   let detail: string | null = null;
   let colorStyle: React.CSSProperties | undefined;
 
-  // 卡片条里图片铺满标题栏以下（像 Paste），尺寸做成图片底部居中的小胶囊
+  // 卡片条里图片铺满标题栏以下（像 Paste），尺寸在底部居中
   const fullBleed = layout === 'card' && (item.type === 'image' || gif);
+  const fit = fullBleed ? imageFit(item.width, item.height) : null;
   const code = item.type === 'text' && looksLikeCode(text, item.sourceApp);
 
   switch (item.type) {
@@ -368,6 +396,8 @@ export const ClipCard = memo(function ClipCard({
         flashing && 'clip-card--flash',
         suggested && 'clip-card--suggested',
         fullBleed && 'clip-card--bleed',
+        fit?.cover && 'clip-card--fill',
+        fit?.underLabel && 'clip-card--onimage',
         code && 'clip-card--code',
         pickMode && 'clip-card--pickmode',
         picked && 'clip-card--picked',
@@ -421,7 +451,18 @@ export const ClipCard = memo(function ClipCard({
               {!board && time}
             </div>
             {board ? null : item.sourceIcon ? (
-              <img className="clip-card__appicon" src={assetUrl(item.sourceIcon)} alt="" title={appName} draggable={false} />
+              <img
+                className="clip-card__appicon"
+                src={assetUrl(cardIconPath(item.sourceIcon))}
+                alt=""
+                title={appName}
+                draggable={false}
+                onError={(e) => {
+                  // 还没生成按显示大小缩好的那份：退回原图
+                  const full = item.sourceIcon ? assetUrl(item.sourceIcon) : undefined;
+                  if (full && e.currentTarget.src !== full) e.currentTarget.src = full;
+                }}
+              />
             ) : (
               <span className="clip-card__typetile" title={item.remote ? appName : undefined}>
                 <TypeIcon width={19} height={19} strokeWidth={2} />
@@ -460,7 +501,7 @@ export const ClipCard = memo(function ClipCard({
               {t('clip.smart.badge')}
             </span>
           )}
-          {/* 图片卡片的底栏浮在图片上：尺寸是底部居中的小胶囊 */}
+          {/* 图片卡片的底栏浮在图片上：尺寸在底部居中（压在图上时是深色胶囊） */}
           <div className="clip-card__foot">
             {(!fullBleed || detail) && <span className="clip-card__detail cn-truncate cn-numeric">{detail ?? appName}</span>}
             {index < 9 && <span className="clip-card__index">Ctrl {index + 1}</span>}

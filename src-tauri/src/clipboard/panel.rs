@@ -18,14 +18,15 @@ use crate::state::state;
 use crate::{events, wm};
 
 pub const LABEL: &str = "clipboard";
-pub const BOTTOM_HEIGHT: f64 = 346.0;
+/// 横向面板窗口高：面板 324（顶栏 60 + 卡片上方 8 + 卡片 232 + 下方 24，同 Paste）+ 上下透明边各 8
+pub const BOTTOM_HEIGHT: f64 = 340.0;
 pub const VERTICAL_SIZE: (f64, f64) = (380.0, 620.0);
 /// 页面里面板四周留给阴影的透明边（和 panel.css 一致）：底部样式 8，竖版 6
 const BOTTOM_PAD: f64 = 8.0;
 const VERTICAL_PAD: f64 = 6.0;
-/// 悬浮样式的圆角：竖版和 panel.css 的 --cn-radius-2xl 一致，横向那一条大一些（panel.css 里同样是 22）
+/// 悬浮样式的圆角：竖版和 panel.css 的 --cn-radius-2xl 一致，横向那一条大一些（panel.css 里同样是 26，和 Paste 一样）
 const RADIUS: f64 = 16.0;
-const BOTTOM_RADIUS: f64 = 22.0;
+const BOTTOM_RADIUS: f64 = 26.0;
 
 static PREVIOUS: Mutex<Option<WindowHandle>> = Mutex::new(None);
 
@@ -131,6 +132,8 @@ fn show(app: &AppHandle) -> AppResult<()> {
     let mut placed = None;
     // 上一次滑出去时窗口被裁成了一条看不见的缝（Windows 的滑动是边挪边裁），这次不管滑不滑都先放开
     platform::set_rect_region(&window, None);
+    // 上一次筛选面板开着时被收起：窗口往上长过、背板只铺在下面一块。这次窗口重新摆，背板也恢复铺满
+    platform::set_backdrop_rect(&window, None, 0);
     // 盖在程序坞上面：底边按整块屏算，不按扣掉程序坞的可用区域；窗口层级也要提到程序坞之上
     let over_dock = style != "vertical" && cb.panel_over_dock;
     platform::set_above_dock(&window, over_dock);

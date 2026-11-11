@@ -55,6 +55,8 @@ pub struct TranslatedBlock {
     pub bold: bool,
     /// 按墨的上下范围估出来的字号（物理像素），0 = 估不出来（前端退回按行高算）
     pub font_size: f64,
+    /// 原文在按钮里居中（四周被一块底色围着、左右留白差不多）：译文也居中排
+    pub centered: bool,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -80,6 +82,7 @@ struct TextBlock {
     bold: bool,
     /// 各行估出来的字号
     fonts: Vec<f64>,
+    centered: bool,
 }
 
 fn color_dist(a: [f64; 3], b: [f64; 3]) -> f64 {
@@ -239,7 +242,15 @@ fn split_cells(img: &RgbaImage, r: &Rect, text: &str) -> Vec<(Rect, String)> {
         let b = (a..b).rev().find(|&k| cols[k] > 0 && !rule(k))? + 1;
         Some((a, b))
     };
-    let pieces: Vec<(usize, usize)> = pieces.into_iter().filter_map(trim).collect();
+    let mut pieces: Vec<(usize, usize)> = pieces.into_iter().filter_map(trim).collect();
+    // 贴着框边、不到半个字宽的一小条墨是旁边格子的字伸进来了（识字框互相压着一点），不算一格
+    let sliver = |(a, b): (usize, usize)| ((b - a) as f64) < h as f64 * 0.6;
+    if pieces.len() >= 2 && pieces.last().is_some_and(|&p| p.1 + 3 >= n && sliver(p)) {
+        pieces.pop();
+    }
+    if pieces.len() >= 2 && pieces.first().is_some_and(|&p| p.0 <= 2 && sliver(p)) {
+        pieces.remove(0);
+    }
     if pieces.len() < 2 {
         return whole();
     }
@@ -357,12 +368,14 @@ fn font_from_extent(text: &str, extent: f64) -> f64 {
         .chars()
         .any(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || "bdfhklijt()[]{}|/".contains(c));
     let down = text.chars().any(|c| "gjpqy()[]{}|".contains(c));
+    // 系数在 Windows（Segoe UI，150%）和 Mac（SF，2x）上量过：同样 15 号字，
+    // 只有上伸的一行（"Save to Downloads"）墨高 0.76 个字号，上下都伸的（"Open in new window"）0.92
     let k = if wide {
         0.9
     } else if up && down {
-        0.95
+        0.92
     } else if up {
-        0.73
+        0.76
     } else if down {
         0.74
     } else {
@@ -397,18 +410,178 @@ fn separated(img: &RgbaImage, a: &Rect, a_text: &str, b: &Rect) -> bool {
     let gap = b.x - a.right();
     let y = a.y.max(b.y);
     let bottom = a.bottom().min(b.bottom());
-    if gap < 3.0 || bottom - y < 4.0 {
+    if bottom - y < 4.0 {
         return false;
     }
-    let band = Rect { x: a.right(), y, w: gap, h: bottom - y };
-    if let (Some(ink), Some((x0, y0, x1, y1))) = (Ink::of(img, &a.union(b)), bounds(img, &band)) {
-        let h = (y1 - y0) as usize;
-        let rule = (x0..x1).any(|x| (y0..y1).filter(|&y| color_dist(px(img, x, y), ink.bg) > 30.0).count() * 10 >= h * 9);
-        if rule {
-            return true;
+    if gap >= 3.0 {
+        let band = Rect { x: a.right(), y, w: gap, h: bottom - y };
+        if let (Some(ink), Some((x0, y0, x1, y1))) = (Ink::of(img, &a.union(b)), bounds(img, &band)) {
+            let h = (y1 - y0) as usize;
+            let rule = (x0..x1).any(|x| (y0..y1).filter(|&y| color_dist(px(img, x, y), ink.bg) > 30.0).count() * 10 >= h * 9);
+            if rule {
+                return true;
+            }
         }
     }
-    ink_metrics(img, a).is_some_and(|m| gap >= font_from_extent(a_text, m.extent) * 1.5)
+    // 空白按墨量（识字框四周留的边不一样宽，还常常交叠）：比一个字宽（字号）还宽就是两格，
+    // 句子里词和词之间只有四分之一个字宽
+    let Some(font) = ink_metrics(img, a).map(|m| font_from_extent(a_text, m.extent)) else {
+        return false;
+    };
+    ink_gap(img, a, b).is_some_and(|g| g >= font)
+}
+
+/// 同一行左右两个框之间，墨真正空着的最宽一段（像素）：从左框中间量到右框中间，取最长的一段空列。
+/// 两框上下重叠的那几行里数
+fn ink_gap(img: &RgbaImage, a: &Rect, b: &Rect) -> Option<f64> {
+    blank_run(img, a, b).map(|(_, len)| len)
+}
+
+/// 同 `ink_gap`，另外给出那段空白从哪儿开始（图上 x）
+fn blank_run(img: &RgbaImage, a: &Rect, b: &Rect) -> Option<(f64, f64)> {
+    let y = a.y.max(b.y);
+    let bottom = a.bottom().min(b.bottom());
+    let from = a.x + a.w / 2.0;
+    let to = b.x + b.w / 2.0;
+    if bottom - y < 4.0 || to <= from {
+        return None;
+    }
+    let ink = Ink::of(img, &a.union(b))?;
+    let (x0, y0, x1, y1) = bounds(img, &Rect { x: from, y, w: to - from, h: bottom - y })?;
+    let (mut best, mut best_end, mut run) = (0u32, x0, 0u32);
+    for x in x0..x1 {
+        if (y0..y1).any(|y| ink.at(img, x, y)) {
+            run = 0;
+        } else {
+            run += 1;
+            if run > best {
+                best = run;
+                best_end = x + 1;
+            }
+        }
+    }
+    Some((f64::from(best_end - best), f64::from(best)))
+}
+
+/// 去掉行首行尾的图标以后，框是按字数比例缩的，可能切在图标上（译文底色盖住半个图标）或字上。
+/// 把切口挪到离它最近的一段空白（至少五分之一个字高宽）：右边切口挪到空白起点，左边挪到空白终点
+fn snap_cut(img: &RgbaImage, orig: &Rect, r: &mut Rect) {
+    let (Some(ink), Some((x0, y0, x1, y1))) = (Ink::of(img, orig), bounds(img, orig)) else {
+        return;
+    };
+    let h = f64::from(y1 - y0);
+    let min_run = (h * 0.2).max(2.0) as u32;
+    let mut runs: Vec<(f64, f64)> = Vec::new();
+    let mut start: Option<u32> = None;
+    for x in x0..=x1 {
+        let blank = x < x1 && !(y0..y1).any(|y| ink.at(img, x, y));
+        match (blank, start) {
+            (true, None) => start = Some(x),
+            (false, Some(s0)) => {
+                if x - s0 >= min_run {
+                    runs.push((f64::from(s0), f64::from(x)));
+                }
+                start = None;
+            }
+            _ => {}
+        }
+    }
+    // 框本身的两头也算切口：格子是按墨切出来的，去掉的图标可能根本不在这一格里（"▸" 的字给了前一格，
+    // 墨在后一格开头），这时按比例缩就会切掉最后一个字母
+    runs.push((orig.right(), orig.right()));
+    runs.push((orig.x, orig.x));
+    let right = r.right();
+    if right < orig.right() - 0.5 {
+        if let Some(&(s0, _)) = runs
+            .iter()
+            .filter(|(s0, _)| *s0 > r.x + h && (s0 - right).abs() <= h * 2.0)
+            .min_by(|a, b| (a.0 - right).abs().total_cmp(&(b.0 - right).abs()))
+        {
+            r.w = s0 - r.x;
+        }
+    }
+    let right = r.right();
+    if r.x > orig.x + 0.5 {
+        if let Some(&(_, e)) = runs
+            .iter()
+            .filter(|(_, e)| *e < right - h && (e - r.x).abs() <= h * 2.0)
+            .min_by(|a, b| (a.1 - r.x).abs().total_cmp(&(b.1 - r.x).abs()))
+        {
+            r.w = right - e;
+            r.x = e;
+        }
+    }
+}
+
+/// 按钮里的字：字的左右、上下不远处都碰到另一种底色（按钮的边），而且左右留白差不多
+fn in_button(img: &RgbaImage, r: &Rect) -> bool {
+    let (Some(ink), Some((x0, y0, x1, y1))) = (Ink::of(img, r), bounds(img, r)) else {
+        return false;
+    };
+    let (w, h) = img.dimensions();
+    let has_ink = |x: u32| (y0..y1).any(|y| ink.at(img, x, y));
+    let (Some(ix0), Some(ix1)) = ((x0..x1).find(|&x| has_ink(x)), (x0..x1).rev().find(|&x| has_ink(x))) else {
+        return false;
+    };
+    let lh = f64::from(y1 - y0);
+    let edge = |x: u32, y: u32| color_dist(px(img, x, y), ink.bg) > 40.0;
+    let reach = (lh * 4.0) as u32;
+    let cy = (y0 + y1) / 2;
+    let cx = (ix0 + ix1) / 2;
+    let left = (1..=reach.min(ix0)).find(|&d| edge(ix0 - d, cy));
+    let right = (1..=reach.min(w - 1 - ix1)).find(|&d| edge(ix1 + d, cy));
+    let up_reach = ((lh * 1.5) as u32).max(y1 - y0);
+    let up = (1..=up_reach.min(cy)).find(|&d| edge(cx, cy - d));
+    let down = (1..=up_reach.min(h - 1 - cy)).find(|&d| edge(cx, cy + d));
+    let (Some(l), Some(r), Some(_), Some(_)) = (left, right, up, down) else {
+        return false;
+    };
+    let (l, r) = (f64::from(l), f64::from(r));
+    // 左右留白差三成多以内都算居中（按钮的字常常为了视觉居中偏一点）；输入框、列表里靠左的字两边能差好几倍
+    l >= lh * 0.2 && r >= lh * 0.2 && (l - r).abs() <= (l.max(r) * 0.35).max(lh * 0.3)
+}
+
+/// 主要是西文的行里，识字给的全角标点换回半角（"（now from" 的全角括号会被当成图标剥掉），
+/// 词尾大小写同形的字母认成大写的（"trackS"）改回小写
+fn normalize_latin(text: &str) -> String {
+    let alnum: Vec<char> = text.chars().filter(|c| c.is_alphanumeric()).collect();
+    let latin = alnum.iter().filter(|c| c.is_ascii_alphanumeric()).count();
+    if alnum.is_empty() || (latin as f64) < alnum.len() as f64 * 0.7 {
+        return text.to_string();
+    }
+    let mapped: String = text
+        .chars()
+        .map(|c| match c {
+            '（' => '(',
+            '）' => ')',
+            '，' => ',',
+            '：' => ':',
+            '；' => ';',
+            '！' => '!',
+            '？' => '?',
+            c => c,
+        })
+        .collect();
+    let mut out = String::with_capacity(mapped.len());
+    for (k, word) in mapped.split(' ').enumerate() {
+        if k > 0 {
+            out.push(' ');
+        }
+        let cs: Vec<char> = word.chars().collect();
+        // 词里最后一个字母（后面可能跟着标点）
+        let last = cs.iter().rposition(|c| c.is_alphabetic());
+        match last {
+            Some(i) if i >= 3
+                && "COSVWXZ".contains(cs[i])
+                && cs[..i].iter().rev().take(3).all(|c| c.is_ascii_lowercase()) =>
+            {
+                let fixed: String = cs.iter().enumerate().map(|(j, &c)| if j == i { c.to_ascii_lowercase() } else { c }).collect();
+                out.push_str(&fixed);
+            }
+            _ => out.push_str(word),
+        }
+    }
+    out
 }
 
 /// 一行像是一句话写到头折下来的（段落的一行），不是表格里的短格子：四个词以上，或者十个以上的中文字
@@ -420,11 +593,38 @@ fn wraps(text: &str) -> bool {
     words >= 4 || text.chars().filter(|&c| is_wide(c)).count() >= 10
 }
 
+/// 行尾是连字符（前面是字母）：下一行接着这个词写，拼的时候不加空格（"win/glass-" + "shader."）
+fn hyphen_end(s: &str) -> bool {
+    let mut cs = s.chars().rev();
+    cs.next() == Some('-') && cs.next().is_some_and(char::is_alphanumeric)
+}
+
+/// 下一行开头那个词，在上一行剩下的空里放不下：上一行是被迫折下来的。右边不齐的段落（聊天、说明文字）
+/// 每行右边都空着一截，光看"写没写到头"会把一段拆成好几块各翻各的，意思就翻错了
+fn next_word_wont_fit(last: &Rect, last_text: &str, column_right: f64, next: &str) -> bool {
+    let cw = char_width(last_text, last);
+    // 中文没有空格，"第一个词"按第一个字算
+    let mut first = 0.0;
+    for c in next.trim_start().chars() {
+        if c.is_whitespace() {
+            break;
+        }
+        if is_wide(c) {
+            if first == 0.0 {
+                first = cw;
+            }
+            break;
+        }
+        first += cw * 0.55;
+    }
+    first > 0.0 && last.right() + cw * 0.55 + first > column_right + cw * 0.3
+}
+
 impl TextBlock {
     fn text(&self) -> String {
         let mut out = String::new();
         for (_, t) in &self.lines {
-            if !out.is_empty() && needs_space(&out, t) {
+            if !out.is_empty() && needs_space(&out, t) && !hyphen_end(&out) {
                 out.push(' ');
             }
             out.push_str(t);
@@ -455,7 +655,8 @@ fn icon_like(c: char, at_end: bool) -> bool {
         return false;
     }
     // 句末标点、成对符号的后半个是正文的一部分；行首的引号、括号也是
-    let keep_end = ".,!?:;)]}'\"%…";
+    // 行尾的 "-" 是折行的连字符（"win/glass-" 下一行接 "shader"）：去掉的话原图上那个 "-" 不在译文底色里，会露出来
+    let keep_end = ".,!?:;)]}'\"%…-";
     let keep_start = "([{'\"#@$";
     !(if at_end { keep_end } else { keep_start }).contains(c)
 }
@@ -516,12 +717,26 @@ fn layout_blocks(blocks: &[OcrBlock], image: Option<&RgbaImage>) -> Vec<TextBloc
     // 从同一个识字框切出来的几格：记下是哪个框，下面按"隔得远不远"拼的时候不再拼回去
     let mut cut_from: Vec<Option<usize>> = Vec::new();
     for (k, b) in blocks.iter().enumerate() {
-        let mut r = aabb(&b.quad);
-        let t = strip_icon_glyphs(&b.text, &mut r);
-        let cells = match image {
+        let orig = aabb(&b.quad);
+        let mut r = orig;
+        let t = strip_icon_glyphs(&normalize_latin(&b.text), &mut r);
+        if let Some(img) = image {
+            snap_cut(img, &orig, &mut r);
+        }
+        let mut cells = match image {
             Some(img) => split_cells(img, &r, &t),
             None => vec![(r, t)],
         };
+        // 切开以后格子两头又露出图标（"★ Favorites ▸ Recent files" 切成 "Favorites▸"）
+        if cells.len() > 1 {
+            for (r, t) in &mut cells {
+                let before = *r;
+                *t = strip_icon_glyphs(t, r);
+                if let Some(img) = image {
+                    snap_cut(img, &before, r);
+                }
+            }
+        }
         let cut = (cells.len() > 1).then_some(k);
         for (r, t) in cells {
             rects.push(r);
@@ -559,7 +774,7 @@ fn layout_blocks(blocks: &[OcrBlock], image: Option<&RgbaImage>) -> Vec<TextBloc
         let mut cur: Option<(Rect, String)> = None;
         let mut last: Option<usize> = None;
         for &i in &members {
-            let r = rects[i];
+            let mut r = rects[i];
             let t = texts[i].trim();
             let was_cut = cut_from[i].is_some() && last.is_some_and(|l| cut_from[l] == cut_from[i]);
             last = Some(i);
@@ -569,12 +784,25 @@ fn layout_blocks(blocks: &[OcrBlock], image: Option<&RgbaImage>) -> Vec<TextBloc
                     || gap >= (char_width(ct, cr) * 2.5).max(cr.h * 1.2)
                     || image.is_some_and(|img| separated(img, cr, ct, &r));
                 if !far {
+                    // 识字框常常互相压着一点（"Holiday photos" 和 "118 MB" 的框交叠），按墨量真正的空白
+                    let gap = image.and_then(|img| ink_gap(img, cr, &r)).unwrap_or(gap);
                     if gap >= char_width(ct, cr) * 0.3 && needs_space(ct, t) {
                         ct.push(' ');
                     }
                     ct.push_str(t);
                     *cr = cr.union(&r);
                     continue;
+                }
+                // 两格的识字框交叠：分界放在中间那段空白的正中，不然前一格的译文底色会盖住后一格开头的字
+                // （"Holiday photos" 的底色盖掉 "118 MB" 的 "1"）
+                if r.x < cr.right() {
+                    if let Some((s0, len)) = image.and_then(|img| blank_run(img, cr, &r)) {
+                        let mid = s0 + len / 2.0;
+                        let right = r.right();
+                        cr.w = (mid - cr.x).max(1.0);
+                        r.x = mid;
+                        r.w = (right - mid).max(1.0);
+                    }
                 }
                 segments.push(cur.take().unwrap_or_default());
             }
@@ -600,7 +828,8 @@ fn layout_blocks(blocks: &[OcrBlock], image: Option<&RgbaImage>) -> Vec<TextBloc
                 || overlap >= r.w.min(last.w) * 0.5;
             // 上一行没写满就换行了 → 那是段落结尾（比如标题下面接正文）；
             // 上一行太短（两三个词的格子）→ 表格里同一列的格子，各翻各的
-            let filled = b.rect.right().max(r.right()) - last.right() < h * 2.5 && wraps(last_text);
+            let column = b.rect.right().max(r.right());
+            let filled = (column - last.right() < h * 2.5 || next_word_wont_fit(last, last_text, column, &t)) && wraps(last_text);
             let same_color = match (b.color, color) {
                 (Some(a), Some(c)) => color_dist(a, c) < 70.0,
                 _ => true,
@@ -630,6 +859,7 @@ fn layout_blocks(blocks: &[OcrBlock], image: Option<&RgbaImage>) -> Vec<TextBloc
                 dark: m.as_ref().is_some_and(|m| m.dark),
                 bold: false,
                 fonts: font.into_iter().collect(),
+                centered: false,
             }),
         }
     }
@@ -637,6 +867,11 @@ fn layout_blocks(blocks: &[OcrBlock], image: Option<&RgbaImage>) -> Vec<TextBloc
     // 日期、"30s"）翻了也一样，重画只会换掉原来的字体、对齐
     out.retain(|b| b.text().chars().filter(|c| c.is_alphabetic()).count() >= 2);
     mark_bold(&mut out);
+    if let Some(img) = image {
+        for b in out.iter_mut().filter(|b| b.lines.len() == 1) {
+            b.centered = in_button(img, &b.rect);
+        }
+    }
     out
 }
 
@@ -779,6 +1014,7 @@ pub async fn translate_region(
             text,
             bold: b.bold,
             font_size: median(b.fonts.clone()),
+            centered: b.centered,
         })
         .collect();
     Ok(RegionTranslation {
@@ -799,6 +1035,34 @@ mod tests {
             quad: [[x, y], [x + w, y], [x + w, y + h], [x, y + h]],
             score: 0.9,
         }
+    }
+
+    /// 右边不齐的一段（聊天里的说明文字）：每行右边都空着，但下一行开头的词放不进上一行 → 还是同一段；
+    /// 行尾的连字符和下一行拼在一起不加空格
+    #[test]
+    fn ragged_paragraph_is_one_block() {
+        let lines = [
+            "With Emby running, all Mac",
+            "server self-tests pass on the",
+            "Windows branch: tracks, server",
+            "preview images (now from real",
+            "BIF data) and the three",
+            "reconnect scenarios. Found and",
+            "patched an mpv audio crash.",
+            "These Mac-side fixes are",
+            "uncommitted on local win/glass-",
+            "shader.",
+        ];
+        let blocks: Vec<OcrBlock> = lines
+            .iter()
+            .enumerate()
+            .map(|(i, t)| block(t, 10.0, 10.0 + i as f64 * 40.0, t.len() as f64 * 15.4, 28.0))
+            .collect();
+        let out = layout_blocks(&blocks, None);
+        assert_eq!(out.len(), 1, "{:?}", out.iter().map(TextBlock::text).collect::<Vec<_>>());
+        let text = out[0].text();
+        assert!(text.starts_with("With Emby running, all Mac server self-tests"), "{text}");
+        assert!(text.ends_with("local win/glass-shader."), "{text}");
     }
 
     #[test]
@@ -1009,6 +1273,77 @@ mod tests {
     }
 
     #[test]
+    fn overlapping_boxes_with_a_wide_ink_gap_are_two_cells() {
+        // 表格一行识字给了三个框，框互相压着一点；墨之间空着两个字宽 → 三格，不拼成 "photos118 MBLast"
+        let mut img = RgbaImage::from_pixel(600, 40, image::Rgba([30, 30, 30, 255]));
+        let words = [(10u32, 80u32), (90, 160), (210, 260), (270, 300), (350, 400), (410, 470)];
+        for (x0, x1) in words {
+            for y in 10..30 {
+                for x in (x0..x1).filter(|x| x % 4 != 3) {
+                    img.put_pixel(x, y, image::Rgba([200, 200, 200, 255]));
+                }
+            }
+        }
+        let blocks = vec![
+            block("Holiday photos", 6.0, 6.0, 200.0, 28.0),
+            block("118 MB", 200.0, 6.0, 104.0, 28.0),
+            block("Last week", 302.0, 6.0, 172.0, 28.0),
+        ];
+        let texts: Vec<String> = layout_blocks(&blocks, Some(&img)).iter().map(TextBlock::text).collect();
+        assert_eq!(texts, vec!["Holiday photos", "118 MB", "Last week"]);
+        // 框压进了旁边格子的字里（"Holiday photos" 的框右边盖住了 "1" 的一小条）：那一小条不算一格
+        let blocks = vec![
+            block("Holiday photos", 6.0, 6.0, 210.0, 28.0),
+            block("118 MB", 200.0, 6.0, 104.0, 28.0),
+            block("Last week", 302.0, 6.0, 172.0, 28.0),
+        ];
+        let mut out = layout_blocks(&blocks, Some(&img));
+        out.sort_by(|a, b| a.rect.x.total_cmp(&b.rect.x));
+        let texts: Vec<String> = out.iter().map(TextBlock::text).collect();
+        assert_eq!(texts, vec!["Holiday photos", "118 MB", "Last week"]);
+        // 分界在空白中间：前一格的底色不盖到 "118" 的 "1"（墨从 210 起）
+        assert!(out[0].rect.right() <= 200.0 && out[1].rect.x >= 170.0, "{:?} {:?}", out[0].rect, out[1].rect);
+    }
+
+    #[test]
+    fn text_centred_in_a_button_is_marked() {
+        let mut img = RgbaImage::from_pixel(400, 80, image::Rgba([30, 30, 30, 255]));
+        for y in 20..60 {
+            for x in 40..240 {
+                img.put_pixel(x, y, image::Rgba([10, 120, 250, 255]));
+            }
+        }
+        for y in 32..48 {
+            for x in (80..200).filter(|x| x % 4 != 3) {
+                img.put_pixel(x, y, image::Rgba([255, 255, 255, 255]));
+            }
+        }
+        // 同样的字直接写在底上（列表项）：不居中
+        for y in 32..48 {
+            for x in (280..380).filter(|x| x % 4 != 3) {
+                img.put_pixel(x, y, image::Rgba([220, 220, 220, 255]));
+            }
+        }
+        let blocks = vec![block("Download now", 76.0, 28.0, 128.0, 24.0), block("Save to Downloads", 276.0, 28.0, 108.0, 24.0)];
+        let out = layout_blocks(&blocks, Some(&img));
+        let centred: Vec<(String, bool)> = out.iter().map(|b| (b.text(), b.centered)).collect();
+        assert!(centred.contains(&("Download now".into(), true)), "{centred:?}");
+        assert!(centred.contains(&("Save to Downloads".into(), false)), "{centred:?}");
+    }
+
+    #[test]
+    fn latin_lines_get_half_width_punctuation_and_lowercase_word_ends() {
+        assert_eq!(normalize_latin("（now from real BIF data） and the three"), "(now from real BIF data) and the three");
+        assert_eq!(normalize_latin("branch: trackS, server"), "branch: tracks, server");
+        // 真的大写不动：macOS、iOS、全大写的词
+        assert_eq!(normalize_latin("Requires macOS and iOS, see BIOS"), "Requires macOS and iOS, see BIOS");
+        // 中文为主的行不动
+        assert_eq!(normalize_latin("把 API key 填到（设置）里"), "把 API key 填到（设置）里");
+        let mut r = Rect { x: 0.0, y: 0.0, w: 300.0, h: 20.0 };
+        assert_eq!(strip_icon_glyphs(&normalize_latin("（now from real BIF data）"), &mut r), "(now from real BIF data)");
+    }
+
+    #[test]
     fn font_size_comes_from_the_ink_not_the_box() {
         // 15px 的字（150% 缩放 22.5 像素）：带大写和下伸的一行、汉字一行，墨的范围都在 21 左右
         for (text, extent) in [("City", 21.0), ("Mobile App", 21.0), ("官网改版", 20.0), ("region", 21.0)] {
@@ -1029,6 +1364,7 @@ mod tests {
                 dark: false,
                 bold: false,
                 fonts: Vec::new(),
+                centered: false,
             })
             .collect();
         mark_bold(&mut blocks);

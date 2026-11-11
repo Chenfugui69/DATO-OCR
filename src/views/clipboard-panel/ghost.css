@@ -27,9 +27,9 @@ html[data-view='clip-ghost'] body {
   position: absolute;
   left: var(--pad);
   top: var(--pad);
-  width: 236px;
-  height: 240px;
-  border-radius: 14px;
+  width: 232px;
+  height: 232px;
+  border-radius: 16px;
 }
 .ghost__card .clip-card {
   /* 分几层的柔和投影：贴近的一层清楚、远的一层又大又淡，看着是浮起来的，不是一圈黑边 */
@@ -83,8 +83,8 @@ html[data-view='clip-ghost'] body {
   position: absolute;
   left: var(--pad);
   top: var(--pad);
-  width: 236px;
-  height: 240px;
+  width: 232px;
+  height: 232px;
   transform: scale(0.55);
   transform-origin: 0 0;
   animation: ghost-pile-in 200ms cubic-bezier(0.2, 0.9, 0.3, 1.15) both;
@@ -123,9 +123,9 @@ html[data-view='clip-ghost'] body {
     0 4px 10px rgba(0, 0, 0, 0.22),
     0 16px 30px -6px rgba(0, 0, 0, 0.3);
 }
-/* 角标：贴着这一摞的右上角（一摞宽 236×0.55≈130） */
+/* 角标：贴着这一摞的右上角（一摞宽 232×0.55≈128） */
 .ghost[data-many] .ghost__count {
-  left: calc(var(--pad) + 130px - 14px);
+  left: calc(var(--pad) + 128px - 14px);
   top: calc(var(--pad) - 11px);
   min-width: 24px;
   height: 24px;
@@ -136,7 +136,7 @@ html[data-view='clip-ghost'] body {
 .ghost__count {
   position: absolute;
   z-index: 4;
-  left: calc(var(--pad) + 236px - 16px);
+  left: calc(var(--pad) + 232px - 16px);
   top: calc(var(--pad) - 10px);
   min-width: 26px;
   height: 26px;

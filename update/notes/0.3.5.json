@@ -4,25 +4,31 @@
     "剪贴板卡片可以直接拖出去：拖出面板时面板自动让开，拖到输入框上卡片会缩小，松手就粘贴在松手的位置；多选时文字和图片混着也能一起拖进去",
     "Mac 上剪贴板卡片改用系统原生拖拽，跟手不延迟，多选时叠成一摞带数量角标，能直接拖进访达、聊天窗口等任何收得下的地方",
     "剪贴板按住 Ctrl 可以框选多张卡片一起复制，悬停可以预览卡片内容",
+    "剪贴板新增筛选面板：按类型、来源应用、分组、日期筛，几项可以叠着用",
     "剪贴板可以按时间清理旧记录，看得到各类数据占了多少空间",
-    "划词小圆点可以选跟着鼠标还是跟着选中的文字，新增颜色、白边和四档大小"
+    "划词小圆点可以选跟着鼠标还是跟着选中的文字，新增颜色、白边和四档大小",
+    "截图工具栏可以拖到别的位置"
   ],
   "improved": [
     "托盘菜单、剪贴板右键菜单和筛选菜单重新设计，带图标",
     "剪贴板卡片样式重新调整：间距更舒展、图片卡片整张显示并写上尺寸，滚动更顺",
+    "剪贴板面板顶栏重新排布：搜索挪到中间，分组标签更大更好点；卡片标题栏的颜色更贴近应用图标，Mac 上图标更清楚",
+    "截图原位翻译更准更整齐：一整段一起翻不再断成几截，表格每格分开翻，按钮上的字居中，同一列的字一样大",
     "Mac 剪贴板面板默认带玻璃，macOS 26 起是液态玻璃",
     "划词翻译面板在浅色背景上不再和后面的界面混在一起，翻译卡片边缘更清楚，开毛玻璃时也有阴影",
     "长截图时预览逐帧跟着滚动，往哪边滚就往哪边长",
     "截图库框选很多张图时不再卡顿",
     "贴图拖四个角等比缩放，钉住的角不再晃",
-    "远程控制时也看得到正在拖动的剪贴板卡片"
+    "远程控制时也看得到正在拖动的剪贴板卡片",
+    "截图自动框选去掉容易认错的「区块」档，只留窗口和元素"
   ],
   "fixed": [
     "原位翻译遇到特别窄的文字框时程序卡死、内存暴涨",
     "界面偶尔卡死点不动：现在十几秒内会自动恢复",
     "程序在后台挂久了之后截图没反应",
     "没钉住的划词翻译面板，点别处有时不会收起",
-    "截图做完原位翻译后再拖动选区，整片被选中色铺满"
+    "截图做完原位翻译后再拖动选区，整片被选中色铺满",
+    "Mac 上剪贴板面板的玻璃四角露出浅色方角"
   ],
   "en": {
     "added": [
@@ -30,25 +36,31 @@
       "Drag clipboard cards straight out: the panel moves out of the way, the card shrinks over a text box, and letting go pastes right where you drop it, even a mix of text and images",
       "On Mac, clipboard cards now use native system drag and drop: it follows the cursor instantly, stacks multiple cards with a count badge, and drops into Finder, chat apps and anywhere else that accepts them",
       "Hold Ctrl to box-select several clipboard cards and copy them together, and hover a card to preview it",
+      "A new clipboard filter panel: filter by type, source app, group and date, and combine them",
       "Clean up old clipboard history by age and see how much space each kind of data takes",
-      "The selection dot can follow the mouse or the selected text, with new colors, an optional white border and four sizes"
+      "The selection dot can follow the mouse or the selected text, with new colors, an optional white border and four sizes",
+      "The screenshot toolbar can be dragged to a different spot"
     ],
     "improved": [
       "Redesigned tray menu, clipboard context menu and filter menu, now with icons",
       "Refreshed clipboard cards: roomier spacing, image cards show the whole picture with its size, and smoother scrolling",
+      "Rearranged clipboard header: search moves to the center, group tabs are larger and easier to hit, card header colors match app icons more closely, and icons are sharper on Mac",
+      "In-place screenshot translation is more accurate and tidier: whole paragraphs translate together, table cells translate separately, button text stays centered, and items in a list keep the same size",
       "The Mac clipboard panel uses glass by default, with Liquid Glass on macOS 26 and later",
       "The translation popup no longer blends into light backgrounds, cards have clearer edges, and it keeps its shadow with frosted glass on",
       "The long-screenshot preview now follows every frame and grows in the direction you scroll",
       "Box-selecting many images in the screenshot library no longer stutters",
       "Pinned images scale proportionally from all four corners, and the anchored corner stays put",
-      "Dragged clipboard cards are visible during remote control"
+      "Dragged clipboard cards are visible during remote control",
+      "Auto-detect in screenshots drops the error-prone \"block\" level, keeping window and element"
     ],
     "fixed": [
       "In-place translation froze the app and used huge amounts of memory on very narrow text boxes",
       "The interface could occasionally freeze; it now recovers by itself within seconds",
       "Screenshots stopped responding after the app had been running in the background for a long time",
       "The unpinned translation popup sometimes didn't close when clicking elsewhere",
-      "After in-place translation in a screenshot, dragging the selection filled the whole area with highlight color"
+      "After in-place translation in a screenshot, dragging the selection filled the whole area with highlight color",
+      "On Mac, the clipboard panel's glass showed light square corners"
     ]
   }
 }

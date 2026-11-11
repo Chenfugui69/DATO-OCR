@@ -275,6 +275,12 @@ pub async fn clipboard_set_group(
     Ok(())
 }
 
+/// 筛选面板"应用"一节：历史里出现过的来源应用
+#[tauri::command]
+pub async fn clipboard_source_apps(app: AppHandle) -> AppResult<Vec<repo::ClipSourceApp>> {
+    state(&app).db.with(|c| repo::source_apps(c, 24))
+}
+
 #[tauri::command]
 pub async fn clipboard_groups(app: AppHandle) -> AppResult<Vec<ClipGroup>> {
     state(&app).db.with(|c| repo::list_groups(c))

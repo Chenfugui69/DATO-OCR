@@ -15,6 +15,9 @@ const VACUUM_INTERVAL_MS: i64 = 30 * 86_400_000;
 pub fn spawn(app: &AppHandle) {
     let app = app.clone();
     std::thread::spawn(move || {
+        // 卡片标题栏用的缩好的图标要在面板第一次显示前备好（面板网页常驻，图片取不到退回原图后不会再换）；
+        // 每个几毫秒，不用等
+        crate::clipboard::ensure_card_icons(&app);
         // 让出启动高峰
         std::thread::sleep(Duration::from_secs(15));
         if let Err(err) = run(&app) {

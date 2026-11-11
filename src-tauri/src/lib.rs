@@ -347,6 +347,7 @@ pub fn run() {
             commands::clipboard::clipboard_set_note,
             commands::clipboard::clipboard_set_group,
             commands::clipboard::clipboard_groups,
+            commands::clipboard::clipboard_source_apps,
             commands::clipboard::clipboard_create_group,
             commands::clipboard::clipboard_rename_group,
             commands::clipboard::clipboard_set_group_color,
