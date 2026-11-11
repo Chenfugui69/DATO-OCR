@@ -1,6 +1,6 @@
 {
   "version": "0.3.5",
-  "pub_date": "2026-11-11T14:29:39.369Z",
+  "pub_date": "2026-11-11T15:02:25.528Z",
   "notes": "新增：输入翻译换了新样子：按 Alt+Q 屏幕中间弹出一条输入框，边打字下面边出译文；剪贴板卡片可以直接拖出去：拖出面板时面板自动让开，拖到输入框上卡片会缩小，松手就粘贴在松手的位置；多选时文字和图片混着也能一起拖进去；Mac 上剪贴板卡片改用系统原生拖拽，跟手不延迟，多选时叠成一摞带数量角标，能直接拖进访达、聊天窗口等任何收得下的地方；剪贴板按住 Ctrl 可以框选多张卡片一起复制，悬停可以预览卡片内容；剪贴板新增筛选面板：按类型、来源应用、分组、日期筛，几项可以叠着用；剪贴板可以按时间清理旧记录，看得到各类数据占了多少空间；划词小圆点可以选跟着鼠标还是跟着选中的文字，新增颜色、白边和四档大小；截图工具栏可以拖到别的位置\n改进：托盘菜单、剪贴板右键菜单和筛选菜单重新设计，带图标；剪贴板卡片样式重新调整：间距更舒展、图片卡片整张显示并写上尺寸，滚动更顺；剪贴板面板顶栏重新排布：搜索挪到中间，分组标签更大更好点；卡片标题栏的颜色更贴近应用图标，Mac 上图标更清楚；截图原位翻译更准更整齐：一整段一起翻不再断成几截，表格每格分开翻，按钮上的字居中，同一列的字一样大；Mac 剪贴板面板默认带玻璃，macOS 26 起是液态玻璃；划词翻译面板在浅色背景上不再和后面的界面混在一起，翻译卡片边缘更清楚，开毛玻璃时也有阴影；长截图时预览逐帧跟着滚动，往哪边滚就往哪边长；截图库框选很多张图时不再卡顿；贴图拖四个角等比缩放，钉住的角不再晃；远程控制时也看得到正在拖动的剪贴板卡片；剪贴板按住 Shift 预览小图时会放大显示，不再和卡片里一样大；剪贴板切换筛选、搜索时卡片直接换好，不再先闪一下；截图自动框选去掉容易认错的「区块」档，只留窗口和元素\n修复：原位翻译遇到特别窄的文字框时程序卡死、内存暴涨；界面偶尔卡死点不动：现在十几秒内会自动恢复；程序在后台挂久了之后截图没反应；没钉住的划词翻译面板，点别处有时不会收起；截图做完原位翻译后再拖动选区，整片被选中色铺满；Mac 上剪贴板面板的玻璃四角露出浅色方角",
   "changes": {
     "added": [
@@ -77,6 +77,11 @@
       "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVRK3F5ZUpBMEtwdVNuajFCQi9kMkx1ZzRqMGpvUEE0ZTlTY243UzYyeTMvaU53a1RKT0VDWUJ2U21kNVU2bEE2RnhSaDFISEJ1WXRXbytxOEtDTUdPNUV5RUJ3K2ZlVEFFPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzk0NDA3Mzc5CWZpbGU6REFUTy1PQ1JfMC4zLjVfeDY0LXNldHVwLmV4ZQp6ZXh2WVE1S2R3M0lzSmFDUEJNNWpIN3dMbXJPSXlCYm1NRnFIN094Tm5waXc3S0JPZytobWl0S2Q2THZZYnUzWGhrR1ZHT2UrN0lYN3FZaDlwZ2lCUT09Cg==",
       "url": "https://github.com/Chenfugui69/DATO-OCR/releases/download/v0.3.5/DATO-OCR_0.3.5_x64-setup.exe",
       "size": 24481890
+    },
+    "darwin-aarch64": {
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVRK3F5ZUpBMEtwdVhodUFqQzNhV3g3TkZDU2RyR1UvOU9JM0JDWkU3VEV4cEpHcFY2VVZYVTRaNXozTDhtT0VLMnVUcU1nVTZIUE40dmoxbzF6alppR1RzOW1jUElCUUEwPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzk0NDA5MzQ1CWZpbGU6REFUTy1PQ1JfMC4zLjVfbWFjb3MtYXJtNjQuYXBwLnRhci5nego0OUZQbnh6YVcxdlRCTjhIWnJiSjA1Nkx0MHMzYzZBY0ZJRWJDdVJyMm8xL0d5VEQ0UXhwWk5IUlZLbW5XRTlrWlFFcXA0aWdIU1JGemkvbldMYnlBUT09Cg==",
+      "url": "https://github.com/Chenfugui69/DATO-OCR/releases/download/v0.3.5/DATO-OCR_0.3.5_macos-arm64.app.tar.gz",
+      "size": 7062438
     }
   }
 }
