@@ -62,6 +62,8 @@ struct SourceIvars {
     events: DragEvents,
     /// 开始拖的那个窗口的位置（屏幕坐标，左下角原点）
     frame: NSRect,
+    /// 算"还在面板里"的那一块：窗口顶上预留着没显示的一截（`effects::set_rect_region`）不算
+    area: NSRect,
     /// 开始拖的网页视图：结束时补它一个松开
     view: Retained<NSView>,
 }
@@ -106,8 +108,8 @@ thread_local! {
 }
 
 impl DragSource {
-    fn new(mtm: MainThreadMarker, events: DragEvents, frame: NSRect, view: Retained<NSView>) -> Retained<Self> {
-        let this = Self::alloc(mtm).set_ivars(SourceIvars { events, frame, view });
+    fn new(mtm: MainThreadMarker, events: DragEvents, frame: NSRect, area: NSRect, view: Retained<NSView>) -> Retained<Self> {
+        let this = Self::alloc(mtm).set_ivars(SourceIvars { events, frame, area, view });
         // SAFETY: NSObject 的 init
         unsafe { msg_send![super(this), init] }
     }
@@ -141,7 +143,7 @@ impl DragSource {
     }
 
     fn inside(&self, p: NSPoint) -> bool {
-        let f = self.ivars().frame;
+        let f = self.ivars().area;
         p.x >= f.origin.x && p.x < f.origin.x + f.size.width && p.y >= f.origin.y && p.y < f.origin.y + f.size.height
     }
 }
@@ -369,7 +371,12 @@ fn begin(
         (events.ended)(false, true, (-1.0, -1.0));
         return;
     };
-    let source = DragSource::new(mtm, events, window.frame(), view.retain());
+    let frame = window.frame();
+    // 只保留了窗口里的一块时（剪贴板面板顶上给筛选面板的预留），出了那一块就算出了面板
+    let area = super::effects::region_of(window.windowNumber()).map_or(frame, |(x, y, w, h)| {
+        NSRect::new(NSPoint::new(frame.origin.x + x, frame.origin.y + frame.size.height - y - h), NSSize::new(w, h))
+    });
+    let source = DragSource::new(mtm, events, frame, area, view.retain());
     let busy = ACTIVE.with(|a| a.borrow().is_some());
     // 系统不让开（比如上一次拖拽还没结束）时返回空：生成的绑定遇到空会 panic，自己发消息拿 Option
     // SAFETY: NSView 的公开接口，参数类型和签名一致

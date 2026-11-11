@@ -792,6 +792,11 @@ pub fn set_rect_region(window: &WebviewWindow, rect: Option<(i32, i32, i32, i32)
     });
 }
 
+/// 窗口当前只保留的那一块（点，相对窗口左上角）；没限制 = `None`。主线程上调用
+pub(crate) fn region_of(number: isize) -> Option<Region> {
+    REGIONS.with_borrow(|r| r.get(&number).copied())
+}
+
 fn watch_regions() {
     if REGION_TIMER.with_borrow(Option::is_some) {
         return;

@@ -27,7 +27,7 @@ const VERTICAL_PAD: f64 = 6.0;
 /// 悬浮样式的圆角：竖版和 panel.css 的 --cn-radius-2xl 一致，横向那一条大一些（panel.css 里同样是 26，和 Paste 一样）
 const RADIUS: f64 = 16.0;
 const BOTTOM_RADIUS: f64 = 26.0;
-/// Windows 横向面板顶上预留多高（逻辑像素，和页面 PanelView 的 FILTER_RAISE 一致）：筛选面板弹在面板上方。
+/// 横向面板顶上预留多高（逻辑像素，和页面 PanelView 的 FILTER_RAISE 一致）：筛选面板弹在面板上方。
 /// 打开筛选时再把窗口往上长的话，窗口挪动和网页重画对不上同一帧，旧画面会在高出 440 的地方闪一下；
 /// 所以面板弹出时（窗口还没显示）就留好，留出来的部分用窗口区域裁掉（不显示、点击穿透），打开筛选时只放开裁剪。
 /// 上面放不下这么多就不留，页面退回临时长窗口的做法
@@ -204,7 +204,7 @@ fn show(app: &AppHandle) -> AppResult<()> {
             };
             placed = Some(rect);
             let mut win = rect;
-            if cfg!(windows) {
+            {
                 let want = (FILTER_ROOM * s).round() as i32;
                 let rp = want.min(rect.y - monitor.bounds.y);
                 if rp >= want / 2 {
