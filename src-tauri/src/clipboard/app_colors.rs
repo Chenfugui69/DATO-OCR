@@ -54,7 +54,9 @@ const KNOWN: &[(&str, &str)] = &[
     ("excel.exe", "#217346"),
     ("microsoft powerpoint.app", "#d24726"),
     ("powerpnt.exe", "#d24726"),
-    // Claude 不列：品牌色 #d97757 比图标底色淡、偏粉，标题栏和图标接不上；按图标算出来是 #ec7b51，和 Paste 一样
+    // Claude：品牌色 #d97757 偏淡偏粉，按图标算也一样发灰（Windows 的图标就是这个色），用 Paste 标题栏那种更亮的橙
+    ("claude.app", "#ed652c"),
+    ("claude.exe", "#ed652c"),
     ("notion.app", "#1c1c1e"),
     ("notion.exe", "#1c1c1e"),
     ("figma.app", "#1c1c1e"),

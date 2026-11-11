@@ -1,5 +1,6 @@
-// 拖剪贴板卡片时跟着鼠标走的影子（窗口见 Rust 的 clipboard::ghost）：拖一张就是那张卡片，
-// 拖好几张是一叠 —— 后面的几张从正后方散开、稍微歪一点，右上角一个数字。不挡鼠标、不抢焦点。
+// 拖剪贴板卡片时跟着鼠标走的影子（窗口见 Rust 的 clipboard::ghost）：拖一张就是那张卡片，按住的点在鼠标下；
+// 拖好几张是缩小的一摞、歪着叠在鼠标右下方，角上一个红色数字（和 macOS 系统拖拽的 Pile 一样，Mac 版走的就是
+// 系统拖拽）。不挡鼠标、不抢焦点。
 
 import type React from 'react';
 import { useState } from 'react';
@@ -12,7 +13,7 @@ import './panel.css';
 import './ghost.css';
 
 /** 叠在后面的最多画几张（再多也看不出来） */
-const BEHIND = 2;
+const BEHIND = 3;
 
 type GhostItem = ClipItem & { ghostTint?: string };
 
@@ -32,14 +33,9 @@ export default function GhostView() {
   useEvent('clip-ghost-target', setOver);
   if (!items.length) return null;
   const [top, ...rest] = items;
-  return (
-    <div
-      className="ghost"
-      key={round}
-      data-many={items.length > 1 || undefined}
-      data-over={over || undefined}
-      style={{ '--grab-x': `${grab[0]}px`, '--grab-y': `${grab[1]}px` } as React.CSSProperties}
-    >
+  const many = items.length > 1;
+  const cards = (
+    <>
       {rest.slice(0, BEHIND).map((it, i) => (
         <div key={it.id} className={`ghost__card ghost__card--behind ghost__card--b${i + 1}`}>
           <ClipCard item={it} tint={it.ghostTint} selected={false} index={99} layout="card" onClick={noop} onContextMenu={noop} />
@@ -48,7 +44,18 @@ export default function GhostView() {
       <div className="ghost__card ghost__card--top">
         <ClipCard item={top!} tint={top!.ghostTint} selected={false} index={99} layout="card" onClick={noop} onContextMenu={noop} />
       </div>
-      {items.length > 1 && <span className="ghost__count">{items.length}</span>}
+    </>
+  );
+  return (
+    <div
+      className="ghost"
+      key={round}
+      data-many={many || undefined}
+      data-over={over || undefined}
+      style={{ '--grab-x': `${grab[0]}px`, '--grab-y': `${grab[1]}px` } as React.CSSProperties}
+    >
+      {many ? <div className="ghost__pile">{cards}</div> : cards}
+      {many && <span className="ghost__count">{items.length}</span>}
     </div>
   );
 }

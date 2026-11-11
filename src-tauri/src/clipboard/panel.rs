@@ -425,6 +425,7 @@ pub fn copy(app: &AppHandle, id: i64, plain: bool) -> AppResult<()> {
 }
 
 /// 拖卡片结束（系统原生拖拽，macOS）：`accepted` 有程序收下了，`inside` 松手时还在面板里
+#[cfg(target_os = "macos")]
 #[derive(Clone, serde::Serialize)]
 pub struct NativeDragEnd {
     pub accepted: bool,

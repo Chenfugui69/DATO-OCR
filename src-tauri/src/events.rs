@@ -38,8 +38,10 @@ pub const CLIP_GHOST_RELEASED: &str = "clip-ghost-released";
 /// 拖卡片时鼠标出了开始拖的那个窗口（面板该让开了）
 pub const CLIP_GHOST_LEFT: &str = "clip-ghost-left";
 /// 系统原生拖拽卡片开始了（macOS；截好了拖动图像，系统接管了拖动）
+#[cfg(target_os = "macos")]
 pub const CLIP_NATIVE_DRAG_BEGIN: &str = "clip-native-drag-begin";
 /// 系统原生拖拽卡片结束（macOS）：{ accepted, inside }
+#[cfg(target_os = "macos")]
 pub const CLIP_NATIVE_DRAG_END: &str = "clip-native-drag-end";
 /// 多端同步的状态变了（设备上下线、有人申请加入、网盘同步结果…）
 pub const SYNC_CHANGED: &str = "sync-changed";

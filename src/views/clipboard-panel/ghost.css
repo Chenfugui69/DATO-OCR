@@ -77,6 +77,62 @@ html[data-view='clip-ghost'] body {
     opacity: 0;
   }
 }
+/* 多选：一摞缩到 0.55 倍（和 Mac 系统拖拽的拖动图像一样大），左上角就在 --pad（鼠标在它左上方一点，
+   见 cardGestures 的 PILE_GRAB）。几张卡片中心对齐、各自歪一个小角度叠起来，像 macOS 的 Pile */
+.ghost__pile {
+  position: absolute;
+  left: var(--pad);
+  top: var(--pad);
+  width: 236px;
+  height: 240px;
+  transform: scale(0.55);
+  transform-origin: 0 0;
+  animation: ghost-pile-in 200ms cubic-bezier(0.2, 0.9, 0.3, 1.15) both;
+}
+@keyframes ghost-pile-in {
+  from {
+    transform: scale(0.8);
+    opacity: 0;
+  }
+}
+.ghost__pile .ghost__card {
+  left: 0;
+  top: 0;
+}
+.ghost__pile .ghost__card--top {
+  transform: rotate(-2deg);
+}
+.ghost__pile .ghost__card--behind {
+  opacity: 1;
+}
+.ghost__pile .ghost__card--b1 {
+  transform: rotate(5deg);
+}
+.ghost__pile .ghost__card--b2 {
+  transform: rotate(-7deg);
+}
+.ghost__pile .ghost__card--b3 {
+  z-index: 0;
+  transform: rotate(9deg);
+  animation-delay: 80ms;
+}
+/* 缩小以后投影跟着缩小会显得太薄：一摞里每张的投影画重一点 */
+.ghost__pile .ghost__card .clip-card {
+  box-shadow:
+    0 0 0 1px rgba(0, 0, 0, 0.14),
+    0 4px 10px rgba(0, 0, 0, 0.22),
+    0 16px 30px -6px rgba(0, 0, 0, 0.3);
+}
+/* 角标：贴着这一摞的右上角（一摞宽 236×0.55≈130） */
+.ghost[data-many] .ghost__count {
+  left: calc(var(--pad) + 130px - 14px);
+  top: calc(var(--pad) - 11px);
+  min-width: 24px;
+  height: 24px;
+  padding: 0 7px;
+  border-radius: 12px;
+  font-size: 13px;
+}
 .ghost__count {
   position: absolute;
   z-index: 4;

@@ -892,38 +892,49 @@ html:not([data-platform='mac'])[data-theme='dark'] .panel-root--blur .panel__fad
 }
 /* ── 按类型的卡片样式（参照 Paste） ── */
 
-/* 图片（参照 Paste）：标题栏以下整块垫透明格子，图片整张缩小放在中间（不裁，长截图也看得到全貌；
-   小图不放大），底下一行居中的灰字写尺寸。以前是铺满裁掉 + 磨砂小胶囊，宽截图只露一角，看着乱 */
+/* 图片（参照 Paste）：标题栏以下整块垫透明格子，图片整张等比缩放到放得下的最大（不裁：竖图上下顶满、
+   横图左右顶满，长截图是细细一条也看得到全貌），尺寸是浮在底部居中的磨砂小胶囊 */
 .clip-card--card.clip-card--bleed .clip-card__foot {
   position: absolute;
   left: 0;
   right: 0;
   bottom: 0;
-  height: 34px;
+  height: 40px;
   pointer-events: none;
 }
+/* 格子：8px 一格，深色是两种很接近的深灰（不发灰、不抢图片），浅色是白和浅灰 */
 .clip-card--card.clip-card--bleed .clip-card__image {
   box-shadow: none;
-  padding: 0 0 34px;
-  background: var(--cn-bg-elevated)
-    repeating-conic-gradient(var(--cn-fill-quaternary) 0% 25%, transparent 0% 50%) 50% / 28px 28px;
+  background: #fff repeating-conic-gradient(#ececee 0% 25%, transparent 0% 50%) 0 0 / 16px 16px;
 }
-.clip-card--card.clip-card--bleed .clip-card__image img {
-  object-fit: scale-down;
+html[data-theme='dark'] .clip-card--card.clip-card--bleed .clip-card__image {
+  background: #1d1d1d repeating-conic-gradient(#292929 0% 25%, transparent 0% 50%) 0 0 / 16px 16px;
 }
-/* GIF 的两层（第一帧 canvas、动图 img）是绝对定位叠着的，不吃容器的内边距，单独摆进同一块区域 */
+.clip-card--card.clip-card--bleed .clip-card__image img,
 .clip-card--card.clip-card--bleed .clip-card__gif canvas,
 .clip-card--card.clip-card--bleed .clip-card__gif img {
-  inset: 0 0 34px;
-  width: 100%;
-  height: calc(100% - 34px);
-  object-fit: scale-down;
+  object-fit: contain;
+}
+/* 尺寸胶囊、设备小圆点：透出底下图片颜色的磨砂玻璃（不是一块灰色的底），白字 */
+.clip-card--card.clip-card--bleed .clip-card__detail,
+.clip-card--card.clip-card--bleed .clip-card__device {
+  background: rgba(255, 255, 255, 0.16);
+  -webkit-backdrop-filter: blur(14px) saturate(1.8) brightness(0.82);
+  backdrop-filter: blur(14px) saturate(1.8) brightness(0.82);
+  box-shadow: inset 0 0 0 0.5px rgba(255, 255, 255, 0.22);
+  color: rgba(255, 255, 255, 0.96);
+  text-shadow: 0 0.5px 1px rgba(0, 0, 0, 0.25);
 }
 .clip-card--card.clip-card--bleed .clip-card__detail {
   flex: none;
-  font: 500 12.5px/1.3 var(--cn-font-sans);
+  padding: 4px 12px;
+  border-radius: var(--cn-radius-full);
+  font: 500 12px/1.3 var(--cn-font-sans);
   letter-spacing: 0.01em;
-  color: var(--cn-label-secondary);
+}
+.clip-card--card.clip-card--bleed .clip-card__device {
+  padding: 5px;
+  border-radius: var(--cn-radius-full);
 }
 
 /* 代码：等宽小字，不把第一行当标题，按关键字 / 字符串 / 数字 / 注释上色（Xcode 的配色） */
@@ -1095,6 +1106,12 @@ html:not([data-platform='mac'])[data-theme='dark'] .panel-root--blur .panel__fad
   width: 60px;
   height: 60px;
   transform: translateY(-50%);
+}
+/* Windows 的程序图标没有 macOS 那圈自带的边，标题栏的颜色又是从图标取的（比如 Claude 的橙色），
+   图标就融进标题栏里只剩中间的白色图案：垫一圈淡阴影把轮廓勾出来 */
+html:not([data-platform='mac']) .clip-card__appicon {
+  /* 参照 Paste：左边一道窄窄的暗边，像图标微微浮在标题栏上 */
+  filter: drop-shadow(-1px 0 1.5px rgba(0, 0, 0, 0.13));
 }
 [data-platform='mac'] .clip-card__appicon {
   right: -14px;

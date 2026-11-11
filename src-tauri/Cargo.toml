@@ -1,6 +1,6 @@
 [package]
 name = "chenocr"
-version = "0.3.4"
+version = "0.3.5"
 description = "DATO OCR · 截图 · 识字 · 翻译 · 剪贴板 · AI"
 authors = ["DATO OCR"]
 license = "GPL-3.0-only"

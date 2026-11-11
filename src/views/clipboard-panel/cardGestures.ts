@@ -18,6 +18,8 @@ import type { ClipItem } from '@/lib/types';
 
 /** 拖动超过这么多像素才算拖（不然是点） */
 const DRAG_MIN = 6;
+/** 多选拖动时鼠标在那一摞左上角外面多远（和 ghost.css 里的一摞配合：一摞在鼠标右下方） */
+const PILE_GRAB = { x: -12, y: -16 };
 
 function cardIdAt(target: EventTarget | null): number | null {
   const el = target instanceof Element ? target.closest<HTMLElement>('[data-clip-id]') : null;
@@ -265,7 +267,9 @@ export function useCardDrag(opts: {
         if (ids.length > 1) restore = gather(ids, el);
         // 手上那张画在最上面（粘贴的顺序还是列表里的顺序）
         const shown = [id, ...ids.filter((x) => x !== id)];
-        void clipboard.ghostStart(optsRef.current.itemsFor(shown), grab).catch(() => undefined);
+        // 拖好几张时影子是一小摞、摆在鼠标右下方（和 macOS 系统拖拽的样子一样）：告诉影子窗口
+        // "按住的点"在卡片左上角外面一点，鼠标就落在那一摞的左上方
+        void clipboard.ghostStart(optsRef.current.itemsFor(shown), ids.length > 1 ? PILE_GRAB : grab).catch(() => undefined);
         // macOS 上鼠标拖出窗口后页面收不到移动，面板让开后（鼠标穿透）连松开也收不到：
         // 靠 Rust 那边盯着鼠标告诉这里"出窗口了""松手了"
         const keep = (p: Promise<() => void>) =>
