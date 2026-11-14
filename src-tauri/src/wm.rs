@@ -20,10 +20,23 @@ pub fn builder<'a>(
     app: &'a AppHandle,
     label: &'a str,
 ) -> WebviewWindowBuilder<'a, tauri::Wry, AppHandle> {
-    WebviewWindowBuilder::new(app, label, WebviewUrl::App("index.html".into()))
-        .title("DATO OCR")
-        .decorations(false)
-        .visible(false)
+    portable_webview(
+        WebviewWindowBuilder::new(app, label, WebviewUrl::App("index.html".into()))
+            .title("DATO OCR")
+            .decorations(false)
+            .visible(false),
+    )
+}
+
+/// 绿色版：网页的缓存（WebView2 的 EBWebView）也放进程序旁边的 data 里。
+/// 不设的话 Tauri 放到 %LOCALAPPDATA%\<包标识>，换电脑会落下，还和安装版共用一份
+fn portable_webview<'a>(
+    b: WebviewWindowBuilder<'a, tauri::Wry, AppHandle>,
+) -> WebviewWindowBuilder<'a, tauri::Wry, AppHandle> {
+    match crate::paths::portable_dir() {
+        Some(dir) => b.data_directory(dir.join(crate::paths::PORTABLE_DATA).join("webview")),
+        None => b,
+    }
 }
 
 /// 带标题栏的"正经窗口"（识字、编辑、AI）的构建器：外框按平台的习惯来
@@ -64,7 +77,7 @@ fn create_main(app: &AppHandle) {
         tracing::error!("配置里没有主窗口");
         return;
     };
-    match WebviewWindowBuilder::from_config(app, &config).and_then(|b| b.build()) {
+    match WebviewWindowBuilder::from_config(app, &config).and_then(|b| portable_webview(b).build()) {
         Ok(window) => apply_window_effects(app, &window),
         Err(err) => tracing::error!("创建主窗口失败：{err}"),
     }

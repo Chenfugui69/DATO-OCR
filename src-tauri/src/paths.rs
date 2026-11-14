@@ -27,6 +27,21 @@ const DIR_NAME: &str = "DATO OCR";
 /// 改名前的数据目录名，新的在前
 const LEGACY_DIR_NAMES: &[&str] = &["DATO COR", "CHENOCR"];
 
+/// 绿色版标记：程序旁边有这个文件，就是解压即用的绿色版（发版脚本打 zip 时放进去）
+pub const PORTABLE_MARKER: &str = "portable";
+/// 绿色版的数据目录（在程序目录下）
+pub const PORTABLE_DATA: &str = "data";
+
+/// 绿色版的程序目录；装出来的版本是 None。只在 Windows 上有绿色版
+pub fn portable_dir() -> Option<PathBuf> {
+    if !cfg!(windows) {
+        return None;
+    }
+    let exe = std::env::current_exe().ok()?;
+    let dir = strip_verbatim(exe.parent()?.to_path_buf());
+    dir.join(PORTABLE_MARKER).is_file().then_some(dir)
+}
+
 #[derive(Clone, Debug)]
 pub struct AppPaths {
     root: PathBuf,
@@ -243,7 +258,13 @@ impl AppPaths {
                 .data_dir()
                 .map_err(|err| AppError::msg(format!("找不到用户数据目录：{err}")))?,
         };
-        let (default_root, migrated_from) = data_root(&base);
+        // 绿色版：数据放在程序旁边的 data 里，不碰 %APPDATA%（也不搬旧品牌的目录）
+        let (default_root, migrated_from) = match portable_dir() {
+            Some(dir) if std::env::var_os("CHENOCR_TEST_DATA_DIR").is_none() => {
+                (dir.join(PORTABLE_DATA), None)
+            }
+            _ => data_root(&base),
+        };
         let (root, relocated) = located_root(&default_root);
         let paths = Self {
             root,
@@ -291,7 +312,12 @@ impl AppPaths {
                 }
             },
         };
-        let default_root = base.join(DIR_NAME);
+        let default_root = match portable_dir() {
+            Some(dir) if std::env::var_os("CHENOCR_TEST_DATA_DIR").is_none() => {
+                dir.join(PORTABLE_DATA)
+            }
+            _ => base.join(DIR_NAME),
+        };
         // 用户改过数据位置：跟着位置文件走（MCP 桥接要找的 mcp.json 在那边）
         Some(read_location(&default_root).root.unwrap_or(default_root))
     }

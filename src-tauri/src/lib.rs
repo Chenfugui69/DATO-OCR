@@ -56,6 +56,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::OnceLock;
 
 use tauri::{AppHandle, Manager, RunEvent, WindowEvent};
+#[cfg(target_os = "macos")]
 use tauri_plugin_autostart::MacosLauncher;
 
 use crate::paths::AppPaths;
@@ -224,10 +225,17 @@ pub fn run() {
         )
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
-        .plugin(tauri_plugin_autostart::init(
-            MacosLauncher::LaunchAgent,
-            Some(vec!["--autostart"]),
-        ))
+        .plugin({
+            let autostart = tauri_plugin_autostart::Builder::new().args(["--autostart"]);
+            #[cfg(target_os = "macos")]
+            let autostart = autostart.macos_launcher(MacosLauncher::LaunchAgent);
+            // 绿色版的自启项换个名字：和安装版同名的话，两边会互相改掉对方的
+            if paths::portable_dir().is_some() {
+                autostart.app_name("DATO OCR Portable").build()
+            } else {
+                autostart.build()
+            }
+        })
         .register_asynchronous_uri_scheme_protocol(image_store::SCHEME, image_store::handle)
         .setup(setup)
         .on_window_event(on_window_event);

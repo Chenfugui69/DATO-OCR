@@ -37,7 +37,10 @@ const CHECK_INTERVAL: Duration = Duration::from_secs(6 * 3600);
 const MAX_INSTALLER: u64 = 300 * 1024 * 1024;
 
 fn platform_key() -> &'static str {
-    if cfg!(all(windows, target_arch = "aarch64")) {
+    // 绿色版用自己的包（zip）：安装包会另装一份到别处
+    if cfg!(all(windows, target_arch = "x86_64")) && crate::paths::portable_dir().is_some() {
+        "windows-x86_64-portable"
+    } else if cfg!(all(windows, target_arch = "aarch64")) {
         "windows-aarch64"
     } else if cfg!(windows) {
         "windows-x86_64"
@@ -197,6 +200,16 @@ pub fn start(app: &AppHandle) {
         loop {
             if state(&app).settings.read().update.auto_check {
                 let _ = tauri::async_runtime::block_on(check(&app, false));
+                // 测试开关 `CHENOCR_TEST_UPDATE_AUTO_INSTALL=1`（只在 CHENOCR_TEST_UPDATE_URL 也设了时有效）：
+                // 查到更新直接安装，不用点界面，好把"下载 → 验签 → 替换 → 重开"整个自动走一遍
+                if test_url().is_some()
+                    && std::env::var("CHENOCR_TEST_UPDATE_AUTO_INSTALL").is_ok_and(|v| v == "1")
+                    && status(&app).available.is_some()
+                {
+                    if let Err(err) = tauri::async_runtime::block_on(install(&app)) {
+                        tracing::warn!("测试自动安装失败：{err}");
+                    }
+                }
             }
             std::thread::sleep(CHECK_INTERVAL);
         }
@@ -436,6 +449,8 @@ async fn install_inner(app: &AppHandle) -> AppResult<()> {
     std::fs::create_dir_all(&dir)?;
     let file = dir.join(if cfg!(target_os = "macos") {
         format!("DATO-OCR_{version}_macos.app.tar.gz")
+    } else if crate::paths::portable_dir().is_some() {
+        format!("DATO-OCR_{version}_portable.zip")
     } else {
         format!("DATO-OCR_{version}_setup.exe")
     });
@@ -451,7 +466,10 @@ async fn install_inner(app: &AppHandle) -> AppResult<()> {
 }
 
 #[cfg(windows)]
-fn launch_installer(app: &AppHandle, file: &std::path::Path, _version: &str) -> AppResult<()> {
+fn launch_installer(app: &AppHandle, file: &std::path::Path, version: &str) -> AppResult<()> {
+    if let Some(dir) = crate::paths::portable_dir() {
+        return portable::update(app, file, &dir, version);
+    }
     // 和 Tauri 官方更新插件一样的参数：/P 只显示进度，/UPDATE 走更新流程，/R 装完重新打开
     std::process::Command::new(file)
         .args(["/P", "/UPDATE", "/R"])
@@ -460,6 +478,104 @@ fn launch_installer(app: &AppHandle, file: &std::path::Path, _version: &str) -> 
     // 安装包要替换正在运行的程序文件，这边得马上退出
     crate::quit(app);
     Ok(())
+}
+
+/// 绿色版更新：zip 解到临时目录 → 自己退出 → 隐藏的 PowerShell 等进程退出后把新文件盖到程序目录
+/// （data 目录不在包里，不会被动）→ 重新打开。程序目录写不进去（比如放在 Program Files）就提示手动下载
+#[cfg(windows)]
+mod portable {
+    use std::os::windows::process::CommandExt;
+    use std::path::Path;
+    use std::process::Command;
+
+    use tauri::AppHandle;
+
+    use crate::error::{AppError, AppResult};
+    use crate::paths::PORTABLE_MARKER;
+
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
+    /// PowerShell 单引号字符串：里面的单引号写两遍
+    fn ps_quote(p: &Path) -> String {
+        format!("'{}'", p.display().to_string().replace('\'', "''"))
+    }
+
+    pub fn update(app: &AppHandle, zip: &Path, dir: &Path, version: &str) -> AppResult<()> {
+        let probe = dir.join(".update-write-test");
+        std::fs::write(&probe, b"ok").map_err(|e| {
+            AppError::msg(format!(
+                "程序所在的文件夹 {} 写不进去（{e}），请手动下载新版绿色版解压覆盖",
+                dir.display()
+            ))
+        })?;
+        let _ = std::fs::remove_file(probe);
+
+        let work = zip.with_file_name(format!("DATO-OCR_{version}_portable"));
+        let _ = std::fs::remove_dir_all(&work);
+        std::fs::create_dir_all(&work)?;
+        // Windows 10 起自带的 tar（bsdtar）认得 zip
+        let tar = std::env::var_os("SystemRoot")
+            .map(|r| Path::new(&r).join("System32").join("tar.exe"))
+            .filter(|p| p.exists())
+            .ok_or_else(|| AppError::msg("系统里找不到 tar.exe，没法解开更新包"))?;
+        let out = Command::new(tar)
+            .arg("-xf")
+            .arg(zip)
+            .arg("-C")
+            .arg(&work)
+            .creation_flags(CREATE_NO_WINDOW)
+            .output()
+            .map_err(|e| AppError::msg(format!("解不开更新包：{e}")))?;
+        if !out.status.success() {
+            return Err(AppError::msg(format!(
+                "解不开更新包：{}",
+                String::from_utf8_lossy(&out.stderr).trim()
+            )));
+        }
+        // 包里是一个 DATO-OCR 文件夹；也兼容文件直接放在根上的
+        let src = if work.join(PORTABLE_MARKER).is_file() {
+            work.clone()
+        } else {
+            std::fs::read_dir(&work)?
+                .flatten()
+                .map(|e| e.path())
+                .find(|p| p.join(PORTABLE_MARKER).is_file())
+                .ok_or_else(|| AppError::msg("更新包里没有绿色版的程序"))?
+        };
+        let new_exe = std::fs::read_dir(&src)?
+            .flatten()
+            .map(|e| e.path())
+            .find(|p| p.extension().is_some_and(|x| x.eq_ignore_ascii_case("exe")))
+            .ok_or_else(|| AppError::msg("更新包里没有程序文件"))?;
+        // 用户给程序改过名：新程序也用原来的名字，开机自启、快捷方式都还指得到
+        let exe = std::env::current_exe()?;
+        let target_exe = dir.join(exe.file_name().unwrap_or_default());
+        if new_exe.file_name() != target_exe.file_name() {
+            std::fs::rename(&new_exe, src.join(target_exe.file_name().unwrap_or_default()))?;
+        }
+        let script = format!(
+            "$ErrorActionPreference='Stop'; \
+             try {{ Wait-Process -Id {pid} -Timeout 60 }} catch {{}}; \
+             for ($i=0; $i -lt 20; $i++) {{ try {{ Copy-Item -Path (Join-Path {src} '*') -Destination {dst} -Recurse -Force; break }} catch {{ Start-Sleep -Milliseconds 500 }} }}; \
+             Start-Process -FilePath {exe}; \
+             Remove-Item -LiteralPath {work} -Recurse -Force -ErrorAction SilentlyContinue; \
+             Remove-Item -LiteralPath {zip} -Force -ErrorAction SilentlyContinue",
+            pid = std::process::id(),
+            src = ps_quote(&src),
+            dst = ps_quote(dir),
+            exe = ps_quote(&target_exe),
+            work = ps_quote(&work),
+            zip = ps_quote(zip),
+        );
+        Command::new("powershell.exe")
+            .args(["-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-Command", &script])
+            .creation_flags(CREATE_NO_WINDOW)
+            .spawn()
+            .map_err(|e| AppError::msg(format!("启动不了更新：{e}")))?;
+        tracing::info!(version, dir = %dir.display(), "绿色版新文件已解开，退出后覆盖");
+        crate::quit(app);
+        Ok(())
+    }
 }
 
 #[cfg(target_os = "macos")]

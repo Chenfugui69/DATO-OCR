@@ -17,6 +17,7 @@
 //
 // 生成的东西：
 //   release/<版本>/DATO-OCR_<版本>_x64-setup.exe(.sig)          Windows：上传到 GitHub 和 Gitee 的发行版（标签 v<版本>）
+//   release/<版本>/DATO-OCR_<版本>_x64-portable.zip(.sig)       Windows 绿色版（解压即用，自己也能自动更新）：同样上传
 //   release/<版本>/DATO-OCR_<版本>_macos-arm64.app.tar.gz(.sig) Mac 自动更新用的包：同样上传
 //   release/<版本>/DATO-OCR_<版本>_macos-arm64.dmg              Mac 手动下载安装用：同样上传（不进清单）
 //   update/latest.json      国外渠道的清单（下载地址指向 GitHub）
@@ -27,7 +28,7 @@
 
 import { execFileSync } from 'node:child_process';
 import { createHash, createPublicKey, verify as edVerify } from 'node:crypto';
-import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+import { copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { delimiter, join, resolve } from 'node:path';
 
@@ -80,6 +81,7 @@ mkdirSync(outDir, { recursive: true });
 let name; // 进清单、要签名的那个文件
 let platformKey; // 清单里的平台名，和 update.rs 的 platform_key 一致
 const extraFiles = []; // 也要上传、但不进清单的
+const extraSigned = []; // 也进清单的（Windows 绿色版 zip）：{ key, name }
 if (MAC_PREBUILT) {
   platformKey = 'darwin-aarch64';
   name = `DATO-OCR_${version}_macos-arm64.app.tar.gz`;
@@ -145,18 +147,43 @@ if (MAC_PREBUILT) {
   if (!existsSync(built)) fail(`找不到安装包 ${built}`);
   name = `DATO-OCR_${version}_x64-setup.exe`;
   copyFileSync(built, join(outDir, name));
+
+  // 绿色版：程序 + OCR 引擎 + portable 标记，打成 zip（解压即用，数据放在旁边的 data 里）。
+  // 用系统自带的 bsdtar 打 zip：Git Bash 里的 GNU tar 不会打 zip
+  const exe = join(ROOT, 'src-tauri/target/release/chenocr.exe');
+  const ocr = join(ROOT, 'src-tauri/target/release/ocr');
+  if (!existsSync(exe) || !existsSync(ocr)) fail(`找不到 ${exe} 或 ${ocr}`);
+  const portable = `DATO-OCR_${version}_x64-portable.zip`;
+  const staging = join(ROOT, 'src-tauri/target/portable-staging');
+  const folder = join(staging, 'DATO-OCR');
+  rmSync(staging, { recursive: true, force: true });
+  mkdirSync(folder, { recursive: true });
+  copyFileSync(exe, join(folder, 'DATO OCR.exe'));
+  cpSync(ocr, join(folder, 'ocr'), { recursive: true });
+  writeFileSync(
+    join(folder, 'portable'),
+    '有这个文件，DATO OCR 就是绿色版：设置、历史都放在旁边的 data 文件夹里。删掉它就改用 %APPDATA%\\DATO OCR。\r\n',
+  );
+  rmSync(join(outDir, portable), { force: true });
+  const tar = join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'tar.exe');
+  execFileSync(tar, ['-a', '-cf', join(outDir, portable), '-C', staging, 'DATO-OCR'], { stdio: 'inherit' });
+  rmSync(staging, { recursive: true, force: true });
+  extraSigned.push({ key: 'windows-x86_64-portable', name: portable });
 }
 const installer = join(outDir, name);
 
 console.log('\n▶ 签名…');
-run(['signer', 'sign', '-f', keyPath, '-p', process.env.TAURI_SIGNING_PRIVATE_KEY_PASSWORD ?? '', installer]);
-const signature = readFileSync(`${installer}.sig`, 'utf8').trim();
+function sign(file) {
+  run(['signer', 'sign', '-f', keyPath, '-p', process.env.TAURI_SIGNING_PRIVATE_KEY_PASSWORD ?? '', file]);
+  return readFileSync(`${file}.sig`, 'utf8').trim();
+}
+const signature = sign(installer);
 const size = statSync(installer).size;
 
 // 自检：用程序里内置的公钥（update.rs 的 PUBKEY）验一遍，确认签名的私钥和发出去的程序是一对。
 // minisign 格式：签名行 = 算法(2) ‖ 钥匙 ID(8) ‖ 签名(64)，"ED" 表示对 BLAKE2b-512 摘要签名；
 // 全局签名 = 对（签名 ‖ 可信注释）再签一次。
-function selfCheck() {
+function selfCheck(installer, name, signature) {
   const pubkeyB64 = /const PUBKEY: &str = "([^"]+)"/.exec(readFileSync(join(ROOT, 'src-tauri/src/update.rs'), 'utf8'))?.[1];
   if (!pubkeyB64) fail('update.rs 里找不到 PUBKEY');
   const pkLine = Buffer.from(pubkeyB64, 'base64').toString('utf8').trim().split('\n')[1];
@@ -179,7 +206,13 @@ function selfCheck() {
   if (!trusted.includes(`file:${name}`)) fail(`签名里的文件名不对：${trusted}`);
   console.log(`✓ 签名自检通过（${trusted}）`);
 }
-selfCheck();
+selfCheck(installer, name, signature);
+const signedExtras = extraSigned.map(({ key, name: n }) => {
+  const file = join(outDir, n);
+  const sig = sign(file);
+  selfCheck(file, n, sig);
+  return { key, name: n, signature: sig, size: statSync(file).size };
+});
 
 // 纯文本简介（旧客户端 / 没有 changes 字段时用）和 GitHub 发行版页面的说明
 const SECTIONS = [
@@ -195,6 +228,7 @@ const releaseMd = [
   '### 下载',
   '',
   `- **Windows**：下载 \`DATO-OCR_${version}_x64-setup.exe\` 双击安装`,
+  `- **Windows 绿色版**：下载 \`DATO-OCR_${version}_x64-portable.zip\`，解压后打开 \`DATO OCR.exe\`，设置和历史都放在旁边的 data 文件夹里`,
   `- **macOS（Apple 芯片）**：下载 \`DATO-OCR_${version}_macos-arm64.dmg\`，把 DATO OCR 拖进「应用程序」`,
   '',
   '已经装了旧版的，打开「设置 → 更新」检查更新就能直接升级。',
@@ -221,6 +255,9 @@ const manifest = (file, base) => {
     platforms: {
       ...kept,
       [platformKey]: { signature, url: `${base}/v${version}/${name}`, size },
+      ...Object.fromEntries(
+        signedExtras.map((x) => [x.key, { signature: x.signature, url: `${base}/v${version}/${x.name}`, size: x.size }]),
+      ),
     },
   };
 };
@@ -237,7 +274,7 @@ const githubOnly = process.argv.includes('--github-only');
 if (!githubOnly) {
   writeManifest(join(ROOT, 'update/latest-cn.json'), GITEE);
 }
-const uploads = [name, ...extraFiles].map((f) => `release/${version}/${f}`).join('、');
+const uploads = [name, ...signedExtras.map((x) => x.name), ...extraFiles].map((f) => `release/${version}/${f}`).join('、');
 const others = ['windows-x86_64', 'darwin-aarch64'].filter((k) => !platforms.includes(k));
 const otherNote = others.length
   ? `\n  清单里还没有 ${others.join('、')}：到那台电脑上也跑一次本脚本（先拉下这次的清单），清单会合并`
